@@ -1,12 +1,17 @@
 # Changelog
 
-## 0.1.0 (Milestone 1: foundation)
+## 0.2.0: Vyral
 
-- Local FastAPI backend on 127.0.0.1 with token, Host and Origin checks; SQLite + Alembic; Keychain secret store; redacting JSON logs; audit log.
-- One-click account connection for YouTube, TikTok and Facebook/Instagram with a guided one-time platform setup that verifies keys live.
-- Source accounts with creators, folders, CSV/paste import, filters and bulk actions.
-- Destination accounts with planned drafts and full per-account publishing settings.
-- Drag-and-drop account funnel with creator-safety rules and auto-routing.
-- Dashboard, settings, persistent job queue with token refresh.
-- Tauri macOS shell and PyInstaller sidecar build scripts.
-- 37 backend tests, 3 Playwright E2E tests.
+- Renamed to Vyral.
+- Automatic pipeline: watches TikTok and YouTube Shorts source accounts, finds each new post's moment in the creator's recent streams by audio matching, downloads that section in full quality, renders per destination format, writes captions.
+- Ready to Upload page: preview, per-page title/caption with copy buttons, Save to computer (full quality into Downloads/Vyral), Mark uploaded.
+- Activity page: every new post and what happened to it, retry with a specific stream link, make a clip from a pasted link.
+- Discord webhook notifications for new posts, ready clips and problems, with a test button.
+- Destinations no longer need platform logins: editable name and handle. API publishing removed from the UI (no audits needed).
+- Clips and cached stream data auto-delete after 30 days.
+- Mac (.dmg) and Windows (setup .exe) installers built by GitHub Actions. Starts at login, keeps monitoring from the menu bar / tray.
+- 41 backend tests including the full pipeline with real audio matching and rendering; 5 browser tests.
+
+## 0.1.0: foundation
+
+Local backend, accounts, funnel, dashboard, settings, job queue, desktop shell.

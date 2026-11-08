@@ -1,5 +1,16 @@
 # Platform integrations
 
+**Since 0.2.0 Vyral does not publish through platform APIs.** You download each clip and upload it yourself, which avoids TikTok's and Google's app audits entirely. The OAuth connectors below are still in the code (tested) for a future optional auto-publish, but nothing in the app uses them.
+
+## What Vyral reads instead
+
+- **Source accounts (TikTok, YouTube Shorts):** public profile pages via yt-dlp, no login or cookies, every 10 minutes per account with jitter and exponential backoff (up to 6 hours) when blocked. Not an official API: TikTok's terms prohibit automated access and its site changes often, so this can break until yt-dlp (bundled) is updated in a new Vyral build.
+- **Streams (Twitch past broadcasts, YouTube live streams/videos):** listing and downloading via yt-dlp. Only the matched section is downloaded in full quality; for matching, the stream's audio is downloaded once, reduced to ~20 MB of features per 10 hours, and the audio deleted. Vyral only processes creators you've confirmed you have permission to clip.
+- **Discord:** incoming webhooks (validated to discord.com webhook URLs, retries on rate limits, `allowed_mentions` disabled so a post title can't ping @everyone).
+
+---
+
+
 What each platform actually allows, what's built, and what needs you. Verified against official docs in November 2026; recheck when something fails.
 
 ## Why there's a one-time setup per platform

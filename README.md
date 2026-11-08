@@ -1,42 +1,46 @@
-# AI Clipper
+# Vyral
 
-A local-first macOS app for finding, clipping, editing and publishing short-form video across TikTok, Instagram, YouTube and Facebook, with a learning loop that improves recommendations over time.
+Vyral watches clipping accounts on TikTok and YouTube Shorts. When one posts, Vyral finds that exact moment in the streamer's full stream, cuts it in full quality, frames it vertically over a blurred background, writes a caption for each of your pages, and pings your Discord. You download the video and upload it yourself, so there are no platform audits or API approvals involved.
 
-This repo is being built milestone by milestone. **Milestone 1 (foundation) is done.** See [ROADMAP.md](ROADMAP.md) for exactly what works today and what doesn't.
+## Install (no Terminal needed)
 
-## What works now
+Go to this repo's **Releases** page and download the file for your computer from **Assets**:
 
-- Source accounts: add by @handle or profile link (TikTok, YouTube, Twitch, Instagram), bulk paste, CSV import, creators, folders, search, filters, pause/resume, bulk actions.
-- Destination accounts: one-click Connect for YouTube, TikTok and Facebook/Instagram through each platform's own login page. One Facebook login brings in every Page you manage plus linked Instagram accounts. Per-destination settings (captions, hashtags, visibility, schedule slots, export format, watermark, title style, approval).
-- Account Funnel: drag a source onto a destination to route its clips there. Auto-route by creator. Creator mixing is blocked unless you confirm it. Layout persists.
-- Dashboard from real data only. Untracked numbers show as a dash, never as zero.
-- Settings: AI budget and model preferences, privacy, processing, storage, connection management, activity log.
-- Background service with a persistent job queue that keeps logins fresh while the window is closed.
+- **Mac (Apple Silicon: M1 to M4):** `Vyral-Mac-AppleSilicon.dmg`. Open it and drag Vyral to Applications. The first time, macOS says it can't verify the developer: open **System Settings > Privacy & Security**, scroll down, click **Open Anyway**.
+- **Windows 10/11:** `Vyral-Windows-Setup.exe`. Run it. If you see "Windows protected your PC", click **More info > Run anyway**.
 
-## Connecting accounts
+Those warnings show up because the app isn't signed with a paid Apple Developer ($99/year) or Windows code-signing certificate. Signing removes them; ask if you want to set that up.
 
-You click **Connect**, log in on the platform's page, click **Allow**. That's it, once each platform knows the app exists.
+Vyral starts automatically when your computer starts and lives in the menu bar (Mac) or system tray (Windows). Closing the window doesn't stop it. To stop monitoring, use **Quit Vyral** from that icon.
 
-The one thing that can't be automated: TikTok, Google and Meta only let *registered* apps request access, and there is no API to register one. So each platform needs a one-time registration in a developer account (free, about 5 minutes each). The app walks you through it with direct links, a copy button for the exact redirect address, and checks your keys with the platform before saving. For YouTube you just drop the downloaded JSON file in. You never touch this again after that.
+## Setup (about 5 minutes)
 
-If you later ship builds to other people, put your registered app IDs in `platform_apps.json` and they skip that step completely. Details in [API_INTEGRATIONS.md](API_INTEGRATIONS.md).
+1. **Source Accounts > New creator:** the streamer's name, their Twitch or YouTube channel link, and tick that you have permission to clip them.
+2. **Source Accounts > Add account:** the clipping accounts to watch (handle or link), assigned to that creator.
+3. **Destinations > Add destination:** each page you post to, with its handle.
+4. **Account Funnel:** drag each source onto the pages it should feed, or click **Auto-route by creator**.
+5. **Settings > Notifications:** paste a Discord webhook (optional).
 
-## Run it
+The first check of a new source account only records what it already posted. From then on, every new post becomes a clip.
 
-```bash
-# backend + UI on http://127.0.0.1:8765
-cd frontend && npm install && npm run build
-cd ../backend && pip install -e ".[dev]" && python -m clippr
-```
+## What happens when a source posts
 
-Build the Mac app (on a Mac): `./scripts/build-mac-app.sh`. Output lands in `desktop/src-tauri/target/release/bundle/`.
+1. Discord: "@account just posted a new video."
+2. Vyral listens to the post and searches the creator's latest streams (4 by default) for the same audio. It handles jump cuts and music added on top. If it can't find the moment with confidence it says so instead of guessing, and you can paste the exact stream link to retry.
+3. It downloads only that part of the stream in the best quality available and renders it per destination format (1080x1920, up to 60 fps by default).
+4. **Ready to Upload** shows the clip with a caption per page: the post's title without their hashtags and @mentions, your extra caption, the creator credit and your hashtags. YouTube gets a separate title and #shorts.
+5. Discord: "Clip ready for upload" with every page and platform it's for.
+6. You click **Save to computer** (full quality, into Downloads > Vyral), upload, and click **Mark uploaded**.
 
-More in [DEVELOPMENT.md](DEVELOPMENT.md). Tests: [TESTING.md](TESTING.md).
+Clips and cached stream data are deleted automatically after 30 days (changeable in Settings). Files you saved to your computer are never touched.
 
-## Docs
+## Limits to know about
 
-[ARCHITECTURE](ARCHITECTURE.md) · [ROADMAP](ROADMAP.md) · [API_INTEGRATIONS](API_INTEGRATIONS.md) · [SECURITY](SECURITY.md) · [COSTS](COSTS.md) · [DEVELOPMENT](DEVELOPMENT.md) · [TESTING](TESTING.md) · [CHANGELOG](CHANGELOG.md)
+- **TikTok has no official way to watch accounts you don't own.** Vyral reads their public profile page the same way a browser would, with no login, checking every 10 minutes with backoff. TikTok's terms don't allow automated access, and TikTok changes its site often, so checks can stop working until Vyral gets an update. If that happens the Source Accounts page shows the error, and you can still paste a post link on the Activity page.
+- **Instagram and Twitch accounts can't be watched** as sources (Instagram requires a login). Twitch and YouTube work as stream sources.
+- **Only Apple Silicon Macs** are built right now. Intel Mac builds can be added.
+- **No captions are burned into the video yet.** The word-by-word orange/white captions are part of the Video Editor, which is next.
 
-## Content rights
+## For developers
 
-Following or adding an account does not grant permission to reuse its videos. The app is built around footage you own or are licensed to use, and official platform APIs. It does not scrape, bypass logins, CAPTCHAs or rate limits, or read browser cookies or passwords.
+[DEVELOPMENT](DEVELOPMENT.md) · [ARCHITECTURE](ARCHITECTURE.md) · [ROADMAP](ROADMAP.md) · [TESTING](TESTING.md) · [SECURITY](SECURITY.md) · [API_INTEGRATIONS](API_INTEGRATIONS.md) · [COSTS](COSTS.md) · [CHANGELOG](CHANGELOG.md)

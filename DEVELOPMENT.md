@@ -33,14 +33,15 @@ cd backend && CLIPPR_API_TOKEN=dev python -m clippr
 cd frontend && VITE_CLIPPR_TOKEN=dev npm run dev                            # http://127.0.0.1:5173
 ```
 
-Useful env vars: `CLIPPR_DATA_DIR` (default `~/Library/Application Support/AI Clipper`), `CLIPPR_PORT` (8765), `CLIPPR_SECRET_BACKEND` (`auto|keychain|file|memory`), `CLIPPR_NO_WORKER=1`.
+Useful env vars: `CLIPPR_FFMPEG` (override bundled ffmpeg), `CLIPPR_DOWNLOADS_DIR`, `CLIPPR_RENDER_PRESET` (tests use ultrafast), `CLIPPR_DATA_DIR` (default `~/Library/Application Support/AI Clipper`), `CLIPPR_PORT` (8765), `CLIPPR_SECRET_BACKEND` (`auto|keychain|file|memory`), `CLIPPR_NO_WORKER=1`.
 
 Keep port 8765 unless you re-register the Meta redirect; Google and TikTok accept any loopback port.
 
 ## Mac app
 
 ```bash
-./scripts/build-mac-app.sh          # frontend build -> PyInstaller sidecar -> tauri build
+./scripts/build-mac-app.sh          # frontend build -> sidecar (scripts/build_backend.py) -> tauri build
+# Windows: same steps; see .github/workflows/release.yml (the normal way installers get built)
 cd desktop && npx tauri dev         # dev shell (needs a sidecar built first)
 ```
 

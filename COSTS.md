@@ -1,5 +1,9 @@
 # Costs
 
+## GitHub Actions minutes
+
+The installer workflow runs on GitHub's Mac and Windows machines. On a private repo, Mac minutes count 10x and Windows 2x against the free monthly allowance (2,000 minutes on the Free plan), so one full build uses roughly 150 to 250 of them. It only runs when app code changes on this branch. If the allowance runs out, builds pause; nothing is charged unless you've added a payment method and raised the spending limit.
+
 ## Today
 
 Milestone 1 makes no paid API calls. All platform APIs used (YouTube Data API, TikTok Login Kit/Display/Content Posting, Meta Graph) are free within their quotas. Developer accounts are free.

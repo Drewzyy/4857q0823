@@ -13,6 +13,14 @@ No app is unhackable. This is what's in place, what's planned, and what's out of
 - **Logging.** JSON logs with a redaction filter for tokens, secrets, auth codes and Bearer headers. Errors shown to the user never include stack traces.
 - **Audit log.** Every account, route, connection and settings change is recorded (no secret values).
 
+## Added in 0.2.0
+
+- Discord webhook stored in the OS credential store; only `discord.com` webhook URLs accepted; mentions disabled in every message.
+- Video previews use the same window token (as a query parameter, only on media URLs, because `<video>` can't send headers).
+- Stream links restricted to Twitch/YouTube formats; post links to TikTok/YouTube.
+- Downloaded media is only ever passed to FFmpeg as data, never executed. Temporary files are cleaned up after each clip and on a 6-hour timer.
+- The background service exits within seconds if the app process disappears, so a crash never leaves a hidden second copy running.
+
 ## Planned
 
 - Media processing (Milestone 2): FFmpeg in a subprocess with timeouts and resource limits, type detection by probing content not extensions, size caps, no network for the child process; macOS sandbox profile for the sidecar.

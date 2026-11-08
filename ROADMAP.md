@@ -1,5 +1,21 @@
 # Roadmap
 
+## 0.2.0: Vyral (done)
+
+| Feature | Status |
+|---|---|
+| Watch TikTok / YouTube Shorts accounts, baseline on first check, backoff on errors | Tested (simulated TikTok; live TikTok not reachable from the build sandbox) |
+| Find the moment in the creator's streams by audio (jump cuts, music overlays) | Tested on real audio pipelines with synthetic speech |
+| Full-quality section download + frame-exact re-alignment + vertical render | Tested (real FFmpeg; downloads simulated) |
+| Per-destination captions and titles | Tested |
+| Ready to Upload: preview, copy, save to Downloads, mark uploaded | Tested (E2E) |
+| Discord notifications | Tested against a simulated Discord |
+| 30-day auto-delete | Tested |
+| Mac + Windows installers, start at login, tray, service watchdog | Built by CI; watchdog tested; **not yet run by a person on a real Mac/PC** |
+
+Next up: burned-in word-synced captions (Video Editor), Intel Mac build, signed installers (needs paid certificates), auto-update.
+
+
 Status key: **Tested** (works, covered by automated tests) · **Implemented** (works, not fully automated-tested) · **Needs your authorization** (code done, needs a real login or platform approval to verify) · **In development** · **Not started** · **Blocked**
 
 ## Milestone 1: Foundation (done)
