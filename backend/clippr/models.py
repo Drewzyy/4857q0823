@@ -1,0 +1,167 @@
+"""Database models. Secrets (tokens, client secrets) are never stored here; see secrets_store."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.types import TypeDecorator
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class UTCDateTime(TypeDecorator):
+    """Stores UTC, always returns timezone-aware datetimes (SQLite drops tzinfo)."""
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None and value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None and value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value
+
+
+class Base(DeclarativeBase):
+    type_annotation_map = {dict[str, Any]: JSON, list[Any]: JSON}
+
+
+class Creator(Base):
+    """A streamer / creator whose content pipelines are kept separate."""
+
+    __tablename__ = "creators"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    color: Mapped[str] = mapped_column(String(16), default="#8b5cf6")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class Folder(Base):
+    __tablename__ = "folders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class Connection(Base):
+    """One authorized login with a platform. Tokens live in the keychain under `secret_key`."""
+
+    __tablename__ = "connections"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    platform: Mapped[str] = mapped_column(String(20))  # youtube | tiktok | meta
+    external_user_id: Mapped[str] = mapped_column(String(200))
+    display_name: Mapped[str] = mapped_column(String(200), default="")
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scopes: Mapped[list[Any]] = mapped_column(default=list)
+    status: Mapped[str] = mapped_column(String(20), default="connected")  # connected|expired|error|revoked
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    refresh_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+    __table_args__ = (UniqueConstraint("platform", "external_user_id"),)
+
+    @property
+    def secret_key(self) -> str:
+        return f"oauth:{self.platform}:{self.external_user_id}"
+
+
+class SourceAccount(Base):
+    __tablename__ = "source_accounts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    platform: Mapped[str] = mapped_column(String(20), default="tiktok")
+    username: Mapped[str] = mapped_column(String(120))
+    display_name: Mapped[str] = mapped_column(String(200), default="")
+    profile_url: Mapped[str] = mapped_column(Text)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)
+    folder_id: Mapped[int | None] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
+    connection_id: Mapped[int | None] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"), nullable=True)
+    monitoring: Mapped[str] = mapped_column(String(10), default="active")  # active | paused
+    notes: Mapped[str] = mapped_column(Text, default="")
+    last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    __table_args__ = (UniqueConstraint("platform", "username"),)
+
+    creator: Mapped[Creator | None] = relationship(lazy="joined")
+    folder: Mapped[Folder | None] = relationship(lazy="joined")
+    connection: Mapped[Connection | None] = relationship(lazy="joined")
+
+
+class DestinationAccount(Base):
+    __tablename__ = "destination_accounts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    platform: Mapped[str] = mapped_column(String(20))  # tiktok | instagram | youtube | facebook
+    external_id: Mapped[str] = mapped_column(String(200))
+    handle: Mapped[str] = mapped_column(String(200), default="")
+    display_name: Mapped[str] = mapped_column(String(200))
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    connection_id: Mapped[int | None] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"), nullable=True)
+    creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)
+    settings: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    __table_args__ = (UniqueConstraint("platform", "external_id"),)
+
+    creator: Mapped[Creator | None] = relationship(lazy="joined")
+    connection: Mapped[Connection | None] = relationship(lazy="joined")
+
+
+class FunnelRoute(Base):
+    """Edge in the account funnel: clips from a source flow to a destination."""
+
+    __tablename__ = "funnel_routes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("source_accounts.id", ondelete="CASCADE"))
+    destination_id: Mapped[int] = mapped_column(ForeignKey("destination_accounts.id", ondelete="CASCADE"))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Set only when the user explicitly confirmed routing one creator's clips to another creator's page.
+    allow_cross_creator: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    __table_args__ = (UniqueConstraint("source_id", "destination_id"),)
+
+
+class Setting(Base):
+    __tablename__ = "settings"
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class Job(Base):
+    """Persistent background job. Survives restarts; running jobs are re-queued on boot."""
+
+    __tablename__ = "jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued|running|succeeded|failed|cancelled
+    payload: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), unique=True, nullable=True)
+    run_after: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ts: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    action: Mapped[str] = mapped_column(String(80))
+    entity: Mapped[str] = mapped_column(String(40), default="")
+    entity_id: Mapped[str] = mapped_column(String(80), default="")
+    details: Mapped[dict[str, Any]] = mapped_column(default=dict)

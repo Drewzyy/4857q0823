@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+*.db
+*.db-wal
+*.db-shm
+.clippr-data/
+.env
+.DS_Store
