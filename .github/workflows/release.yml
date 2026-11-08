@@ -79,7 +79,14 @@ jobs:
 
       - name: Make a real speech sample (macOS voice)
         if: runner.os == 'macOS'
-        run: say -o "$RUNNER_TEMP/speech.aiff" "This is a test of the Vyral captions. No way he actually did that."
+        run: |
+          # The runner's voice occasionally produces an empty file; retry until there's real audio.
+          for i in 1 2 3; do
+            say -v Samantha -o "$RUNNER_TEMP/speech.aiff" "This is a test of the Vyral captions. No way he actually did that." || say -o "$RUNNER_TEMP/speech.aiff" "This is a test of the Vyral captions. No way he actually did that."
+            [ "$(wc -c < "$RUNNER_TEMP/speech.aiff")" -gt 50000 ] && break
+            sleep 2
+          done
+          ls -la "$RUNNER_TEMP/speech.aiff"
 
       - name: Make a real speech sample (Windows voice)
         if: runner.os == 'Windows'
@@ -232,6 +239,12 @@ jobs:
                      "platforms": plats}, open("dist/latest.json", "w"), indent=2)
           print("update platforms:", list(plats))
           PY
+            # A brand-new empty repo can't hold releases until it has one commit; add a README if needed.
+            if ! GH_TOKEN="$RELEASES_TOKEN" gh api "repos/$REPO/commits?per_page=1" >/dev/null 2>&1; then
+              printf '# Vyral downloads\n\nDownload the latest Vyral for Mac or Windows from [Releases](https://github.com/%s/releases/latest).\n' "$REPO" > readme.md
+              GH_TOKEN="$RELEASES_TOKEN" gh api -X PUT "repos/$REPO/contents/README.md" -f message="Add README" -f content="$(base64 -w0 readme.md)" >/dev/null
+              echo "Initialized $REPO with a README"
+            fi
             GH_TOKEN="$RELEASES_TOKEN" gh release create "v$VERSION" dist/* --repo "$REPO" --title "Vyral $VERSION" --notes-file notes.md --latest
             echo "Published to https://github.com/$REPO/releases/latest"
           else

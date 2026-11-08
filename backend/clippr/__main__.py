@@ -53,7 +53,8 @@ def _self_test(audio: Path, data_dir: Path) -> int:
     print(json.dumps({"words": [w.text for w in words]}))
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
-        run(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=3", "-i", str(audio), "-shortest",
+        # Fixed 3 s test video; the speech audio is padded/cut to fit so the render check never depends on it.
+        run(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=3", "-i", str(audio), "-af", "apad", "-t", "3",
              "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(d / "src.mp4")])
         ass = overlay.build_ass(1080, 1920, OverlaySettings().model_dump(), "Self test title", words, 3)
         overlay.prepare(d / "ov", ass)
