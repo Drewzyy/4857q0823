@@ -22,7 +22,7 @@ jobs:
         include:
           - os: macos-latest
             label: mac
-            bundles: dmg
+            bundles: app,dmg
           - os: windows-latest
             label: windows
             bundles: nsis
@@ -39,6 +39,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with: { workspaces: desktop/src-tauri }
+
+      - name: Give this build its own version number
+        run: |
+          VERSION="0.4.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          python - "$VERSION" <<'PY'
+          import json, re, sys
+          v = sys.argv[1]
+          for p in ["desktop/src-tauri/tauri.conf.json", "desktop/package.json"]:
+              c = json.load(open(p)); c["version"] = v; json.dump(c, open(p, "w"), indent=2)
+          p = "desktop/src-tauri/Cargo.toml"; s = open(p).read()
+          open(p, "w").write(re.sub(r'(?m)^version = ".*?"', f'version = "{v}"', s, count=1))
+          open("backend/clippr/__init__.py", "w").write(f'__version__ = "{v}"\n')
+          PY
+          echo "Building Vyral $VERSION"
 
       - name: Build the interface
         working-directory: frontend
@@ -86,7 +101,18 @@ jobs:
 
       - name: Build the app
         working-directory: desktop
-        run: npm ci && npx tauri build --bundles ${{ matrix.bundles }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          npm ci
+          BUNDLES="${{ matrix.bundles }}"
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "No update-signing key yet: building without auto-update files."
+            npx tauri build --bundles "$BUNDLES" --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          else
+            npx tauri build --bundles "$BUNDLES"
+          fi
 
       - name: Install the app like a person would (Mac)
         if: runner.os == 'macOS'
@@ -139,8 +165,13 @@ jobs:
           mkdir -p out
           if [ "${{ matrix.label }}" = "mac" ]; then
             cp desktop/src-tauri/target/release/bundle/dmg/*.dmg "out/Vyral-Mac-AppleSilicon.dmg"
+            for f in desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig; do
+              [ -f "$f" ] && cp "$f" "out/$(basename "$f" | sed 's/.*\.app\.tar\.gz/Vyral-Mac-AppleSilicon.app.tar.gz/')"
+            done
           else
             cp desktop/src-tauri/target/release/bundle/nsis/*-setup.exe "out/Vyral-Windows-Setup.exe"
+            SIG=$(ls desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig 2>/dev/null | head -1 || true)
+            [ -n "$SIG" ] && cp "$SIG" "out/Vyral-Windows-Setup.exe.sig"
           fi
           ls -la out
 
@@ -164,9 +195,10 @@ jobs:
       - name: Publish to the Releases page
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           ls dist/* >/dev/null 2>&1 || { echo "No installer passed its checks; nothing to publish."; exit 1; }
-          VERSION=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+          VERSION="0.4.${{ github.run_number }}"
           {
             echo "**Download the file for your computer below, under Assets.**"
             echo
@@ -181,5 +213,29 @@ jobs:
             echo
             echo "Built from ${GITHUB_SHA::7}, version ${VERSION}. Every installer here was installed and launched on a real Mac / Windows machine before publishing."
           } > notes.md
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest dist/* --title "Vyral ${VERSION} (latest build)" --notes-file notes.md --target "$GITHUB_SHA" --latest
+          if [ -n "$RELEASES_TOKEN" ]; then
+            # Public downloads repo: versioned release + latest.json for the in-app updater.
+            REPO="Drewzyy/vyral-releases"
+            BASE="https://github.com/$REPO/releases/download/v$VERSION"
+            python3 - "$VERSION" "$BASE" <<'PY'
+          import json, os, sys
+          from datetime import datetime, timezone
+          v, base = sys.argv[1], sys.argv[2]
+          plats = {}
+          if os.path.exists("dist/Vyral-Mac-AppleSilicon.app.tar.gz.sig"):
+              plats["darwin-aarch64"] = {"signature": open("dist/Vyral-Mac-AppleSilicon.app.tar.gz.sig").read().strip(),
+                                         "url": f"{base}/Vyral-Mac-AppleSilicon.app.tar.gz"}
+          if os.path.exists("dist/Vyral-Windows-Setup.exe.sig"):
+              plats["windows-x86_64"] = {"signature": open("dist/Vyral-Windows-Setup.exe.sig").read().strip(),
+                                         "url": f"{base}/Vyral-Windows-Setup.exe"}
+          json.dump({"version": v, "notes": f"Vyral {v}", "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                     "platforms": plats}, open("dist/latest.json", "w"), indent=2)
+          print("update platforms:", list(plats))
+          PY
+            GH_TOKEN="$RELEASES_TOKEN" gh release create "v$VERSION" dist/* --repo "$REPO" --title "Vyral $VERSION" --notes-file notes.md --latest
+            echo "Published to https://github.com/$REPO/releases/latest"
+          else
+            echo "No RELEASES_TOKEN secret yet: publishing to this private repo only (no auto-updates)."
+            gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+            gh release create latest dist/* --title "Vyral ${VERSION} (latest build)" --notes-file notes.md --target "$GITHUB_SHA" --latest
+          fi

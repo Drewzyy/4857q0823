@@ -79,6 +79,8 @@ function General() {
         </div>
       </div>
 
+      <Updates />
+
       <div className="card stack">
         <h2>Storage</h2>
         <div className="field" style={{ maxWidth: 380 }}><label htmlFor="ret">Delete clips after {s.storage.retention_days} days</label>
@@ -91,6 +93,40 @@ function General() {
         <button className="btn ghost" disabled={!dirty} onClick={() => data && setS(structuredClone(data))}>Discard</button>
         <button className="btn primary" disabled={!dirty || save.isPending} onClick={() => save.mutate(s)}>{save.isPending && <span className="spinner" />}Save changes</button>
       </div>
+    </div>
+  );
+}
+
+function Updates() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { data: u } = useQuery({
+    queryKey: ["app-update"], queryFn: api.appUpdate,
+    refetchInterval: (q) => (["checking", "downloading", "installing"].includes(q.state.data?.state ?? "") || q.state.data?.check_requested ? 1500 : 30_000),
+  });
+  if (!u) return null;
+  const busy = u.check_requested || ["checking", "downloading", "installing"].includes(u.state);
+  const line = !u.available ? "Updates are installed by the Vyral desktop app."
+    : u.check_requested || u.state === "checking" ? "Checking for updates…"
+    : u.state === "downloading" ? `Downloading Vyral ${u.version}${u.progress != null ? ` (${Math.round(u.progress * 100)}%)` : ""}…`
+    : u.state === "ready" ? `Vyral ${u.version} is downloaded and ready to install.`
+    : u.state === "installing" ? "Installing and restarting…"
+    : u.state === "none" ? `You're on the latest version.${u.checked_at ? ` Checked ${relTime(u.checked_at)}.` : ""}`
+    : u.state === "error" ? (u.error ?? "Couldn't check for updates.")
+    : "Vyral checks for updates automatically a minute after it starts and every few hours.";
+  return (
+    <div className="card stack">
+      <div className="row"><h2>Updates</h2><span className="spacer" /><span className="pill nodot">Version {u.current}</span></div>
+      <p className={`small ${u.state === "error" ? "" : "muted"}`} style={u.state === "error" ? { color: "#ff8a8d" } : undefined}>{line}</p>
+      <p className="small faint">New versions download in the background and install when you click Restart to update, or when you quit Vyral from the menu bar / tray. Each update is checked against Vyral's signature before it's installed.</p>
+      {u.available && (
+        <div className="row">
+          {u.state === "ready"
+            ? <button className="btn primary" onClick={() => api.installUpdate().then(() => qc.invalidateQueries({ queryKey: ["app-update"] })).catch((e) => toast("err", String(e)))}>Restart to update</button>
+            : <button className="btn" disabled={busy} onClick={() => api.checkForUpdates().then((r) => qc.setQueryData(["app-update"], { ...r, available: true })).catch((e) => toast("err", String(e)))}>
+                {busy && <span className="spinner" />}Check for updates</button>}
+        </div>
+      )}
     </div>
   );
 }

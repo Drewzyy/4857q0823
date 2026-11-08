@@ -23,6 +23,8 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+mod updates;
+
 struct Backend(Mutex<Option<CommandChild>>);
 
 const HIDDEN_ARG: &str = "--hidden";
@@ -60,6 +62,19 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+/// Stops the background service (used before installing an update and on exit).
+pub fn stop_service(app: &AppHandle) {
+    if let Some(child) = app.state::<Backend>().0.lock().unwrap().take() {
+        let _ = child.kill();
+    }
+}
+
+fn new_token() -> String {
+    let mut b = [0u8; 32];
+    let _ = getrandom::fill(&mut b);
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
 fn service_executable(app: &AppHandle) -> tauri::Result<PathBuf> {
     let name = if cfg!(windows) { "clippr-backend.exe" } else { "clippr-backend" };
     Ok(app.path().resource_dir()?.join("service").join(name))
@@ -83,7 +98,9 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![HIDDEN_ARG])))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend(Mutex::new(None)))
+        .manage(updates::Pending(Mutex::new(None)))
         .setup(|app| {
             let started_hidden = std::env::args().any(|a| a == HIDDEN_ARG);
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -110,6 +127,8 @@ fn main() {
             let exit_reason: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
             let port = free_port();
+            // The shell and the service share the per-launch API token so the updater can report progress.
+            let token = new_token();
             let ui_dir = app.path().resource_dir()?.join("ui");
             let exe = service_executable(app.handle())?;
             let spawned = app
@@ -127,6 +146,7 @@ fn main() {
                     std::process::id().to_string(),
                 ])
                 .env("CLIPPR_DESKTOP", "1")
+                .env("CLIPPR_API_TOKEN", token.clone())
                 .spawn();
 
             match spawned {
@@ -166,6 +186,7 @@ fn main() {
             }
 
             let win = window.clone();
+            let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let started = Instant::now();
                 loop {
@@ -173,6 +194,7 @@ fn main() {
                         if let Ok(url) = Url::parse(&format!("http://127.0.0.1:{port}/")) {
                             let _ = win.navigate(url);
                         }
+                        updates::run(handle, port, token);
                         return;
                     }
                     if exited.load(Ordering::SeqCst) {
@@ -209,7 +231,11 @@ fn main() {
                         let _ = if enable { al.enable() } else { al.disable() };
                         let _ = login_item.set_checked(al.is_enabled().unwrap_or(enable));
                     }
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        // A downloaded update installs on the way out, so the next launch is the new version.
+                        updates::install_pending(app);
+                        app.exit(0)
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -231,11 +257,7 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to start Vyral")
         .run(|app, event| match event {
-            RunEvent::Exit => {
-                if let Some(child) = app.state::<Backend>().0.lock().unwrap().take() {
-                    let _ = child.kill();
-                }
-            }
+            RunEvent::Exit => stop_service(app),
             #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => show_main(app),
             _ => {}

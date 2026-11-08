@@ -44,6 +44,18 @@
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCOUZDN0E4Q0M3MzBGNEYKUldSUEQzUE1xTWVmZTV5Uk9xVm55eFNISUZ1cHlteEJ5ZFpPajNpRzlxSno4cjdydTV2TnZpOUcK",
+      "endpoints": [
+        "https://github.com/Drewzyy/vyral-releases/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

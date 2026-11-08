@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.x: automatic updates
+
+- Vyral checks the public vyral-releases repo a minute after starting and every 4 hours (or on "Check for updates" in Settings), downloads new versions in the background, verifies their signature, and installs on "Restart to update" or when you quit from the menu bar / tray.
+- Every build gets its own version number automatically (0.4.<build>).
+- Tampered or unsigned updates are rejected.
+
 ## 0.3.3
 
 - Installer checks now install exactly like a person: on Mac, open the .dmg, drag Vyral to Applications, launch it from there; on Windows, run the installer. A build is only published if the installed app's window loads the interface.

@@ -90,6 +90,12 @@ export interface ClipT {
 }
 export interface NotifyState { configured: boolean; webhook_hint: string | null; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }
 
+export interface AppUpdate {
+  available: boolean; state: "idle" | "checking" | "none" | "downloading" | "ready" | "installing" | "error";
+  current: string; version: string | null; notes: string; error: string | null; progress: number | null; checked_at: string | null;
+  check_requested: boolean; install_requested: boolean;
+}
+
 export interface Health { ok: boolean; version: string; secret_backend: string; worker_running: boolean; desktop_mode: boolean; ffmpeg: boolean }
 export interface AuditEntry { id: number; ts: string; action: string; entity: string; entity_id: string; details: Record<string, unknown> }
 
@@ -186,6 +192,9 @@ export const api = {
   references: () => request<RefPost[]>("GET", "/references"),
   addReference: (b: { url: string; creator_id?: number | null; source_id?: number | null }) => request<{ id: number }>("POST", "/references", b),
   retryReference: (id: number, vod_url?: string) => request<RefPost>("POST", `/references/${id}/retry`, { vod_url: vod_url || null }),
+  appUpdate: () => request<AppUpdate>("GET", "/app-update"),
+  checkForUpdates: () => request<AppUpdate>("POST", "/app-update/check"),
+  installUpdate: () => request<AppUpdate>("POST", "/app-update/install"),
   checkSource: (id: number) => request<{ queued: boolean }>("POST", `/sources/${id}/check`),
   notifications: () => request<NotifyState>("GET", "/notifications"),
   saveNotifications: (b: Partial<{ webhook_url: string; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }>) => request<NotifyState>("PUT", "/notifications", b),

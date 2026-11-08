@@ -11,6 +11,7 @@ import SettingsPage from "./pages/Settings";
 import Planned from "./pages/Planned";
 import Ready from "./pages/Ready";
 import ActivityPage from "./pages/Activity";
+import UpdateBanner from "./components/UpdateBanner";
 
 const PAGES: Record<string, JSX.Element> = {
   "/": <Dashboard />, "/ready": <Ready />, "/activity": <ActivityPage />, "/sources": <Sources />, "/destinations": <Destinations />,
@@ -63,6 +64,7 @@ export default function App() {
         </div>
       </aside>
       <main className="main">
+        <UpdateBanner />
         <Routes>
           {MODULES.map((m) => (
             <Route key={m.path} path={m.path} element={PAGES[m.path] ?? <Planned module={m} />} />
