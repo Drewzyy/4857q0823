@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Vyral",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "identifier": "app.vyral.desktop",
   "build": {
     "frontendDist": "../splash"
@@ -9,7 +9,7 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": "default-src 'none'; style-src 'unsafe-inline'"
+      "csp": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:"
     },
     "macOSPrivateApi": false
   },
@@ -25,15 +25,14 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/clippr-backend"
-    ],
     "resources": {
-      "../../frontend/dist/": "ui/"
+      "../../frontend/dist/": "ui/",
+      "service/": "service/"
     },
     "macOS": {
       "minimumSystemVersion": "12.0",
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "hardenedRuntime": false
     },
     "shortDescription": "Vyral",
     "longDescription": "Watches clipping accounts and turns new posts into ready-to-upload clips from the original stream.",

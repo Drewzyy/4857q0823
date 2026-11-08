@@ -52,7 +52,7 @@ jobs:
 
       - name: Smoke test the background service
         run: |
-          BIN=$(ls desktop/src-tauri/binaries/clippr-backend-*)
+          BIN=$(ls desktop/src-tauri/service/clippr-backend*)
           "$BIN" --port 8777 --data-dir "$RUNNER_TEMP/vyral-smoke" --frontend frontend/dist > "$RUNNER_TEMP/smoke.log" 2>&1 &
           for i in $(seq 1 90); do
             if curl -sf http://127.0.0.1:8777/api/health > "$RUNNER_TEMP/health.json"; then break; fi
@@ -78,7 +78,7 @@ jobs:
 
       - name: Self-test captions inside the packaged service (real speech model + burned-in text)
         run: |
-          BIN=$(ls desktop/src-tauri/binaries/clippr-backend-*)
+          BIN=$(ls desktop/src-tauri/service/clippr-backend*)
           SAMPLE=$(ls "$RUNNER_TEMP"/speech.* | head -1)
           "$BIN" --self-test "$SAMPLE" --data-dir "$RUNNER_TEMP/selftest" | tee "$RUNNER_TEMP/selftest.json"
           grep -qi '"render": \[1080, 1920\]' "$RUNNER_TEMP/selftest.json"
@@ -87,6 +87,30 @@ jobs:
       - name: Build the app
         working-directory: desktop
         run: npm ci && npx tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Install and launch the real app, wait until its window shows the interface
+        timeout-minutes: 6
+        run: |
+          if [ "${{ matrix.label }}" = "mac" ]; then
+            APP=$(ls -d desktop/src-tauri/target/release/bundle/macos/*.app | head -1)
+            "$APP/Contents/MacOS/$(ls "$APP/Contents/MacOS" | grep -v clippr | head -1)" > "$RUNNER_TEMP/app.log" 2>&1 &
+          else
+            SETUP=$(ls desktop/src-tauri/target/release/bundle/nsis/*-setup.exe | head -1)
+            "$SETUP" /S
+            sleep 5
+            EXE=$(find "$LOCALAPPDATA" -maxdepth 3 -iname "vyral.exe" | head -1)
+            echo "installed: $EXE"
+            "$EXE" > "$RUNNER_TEMP/app.log" 2>&1 &
+          fi
+          for i in $(seq 1 120); do
+            H=$(curl -s -m 3 http://127.0.0.1:8765/api/health || true)
+            echo "$H" | grep -q '"ui_served":true' && { echo "App window loaded the interface after ~$((i*2)) s: $H"; exit 0; }
+            sleep 2
+          done
+          echo "The installed app never showed the interface. Last health: $H"
+          cat "$RUNNER_TEMP/app.log" || true
+          find "$HOME" "$APPDATA" "$LOCALAPPDATA" -name service-output.log 2>/dev/null | head -3 | xargs -I{} sh -c 'echo "== {}"; tail -40 "{}"'
+          exit 1
 
       - name: Collect installer
         run: |

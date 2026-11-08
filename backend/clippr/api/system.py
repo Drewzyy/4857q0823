@@ -5,7 +5,7 @@ import os
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -45,10 +45,10 @@ def _has_ffmpeg() -> bool:
 
 
 @router.get("/health")
-def health(c=Depends(ctx), s: Session = Depends(db)):
+def health(request: Request, c=Depends(ctx), s: Session = Depends(db)):
     s.execute(select(1))
     return {"ok": True, "version": __version__, "secret_backend": c.secrets.name,
-            "worker_running": c.config.run_worker, "desktop_mode": c.config.desktop_mode, "ffmpeg": _has_ffmpeg()}
+            "worker_running": c.config.run_worker, "desktop_mode": c.config.desktop_mode, "ui_served": bool(getattr(request.app.state, "ui_served", False)), "ffmpeg": _has_ffmpeg()}
 
 
 @router.get("/dashboard")

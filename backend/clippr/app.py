@@ -101,6 +101,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
 
     app = FastAPI(title="Vyral", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.ctx = ctx
+    app.state.ui_served = False
     allowed_hosts = {f"127.0.0.1:{cfg.port}", f"localhost:{cfg.port}", "127.0.0.1", "localhost", "testserver"}
 
     @app.middleware("http")
@@ -174,6 +175,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         token_tag = f'<meta name="clippr-token" content="{html.escape(cfg.api_token)}">'
 
         def serve_index() -> HTMLResponse:
+            app.state.ui_served = True  # lets the installer test confirm the window really loaded the UI
             return HTMLResponse(index_html.replace("<!--CLIPPR_TOKEN-->", token_tag),
                                 headers={"Content-Security-Policy": CSP, "Cache-Control": "no-store"})
 

@@ -1,5 +1,8 @@
-"""Package the Python service as one self-contained executable for the Vyral app (Mac or Windows).
-Bundles FFmpeg and yt-dlp so users never install anything. Run on the OS you're building for."""
+"""Package the Python service for the Vyral app (Mac or Windows) as a ready-to-run folder.
+
+A folder (PyInstaller "onedir") instead of a single self-extracting file: it starts in seconds instead of
+unpacking ~250 MB into a temp folder on every launch, and macOS/antivirus don't re-scan it each time.
+Bundles FFmpeg, yt-dlp, the speech engine and fonts so users never install anything."""
 import os
 import shutil
 import subprocess
@@ -17,7 +20,7 @@ def main() -> None:
     build = BACKEND / "build"
     sep = os.pathsep
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--name", "clippr-backend",
+    cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--name", "clippr-backend",
            "--distpath", str(build / "dist"), "--workpath", str(build / "work"), "--specpath", str(build),
            "--add-data", f"{BACKEND / 'clippr' / 'migrations'}{sep}clippr/migrations",
            "--add-data", f"{BACKEND / 'clippr' / 'media' / 'fonts'}{sep}clippr/media/fonts",
@@ -30,13 +33,12 @@ def main() -> None:
         cmd.append("--noconsole")
     cmd.append(str(BACKEND / "clippr" / "__main__.py"))
     subprocess.check_call(cmd, cwd=BACKEND)
-    exe = ".exe" if sys.platform == "win32" else ""
-    out = ROOT / "desktop" / "src-tauri" / "binaries"
-    out.mkdir(parents=True, exist_ok=True)
-    target = out / f"clippr-backend-{triple}{exe}"
-    shutil.copyfile(build / "dist" / f"clippr-backend{exe}", target)
-    target.chmod(0o755)
-    print(f"sidecar: {target}")
+    out = ROOT / "desktop" / "src-tauri" / "service"
+    shutil.rmtree(out, ignore_errors=True)
+    shutil.copytree(build / "dist" / "clippr-backend", out, symlinks=True)
+    exe = out / ("clippr-backend.exe" if sys.platform == "win32" else "clippr-backend")
+    exe.chmod(0o755)
+    print(f"service: {exe} (built for {triple})")
 
 
 if __name__ == "__main__":

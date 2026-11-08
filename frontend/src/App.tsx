@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Zap } from "lucide-react";
 import { api } from "./lib/api";
 import { MODULES } from "./lib/modules";
 import Dashboard from "./pages/Dashboard";
@@ -40,7 +39,7 @@ export default function App() {
   return (
     <div className="shell">
       <aside className="sidebar" aria-label="Main navigation">
-        <div className="brand"><span className="brand-mark"><Zap size={16} /></span>Vyral</div>
+        <div className="brand"><img className="brand-logo" src="/vyral-logo.png" alt="" />Vyral</div>
         <nav>
           {MODULES.map((m, i) => {
             const header = m.group && m.group !== lastGroup ? <div className="nav-group">{m.group}</div> : m.group === "" && lastGroup !== "" ? <div style={{ height: 14 }} /> : null;

@@ -8,6 +8,7 @@ frontend/test-results/
 frontend/playwright-report/
 desktop/src-tauri/target/
 desktop/src-tauri/binaries/
+desktop/src-tauri/service/
 *.db
 *.db-wal
 *.db-shm

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+- Fixed: the installed app could hang forever on "Starting background service". The background service now ships as a ready-to-run folder (starts in about a second instead of unpacking ~250 MB every launch), macOS hardened runtime is off (it blocked the service from loading its libraries; it's only needed for paid notarization), and local networking is explicitly allowed.
+- The loading screen shows the real reason and recent log lines if the service stops or doesn't respond, and the service output is saved to logs/service-output.log.
+- The installer build now installs and launches the real app on Mac and Windows and fails unless the window loads the interface.
+- New Vyral logo as the app icon, in the sidebar and as the window icon.
+
 ## 0.3.1
 
 - Default title color is white; captions stay bright yellow.

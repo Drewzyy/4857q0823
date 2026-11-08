@@ -1,19 +1,24 @@
 // Vyral desktop app (macOS + Windows).
 //
-// Starts the bundled background service on a free loopback port, waits until it's healthy,
-// then shows the UI it serves. Closing the window only hides it: Vyral keeps watching source
-// accounts and making clips from the menu bar / system tray. It starts at login (hidden) so
-// monitoring runs whenever the computer is on. Quit from the tray icon stops everything.
+// Starts the bundled background service (a ready-to-run folder in the app's resources) on a free
+// loopback port, waits until it's healthy, then shows the UI it serves. If the service exits or
+// never becomes healthy, the loading screen shows why, with the last log lines and the log path.
+// Closing the window only hides it: Vyral keeps watching source accounts from the menu bar / tray,
+// and starts at login (hidden). Quit from the tray icon stops everything.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::VecDeque;
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -21,6 +26,7 @@ use tauri_plugin_shell::ShellExt;
 struct Backend(Mutex<Option<CommandChild>>);
 
 const HIDDEN_ARG: &str = "--hidden";
+const STARTUP_LIMIT: Duration = Duration::from_secs(150);
 
 fn free_port() -> u16 {
     for port in [8765u16, 0] {
@@ -36,7 +42,7 @@ fn free_port() -> u16 {
 fn healthy(port: u16) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(300)) else { return false };
-    let _ = s.set_read_timeout(Some(Duration::from_millis(800)));
+    let _ = s.set_read_timeout(Some(Duration::from_millis(1500)));
     let req = format!("GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     if s.write_all(req.as_bytes()).is_err() {
         return false;
@@ -54,6 +60,24 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+fn service_executable(app: &AppHandle) -> tauri::Result<PathBuf> {
+    let name = if cfg!(windows) { "clippr-backend.exe" } else { "clippr-backend" };
+    Ok(app.path().resource_dir()?.join("service").join(name))
+}
+
+/// Shows a failure on the loading screen (the window is still on the bundled splash page).
+fn show_failure(win: &WebviewWindow, title: &str, recent: &Mutex<VecDeque<String>>, log_path: &str) {
+    let details = recent.lock().map(|r| r.iter().cloned().collect::<Vec<_>>().join("\n")).unwrap_or_default();
+    let js = format!(
+        "window.vyralFailed && window.vyralFailed({}, {}, {})",
+        serde_json::to_string(title).unwrap_or_default(),
+        serde_json::to_string(&details).unwrap_or_default(),
+        serde_json::to_string(log_path).unwrap_or_default()
+    );
+    let _ = win.show();
+    let _ = win.eval(&js);
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
@@ -69,20 +93,28 @@ fn main() {
                 .visible(!started_hidden)
                 .build()?;
 
-            // Start at login by default the first time Vyral runs, so monitoring survives restarts.
             let data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&data_dir)?;
+            std::fs::create_dir_all(data_dir.join("logs"))?;
             let marker = data_dir.join(".autostart-initialized");
             if !marker.exists() {
                 let _ = app.autolaunch().enable();
                 let _ = std::fs::write(&marker, b"1");
             }
 
+            // Everything the service prints goes to a log file, and the last lines are kept for the loading screen.
+            let log_path = data_dir.join("logs").join("service-output.log");
+            let log_display = log_path.to_string_lossy().into_owned();
+            let log_file = OpenOptions::new().create(true).write(true).truncate(true).open(&log_path).ok().map(Mutex::new);
+            let recent: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
+            let exited = Arc::new(AtomicBool::new(false));
+            let exit_reason: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+
             let port = free_port();
             let ui_dir = app.path().resource_dir()?.join("ui");
-            let (mut rx, child) = app
+            let exe = service_executable(app.handle())?;
+            let spawned = app
                 .shell()
-                .sidecar("clippr-backend")?
+                .command(exe.to_string_lossy().into_owned())
                 .args([
                     "--port".to_string(),
                     port.to_string(),
@@ -95,31 +127,66 @@ fn main() {
                     std::process::id().to_string(),
                 ])
                 .env("CLIPPR_DESKTOP", "1")
-                .spawn()?;
-            *app.state::<Backend>().0.lock().unwrap() = Some(child);
+                .spawn();
 
-            tauri::async_runtime::spawn(async move {
-                while let Some(ev) = rx.recv().await {
-                    if let CommandEvent::Stderr(line) | CommandEvent::Stdout(line) = ev {
-                        eprintln!("[backend] {}", String::from_utf8_lossy(&line).trim_end());
-                    }
+            match spawned {
+                Ok((mut rx, child)) => {
+                    *app.state::<Backend>().0.lock().unwrap() = Some(child);
+                    let (recent2, exited2, reason2) = (recent.clone(), exited.clone(), exit_reason.clone());
+                    tauri::async_runtime::spawn(async move {
+                        while let Some(ev) = rx.recv().await {
+                            let line = match ev {
+                                CommandEvent::Stdout(l) | CommandEvent::Stderr(l) => String::from_utf8_lossy(&l).trim_end().to_string(),
+                                CommandEvent::Error(e) => format!("error: {e}"),
+                                CommandEvent::Terminated(p) => {
+                                    *reason2.lock().unwrap() = format!("The background service stopped (exit code {:?}).", p.code);
+                                    exited2.store(true, Ordering::SeqCst);
+                                    format!("[service exited with code {:?}]", p.code)
+                                }
+                                _ => continue,
+                            };
+                            if let Some(f) = &log_file {
+                                if let Ok(mut f) = f.lock() {
+                                    let _ = writeln!(f, "{line}");
+                                }
+                            }
+                            if let Ok(mut r) = recent2.lock() {
+                                r.push_back(line);
+                                while r.len() > 25 {
+                                    r.pop_front();
+                                }
+                            }
+                        }
+                    });
                 }
-            });
+                Err(e) => {
+                    *exit_reason.lock().unwrap() = format!("Couldn't start the background service: {e} ({})", exe.display());
+                    exited.store(true, Ordering::SeqCst);
+                }
+            }
 
             let win = window.clone();
             std::thread::spawn(move || {
                 let started = Instant::now();
-                // First launch unpacks the bundled service, which can take a little while.
-                while started.elapsed() < Duration::from_secs(90) {
+                loop {
                     if healthy(port) {
                         if let Ok(url) = Url::parse(&format!("http://127.0.0.1:{port}/")) {
                             let _ = win.navigate(url);
                         }
                         return;
                     }
+                    if exited.load(Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(300)); // let the last output arrive
+                        let reason = exit_reason.lock().map(|r| r.clone()).unwrap_or_default();
+                        show_failure(&win, &reason, &recent, &log_display);
+                        return;
+                    }
+                    if started.elapsed() > STARTUP_LIMIT {
+                        show_failure(&win, "The background service didn't respond in time.", &recent, &log_display);
+                        return;
+                    }
                     std::thread::sleep(Duration::from_millis(300));
                 }
-                let _ = win.eval("document.body.innerHTML='<p style=\"padding:40px;font-family:sans-serif;color:#ccc\">Vyral\\'s background service did not start. Quit Vyral from the tray icon and open it again.</p>'");
             });
 
             let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
@@ -146,7 +213,6 @@ fn main() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    // Windows convention: left-click the tray icon to bring the window back.
                     if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
                         if !cfg!(target_os = "macos") {
                             show_main(tray.app_handle());
