@@ -13,7 +13,7 @@ class Strict(BaseModel):
 class ExportFormat(Strict):
     aspect: Literal["9:16", "16:9", "1:1"] = "9:16"
     resolution: Literal["1080x1920", "1920x1080", "1080x1080", "720x1280"] = "1080x1920"
-    fps: Literal[24, 25, 30, 50, 60] = 30
+    fps: Literal[24, 25, 30, 50, 60] = 60  # upper limit; output keeps the stream's own frame rate up to this
     codec: Literal["h264", "h265"] = "h264"
     bitrate_mbps: float = Field(12, ge=1, le=80)
 
@@ -44,6 +44,7 @@ class TextStyle(Strict):
 
 
 class TitleStyle(TextStyle):
+    color: str = Field("#FFFFFF", pattern=HEXCOLOR)
     size: int = Field(76, ge=20, le=200)
     y_percent: int = Field(13, ge=3, le=97)
     duration: float = Field(5.0, ge=1, le=30)
@@ -93,6 +94,11 @@ class MonitoringSettings(Strict):
     max_clip_seconds: int = Field(180, ge=15, le=600)
 
 
+class CaptionEngineSettings(Strict):
+    accuracy: Literal["fast", "accurate", "best"] = "accurate"
+    language: str = Field("auto", pattern=r"^(auto|[a-z]{2})$")
+
+
 class AISettings(Strict):
     prefer_local_models: bool = True
     monthly_budget_usd: float = Field(25, ge=0, le=100000)
@@ -118,6 +124,7 @@ class PrivacySettings(Strict):
 
 class AppSettings(Strict):
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
+    captions: CaptionEngineSettings = Field(default_factory=CaptionEngineSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     ai: AISettings = Field(default_factory=AISettings)
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)

@@ -164,7 +164,9 @@ class YtDlpFetcher:
         import yt_dlp
 
         dest_dir.mkdir(parents=True, exist_ok=True)
-        info = self._extract(url, download=True, noplaylist=True, format="bv*+ba/b", merge_output_format="mp4",
+        # Best quality up to 1080p, and among those the highest frame rate (1080p60 over 1080p30).
+        info = self._extract(url, download=True, noplaylist=True, format="bv*+ba/b", format_sort=["res:1080", "fps", "vbr"],
+                             merge_output_format="mp4",
                              download_ranges=yt_dlp.utils.download_range_func(None, [(start, end)]),
                              outtmpl=str(dest_dir / "section-%(id)s.%(ext)s"))
         return Path(info["requested_downloads"][0]["filepath"])

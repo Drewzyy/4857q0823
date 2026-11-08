@@ -71,7 +71,12 @@ def build_context(config: Config, secrets: SecretStore | None = None, http_facto
     ctx.jobs.register("connections.refresh_due", lambda jc, p: ctx.connections.refresh_due())
     ctx.jobs.every("connections.refresh_due", 600)
     ctx.fetcher = fetcher or YtDlpFetcher()
-    ctx.transcriber = transcriber or WhisperTranscriber(config.data_dir / "models")
+    def caption_settings() -> tuple[str, str]:
+        with database.session() as s:
+            c = load_settings(s).captions
+            return c.accuracy, c.language
+
+    ctx.transcriber = transcriber or WhisperTranscriber(config.data_dir / "models", caption_settings)
     from .pipeline import register
 
     register(ctx)

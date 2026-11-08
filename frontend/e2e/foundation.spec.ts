@@ -120,11 +120,15 @@ test("discord and storage settings", async ({ page }) => {
   await expect(page.getByRole("switch", { name: "A source account posts a new video" })).not.toBeChecked();
 
   await page.getByRole("tab", { name: "Monitoring & storage" }).click();
+  await page.getByLabel("Accuracy").selectOption("best");
+  await page.getByLabel("Language spoken on stream").selectOption("en");
   await page.getByLabel(/Delete clips after/).fill("14");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText("Settings saved")).toBeVisible();
   await page.reload();
   await expect(page.getByLabel(/Delete clips after 14 days/)).toBeVisible();
+  await expect(page.getByLabel("Accuracy")).toHaveValue("best");
+  await expect(page.getByLabel("Language spoken on stream")).toHaveValue("en");
 });
 
 test("the API refuses requests without the window token", async ({ request }) => {
@@ -142,11 +146,12 @@ test("edit the text burned into a clip and re-render it", async ({ page }) => {
 
   await card.getByRole("button", { name: /Edit text on video/ }).click();
   await expect(card.getByLabel("Title on the video")).toHaveValue("He did NOT just say that");
-  // Defaults: bright yellow, all caps, title shown 5 s.
-  await expect(card.getByLabel("Title color", { exact: true })).toHaveValue("#ffe500");
+  // Defaults: white title, yellow captions, all caps, title shown 5 s.
+  await expect(card.getByLabel("Title color", { exact: true })).toHaveValue("#ffffff");
+  await expect(card.getByLabel("Captions color", { exact: true })).toHaveValue("#ffe500");
   await expect(card.getByText("Shows for 5 s")).toBeVisible();
   await card.getByLabel("Title on the video").fill("BRO REALLY SAID IT");
-  await card.getByRole("button", { name: "Title color #FFFFFF" }).click();
+  await card.getByRole("button", { name: "Title color #F97316" }).click();
   await card.getByLabel("Size: 88").fill("120");
   await expect(card.locator(".ov-preview .ov-text").first()).toHaveText("BRO REALLY SAID IT");
   await card.getByRole("button", { name: "Re-render with changes" }).click();

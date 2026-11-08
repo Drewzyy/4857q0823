@@ -59,6 +59,27 @@ function General() {
       </div>
 
       <div className="card stack">
+        <h2>Captions</h2>
+        <p className="small faint">Speech is turned into captions on this computer. Nothing is uploaded. Each accuracy level downloads its speech model once, the first time it's used.</p>
+        <div className="grid cols-2">
+          <div className="field"><label htmlFor="acc">Accuracy</label>
+            <select id="acc" className="select" value={s.captions.accuracy} onChange={(e) => up("captions", { accuracy: e.target.value as AppSettings["captions"]["accuracy"] })}>
+              <option value="fast">Fast (about 145 MB download)</option>
+              <option value="accurate">Accurate, recommended (about 480 MB)</option>
+              <option value="best">Best (about 1.6 GB, slower on older computers)</option>
+            </select>
+            <span className="hint">Accurate handles fast talkers, slang and names much better than Fast. Best is for when Accurate still mishears.</span></div>
+          <div className="field"><label htmlFor="lang">Language spoken on stream</label>
+            <select id="lang" className="select" value={s.captions.language} onChange={(e) => up("captions", { language: e.target.value })}>
+              {[["auto", "Detect automatically"], ["en", "English"], ["es", "Spanish"], ["pt", "Portuguese"], ["fr", "French"], ["de", "German"], ["it", "Italian"],
+                ["ja", "Japanese"], ["ko", "Korean"], ["ru", "Russian"], ["ar", "Arabic"], ["hi", "Hindi"], ["tr", "Turkish"], ["pl", "Polish"], ["nl", "Dutch"]].map(([v, l]) =>
+                <option key={v} value={v}>{l}</option>)}
+            </select>
+            <span className="hint">Setting it avoids short clips being misdetected as another language.</span></div>
+        </div>
+      </div>
+
+      <div className="card stack">
         <h2>Storage</h2>
         <div className="field" style={{ maxWidth: 380 }}><label htmlFor="ret">Delete clips after {s.storage.retention_days} days</label>
           <input id="ret" type="range" min={7} max={90} step={1} value={s.storage.retention_days} onChange={(e) => up("storage", { retention_days: Number(e.target.value) })} />

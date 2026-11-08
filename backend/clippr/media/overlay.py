@@ -11,6 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FONT_DIR = Path(__file__).parent / "fonts"
+# Average character width / font size, measured from the bundled fonts (upper, lower case).
+FONT_WIDTH = {"montserrat": (0.66, 0.55), "anton": (0.42, 0.40), "bebas": (0.34, 0.34), "poppins": (0.59, 0.51)}
+SIDE_MARGIN = 70  # px each side on a 1080-wide video
+
+# Phrases speech models are known to invent over silence or music (from their training subtitles).
+_HALLUCINATIONS = re.compile(r"^(thanks? (you )?for watching|subtitles by|subscribe|amara\.org|transcribed by|♪+|\.+)[.!]*$", re.I)
+
 FONTS = {  # key -> (file, family name inside the font)
     "montserrat": ("Montserrat_900Black.ttf", "Montserrat Black"),
     "anton": ("Anton_400Regular.ttf", "Anton"),
@@ -33,24 +40,80 @@ class Word:
         return cls(float(d["start"]), float(d["end"]), str(d["text"]))
 
 
-def chunk_words(words: list[Word], per: int) -> list[Word]:
-    """Group words into short on-screen captions; break early at sentence ends and pauses."""
+def clean_words(words: list[Word], duration: float) -> list[Word]:
+    """Make raw speech-model output safe to display: no invented filler, no repeats, no overlaps."""
+    # 1. Merge punctuation-only tokens into the previous word; drop empties.
+    merged: list[Word] = []
+    for w in words:
+        t = re.sub(r"\s+", " ", w.text).strip()
+        if not t:
+            continue
+        if merged and re.fullmatch(r"[^\w']+", t):
+            merged[-1].text += t
+            merged[-1].end = max(merged[-1].end, w.end)
+            continue
+        merged.append(Word(float(w.start), float(w.end), t))
+    # 2. Drop known hallucinated phrases when they are the whole utterance.
+    if merged and _HALLUCINATIONS.match(" ".join(w.text for w in merged)):
+        return []
+    # 3. Collapse a phrase the model repeated over and over (a classic glitch): keep at most 2 in a row.
+    out: list[Word] = []
+    for w in merged:
+        out.append(w)
+        for n in (1, 2, 3, 4):
+            if len(out) >= 3 * n:
+                a, b, c = out[-3 * n:-2 * n], out[-2 * n:-n], out[-n:]
+                norm = lambda ws: [x.text.lower().strip(".,!?") for x in ws]  # noqa: E731
+                if norm(a) == norm(b) == norm(c):
+                    del out[-n:]
+                    break
+    # 4. Order, clamp to the clip, remove overlaps, give every word a minimum on-screen moment.
+    out = sorted((w for w in out if w.end > 0 and w.start < duration), key=lambda w: w.start)
+    for i, w in enumerate(out):
+        w.start = max(0.0, min(w.start, duration))
+        w.end = max(w.start + 0.08, min(w.end, duration))
+        if i and w.start < out[i - 1].end:
+            out[i - 1].end = max(out[i - 1].start + 0.05, w.start)
+    return out
+
+
+def max_chars(style: dict, width: int) -> int:
+    """How many characters fit on one line at this font and size (so captions never wrap mid-phrase)."""
+    upper, lower = FONT_WIDTH.get(style["font"], (0.6, 0.5))
+    per_char = style["size"] * (width / 1080) * (upper if style["all_caps"] else lower)
+    usable = width - 2 * SIDE_MARGIN * (width / 1080)
+    return max(6, int(usable / max(per_char, 1)))
+
+
+def chunk_words(words: list[Word], per: int, chars: int = 999) -> list[Word]:
+    """Group words into short on-screen captions: at most `per` words and `chars` characters, breaking
+    early at sentence ends and pauses. Captions never overlap, never flash for less than ~0.4 s, and
+    stay up through short gaps so they don't flicker."""
     out: list[Word] = []
     cur: list[Word] = []
-    for w in words:
-        if cur and (len(cur) >= per or w.start - cur[-1].end > 0.6):
+
+    def flush():
+        if cur:
             out.append(Word(cur[0].start, cur[-1].end, " ".join(x.text for x in cur)))
-            cur = []
+            cur.clear()
+
+    for w in words:
+        if cur:
+            text_len = len(" ".join(x.text for x in cur)) + 1 + len(w.text)
+            if len(cur) >= per or text_len > chars or w.start - cur[-1].end > 0.6:
+                flush()
         cur.append(w)
         if re.search(r"[.!?]$", w.text):
-            out.append(Word(cur[0].start, cur[-1].end, " ".join(x.text for x in cur)))
-            cur = []
-    if cur:
-        out.append(Word(cur[0].start, cur[-1].end, " ".join(x.text for x in cur)))
-    # Hold each caption until the next one starts (no flicker in short gaps).
-    for a, b in zip(out, out[1:]):
-        if 0 <= b.start - a.end < 0.35:
-            a.end = b.start
+            flush()
+    flush()
+    for i, a in enumerate(out):
+        nxt = out[i + 1].start if i + 1 < len(out) else None
+        if nxt is not None and 0 <= nxt - a.end < 0.35:
+            a.end = nxt  # hold through short gaps
+        if a.end - a.start < 0.4:
+            a.end = a.start + 0.4 if nxt is None else min(a.start + 0.4, nxt)
+        if nxt is not None and a.end > nxt:
+            a.end = nxt
     return out
 
 
@@ -121,7 +184,7 @@ def build_ass(width: int, height: int, overlay: dict, title_text: str, words: li
         lines.append(f"Dialogue: 1,{_ts(0)},{_ts(end)},Title,,0,0,0,,{{\\pos({width // 2},{y})\\fad(150,300)}}{_clean(title_text, t['all_caps'])}")
     if c["enabled"]:
         y = round(height * c["y_percent"] / 100)
-        for w in chunk_words(words, int(c["words_per_caption"])):
+        for w in chunk_words(words, int(c["words_per_caption"]), max_chars(c, width)):
             if w.end <= 0 or w.start >= duration:
                 continue
             lines.append(f"Dialogue: 0,{_ts(w.start)},{_ts(min(w.end, duration))},Caption,,0,0,0,,{{\\pos({width // 2},{y})}}{_clean(w.text, c['all_caps'])}")

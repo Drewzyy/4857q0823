@@ -61,6 +61,7 @@ export interface Dashboard {
 }
 
 export interface AppSettings {
+  captions: { accuracy: "fast" | "accurate" | "best"; language: string };
   monitoring: { enabled: boolean; interval_minutes: number; streams_to_search: number; max_clip_seconds: number };
   storage: { retention_days: number; max_cache_gb: number; keep_original_imports: boolean };
   ai: { prefer_local_models: boolean; monthly_budget_usd: number; hard_stop_at_budget: boolean; warn_at_percent: number; transcription: string; text_model_tier: string };

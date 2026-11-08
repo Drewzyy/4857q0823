@@ -166,7 +166,8 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
             {resolutions[s.format.aspect].map((r) => <option key={r} value={r}>{r}</option>)}</select></div>
         <div className="field"><label htmlFor="ds-fps">Max frame rate</label>
           <select id="ds-fps" className="select" value={s.format.fps} onChange={(e) => fmt({ fps: Number(e.target.value) })}>
-            {[30, 60].map((f) => <option key={f} value={f}>{f} fps</option>)}</select></div>
+            <option value={60}>60 fps (highest platforms accept)</option><option value={30}>30 fps</option></select>
+          <span className="hint">Clips keep the stream's own frame rate up to this. 60 fps streams stay 60.</span></div>
         <div className="field"><label htmlFor="ds-codec">Codec</label>
           <select id="ds-codec" className="select" value={s.format.codec} onChange={(e) => fmt({ codec: e.target.value as "h264" | "h265" })}>
             <option value="h264">H.264 (works everywhere)</option><option value="h265">H.265 (smaller file)</option></select></div>

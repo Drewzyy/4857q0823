@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+- Default title color is white; captions stay bright yellow.
+- Caption engine: Accurate speech model by default (Fast / Accurate / Best in Settings, plus language), voice-activity detection so silence and music don't produce invented words, drops segments the model flags as non-speech, collapses repeated-phrase loops, removes known filler phrases, merges stray punctuation, fixes overlapping or zero-length word timings, includes a little audio around the clip so edge words aren't cut.
+- Captions sized to fit one line for the chosen font and size, minimum on-screen time, held through short pauses (no flicker), never overlapping.
+- Frame rate: keeps the stream's own rate up to 60 fps (59.94 stays 59.94), falls back to 60 instead of 30 when a stream doesn't report it, prefers 1080p60 downloads. Background blur renders much faster with the same look.
+
 ## 0.3.0
 
 - Text on the video: title at the top for the first 5 seconds, captions synced to speech. Default ALL CAPS, bold, bright yellow with black outline. Font (4 bundled), size, color, outline, position, title duration and words at a time editable per page and per clip, with a live preview.

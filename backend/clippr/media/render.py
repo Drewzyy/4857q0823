@@ -31,11 +31,16 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
     """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in)."""
     src, out = src.resolve(), out.resolve()
     info = probe(src)
-    fps = min(info.fps or 30, fmt.max_fps)
+    # Keep the stream's real frame rate (e.g. 60 or 59.94), capped at what platforms accept. If the
+    # stream doesn't report one, aim for the cap rather than risk throwing frames away.
+    fps = min(info.fps, fmt.max_fps) if info.fps else fmt.max_fps
     W, H = fmt.width, fmt.height
+    bw, bh = W // 4 // 2 * 2, H // 4 // 2 * 2
     vf = (
-        f"[0:v]fps={fps:g},split=2[bg][fg];"
-        f"[bg]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},gblur=sigma=40,eq=brightness=-0.12:saturation=1.15[b];"
+        f"[0:v]fps={fps:.3f},split=2[bg][fg];"
+        # Blur at quarter size then scale up: same look as a full-size blur, many times faster.
+        f"[bg]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},gblur=sigma=10,"
+        f"scale={W}:{H}:flags=bicubic,eq=brightness=-0.12:saturation=1.15[b];"
         f"[fg]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos[f];"
         f"[b][f]overlay=(W-w)/2:(H-h)/2,setsar=1"
         + (",ass=overlay.ass:fontsdir=fonts" if overlay_dir else "")

@@ -27,11 +27,11 @@ The first check of a new source account only records what it already posted. Fro
 
 1. Discord: "@account just posted a new video."
 2. Vyral listens to the post and searches the creator's latest streams (4 by default) for the same audio. It handles jump cuts and music added on top. If it can't find the moment with confidence it says so instead of guessing, and you can paste the exact stream link to retry.
-3. It downloads only that part of the stream in the best quality available and renders it per destination format (1080x1920, up to 60 fps by default).
-4. It writes captions of what's being said (speech-to-text runs on your computer; the ~145 MB speech model downloads once, the first time) and burns into the video:
+3. It downloads only that part of the stream in the best quality available, preferring the 60 fps version, and renders it per destination format (1080x1920). The clip keeps the stream's own frame rate up to 60, the most TikTok, Instagram and YouTube accept; a 30 fps stream stays 30 rather than being padded with fake frames.
+4. It writes captions of what's being said (speech-to-text runs on your computer; the speech model downloads once, the first time: about 480 MB at the default Accurate level, changeable in Settings > Monitoring & storage > Captions) and burns into the video:
    - a **title at the top** for the first 5 seconds (the post's text), and
    - **captions** synced to the speech, a few words at a time.
-   Default look: ALL CAPS, big, bold, bright yellow with a black outline. Font, size, color, outline, position, title duration and words-at-a-time are all editable per page (Destinations > Text, caption & format) and per clip (Ready to Upload > Edit text on video, then Re-render). You can also fix misheard words; timing is kept.
+   Default look: ALL CAPS, big and bold with a black outline; white title, bright yellow captions. Captions are sized to fit on one line, skip silence and music (where speech models tend to invent words), and never overlap or flicker. Font, size, color, outline, position, title duration and words-at-a-time are all editable per page (Destinations > Text, caption & format) and per clip (Ready to Upload > Edit text on video, then Re-render). You can also fix misheard words; timing is kept.
 5. **Ready to Upload** shows the clip with a caption per page:
 
    ```

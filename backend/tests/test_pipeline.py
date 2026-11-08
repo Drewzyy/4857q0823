@@ -123,10 +123,11 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert outs["youtube"]["title"] == "He actually did it 😭"
     assert outs["youtube"]["description"].endswith("#fyp #vyralclips #shorts")
 
-    # Text on the video: default is ALL CAPS bold bright yellow, title at the top for 5 s, captions from speech.
+    # Text on the video: ALL CAPS bold, white title at the top for 5 s, yellow captions from speech.
     tt_out = outs["tiktok"]
     assert tt_out["video_title"] == "He actually did it 😭"
-    assert tt_out["overlay"]["title"]["color"] == "#FFE500" and tt_out["overlay"]["title"]["all_caps"] and tt_out["overlay"]["title"]["duration"] == 5
+    assert tt_out["overlay"]["title"]["color"] == "#FFFFFF" and tt_out["overlay"]["captions"]["color"] == "#FFE500"
+    assert tt_out["overlay"]["title"]["all_caps"] and tt_out["overlay"]["title"]["duration"] == 5
     assert clips[0]["captions_text"] == "no way he actually did that right now" and clips[0]["editable"]
     assert outs["tiktok"]["destination"]["handle"] == "@streamera.tt"
 
@@ -135,10 +136,11 @@ def test_new_post_becomes_ready_to_upload_clip(env):
         path = Path(s.get(ClipOutput, outs["tiktok"]["id"]).file_path)
     info = probe(path)
     assert 22.5 < info.duration < 25.5 and info.has_audio
-    # The yellow title is really burned in at the top during the first seconds, and gone after 5 s.
-    assert yellow_pixels(path, 2.0, top=True) > 2000
-    assert yellow_pixels(path, 7.0, top=True) < 50
-    assert yellow_pixels(path, 1.2, top=False) > 2000  # caption "NO WAY HE" in the lower part
+    # The white title is really burned in at the top during the first seconds, and gone after 5 s.
+    assert white_pixels(path, 2.0) > 2000
+    assert white_pixels(path, 7.0) < 50
+    assert yellow_pixels(path, 1.2, top=False) > 2000  # yellow caption "NO WAY HE" in the lower part
+    assert info.fps == 30  # the stream is 30 fps; never padded with fake frames
 
     # Discord got "new post" then "ready" with both platforms.
     msgs = [httpx.Request("POST", HOOK, content=call.request.content) for call in discord.calls]
@@ -148,16 +150,16 @@ def test_new_post_becomes_ready_to_upload_clip(env):
 
     # Edit the burned-in title + style for one page and re-render it.
     old_file = path
-    r = c.patch(f"/api/outputs/{tt_out['id']}/video", json={"video_title": "NEW TITLE", "overlay": {"title": {"color": "#FFFFFF", "size": 90}}})
+    r = c.patch(f"/api/outputs/{tt_out['id']}/video", json={"video_title": "NEW TITLE", "overlay": {"title": {"color": "#FFE500", "size": 90}}})
     assert r.status_code == 200 and r.json()["render_state"] == "rendering"
     assert c.post(f"/api/outputs/{tt_out['id']}/save").status_code == 409  # not mid-render
     drain(ctx)
     o2 = next(o for o in c.get("/api/clips").json()[0]["outputs"] if o["id"] == tt_out["id"])
-    assert o2["render_state"] == "ready" and o2["video_title"] == "NEW TITLE" and o2["overlay"]["title"]["color"] == "#FFFFFF"
+    assert o2["render_state"] == "ready" and o2["video_title"] == "NEW TITLE" and o2["overlay"]["title"]["color"] == "#FFE500"
     assert o2["version"] != tt_out["version"] and not old_file.exists()
     with ctx.db.session() as s:
         path = Path(s.get(ClipOutput, tt_out["id"]).file_path)
-    assert yellow_pixels(path, 2.0, top=True) < 50 and white_pixels(path, 2.0) > 2000
+    assert white_pixels(path, 2.0) < 50 and yellow_pixels(path, 2.0, top=True) > 2000
     assert c.patch(f"/api/outputs/{tt_out['id']}/video", json={"overlay": {"title": {"color": "red"}}}).status_code == 422
 
     # Fix a misheard word: timing is kept, every page re-renders.

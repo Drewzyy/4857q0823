@@ -70,9 +70,11 @@ def probe(path: Path) -> MediaInfo:
     vm = re.search(r"Stream #.*?Video:.*?(\d{2,5})x(\d{2,5})", text)
     if vm:
         w, h = int(vm[1]), int(vm[2])
-    fm = re.search(r"Video:.*?(\d+(?:\.\d+)?) fps", text)
+    fm = re.search(r"Video:.*?(\d+(?:\.\d+)?) fps", text) or re.search(r"Video:.*?(\d+(?:\.\d+)?) tbr", text)
     if fm:
         fps = float(fm[1])
+        if fps > 240:  # bogus container timebase, not a real frame rate
+            fps = None
     return MediaInfo(dur, w, h, fps, bool(re.search(r"Stream #.*?Audio:", text)))
 
 

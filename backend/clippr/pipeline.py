@@ -300,11 +300,16 @@ class Pipeline:
             shutil.rmtree(work, ignore_errors=True)
 
     def _transcribe(self, source: Path, start: float, dur: float, work: Path) -> tuple[list[Word], str]:
-        """Words spoken in the clip, timed from the clip's start. Captions are skipped (with a note) if this fails."""
+        """Words spoken in the clip, timed from the clip's start. Captions are skipped (with a note) if this fails.
+        A little extra audio is included on both sides so words at the edges aren't cut in half."""
         audio = work / "speech.wav"
+        pad_before = min(0.8, start)
         try:
-            run(["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{dur:.3f}", "-vn", "-ac", "1", "-ar", "16000", str(audio)])
-            return self.ctx.transcriber.words(audio), ""
+            run(["-ss", f"{start - pad_before:.3f}", "-i", str(source), "-t", f"{dur + pad_before + 0.8:.3f}",
+                 "-vn", "-ac", "1", "-ar", "16000", str(audio)])
+            raw = self.ctx.transcriber.words(audio)
+            shifted = [Word(w.start - pad_before, w.end - pad_before, w.text) for w in raw]
+            return overlay.clean_words(shifted, dur), ""
         except (TranscribeError, FFmpegError) as e:
             return [], f"Captions skipped: {e}"
         except Exception as e:

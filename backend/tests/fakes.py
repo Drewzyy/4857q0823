@@ -70,4 +70,5 @@ class FakeTranscriber:
         if self.fail:
             raise TranscribeError("Couldn't load the speech model (ConnectError). Check your internet connection for the one-time download.")
         text = "no way he actually did that right now".split()
-        return [Word(0.4 + i * 0.45, 0.8 + i * 0.45, t) for i, t in enumerate(text)]
+        # Times are relative to the audio Vyral hands over, which starts 0.8 s before the clip.
+        return [Word(1.2 + i * 0.45, 1.6 + i * 0.45, t) for i, t in enumerate(text)]
