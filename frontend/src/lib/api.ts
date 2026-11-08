@@ -1,0 +1,155 @@
+// Typed client for the local backend. Every request carries the per-launch app token.
+
+export type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "twitch";
+export type ConnectorKey = "youtube" | "tiktok" | "meta";
+
+export interface Creator { id: number; name: string; color: string; notes: string; sources?: number; destinations?: number }
+export interface Folder { id: number; name: string; sources?: number }
+
+export interface Source {
+  id: number; platform: Platform; username: string; display_name: string; profile_url: string; avatar_url: string | null;
+  monitoring: "active" | "paused"; notes: string; creator: Creator | null; folder: Folder | null;
+  authorized: boolean; connection_status: string | null; last_synced_at: string | null; created_at: string;
+  route_count: number; videos_discovered: number | null; videos_analyzed: number | null;
+}
+
+export interface PublishSlot { weekday: number; time: string }
+export interface DestinationSettings {
+  default_caption: string; hashtags: string[]; categories: string[]; approval_required: boolean;
+  visibility: "public" | "private" | "unlisted" | "friends"; schedule: PublishSlot[];
+  format: { aspect: "9:16" | "16:9" | "1:1"; resolution: string; fps: number; codec: "h264" | "h265"; bitrate_mbps: number };
+  branding: { watermark_text: string; watermark_position: string };
+  caption_preset: string; title_style: string;
+}
+export interface Destination {
+  id: number; platform: Platform; external_id: string | null; handle: string; display_name: string; avatar_url: string | null;
+  creator: Creator | null; settings: DestinationSettings; enabled: boolean;
+  status: "draft" | "disconnected" | "connected" | "expiring" | "expired" | "error" | "revoked";
+  connection_id: number | null; last_error: string | null; route_count: number; created_at: string;
+}
+export interface Route { id: number; source_id: number; destination_id: number; enabled: boolean; allow_cross_creator: boolean; blocked: boolean }
+export interface Funnel { sources: Source[]; destinations: Destination[]; routes: Route[]; layout: Record<string, { x: number; y: number }> }
+
+export interface SetupStep { title: string; detail: string; url: string | null; copy_value: string | null }
+export interface PlatformStatus {
+  key: ConnectorKey; label: string; configured: boolean; source: "user" | "bundled"; validated_at: string | null;
+  client_id_hint: string | null; custom_redirect: boolean; destination_platforms: Platform[]; supports_source: boolean; redirect_uri: string;
+  credential_fields: { name: string; label: string; secret: boolean; placeholder: string }[];
+  setup_steps: SetupStep[]; notes: string[]; connections: number;
+}
+export interface Connection {
+  id: number; platform: ConnectorKey; display_name: string; avatar_url: string | null; status: string; last_error: string | null;
+  scopes: string[]; access_expires_at: string | null; refresh_expires_at: string | null; last_checked_at: string | null; created_at: string;
+}
+export interface Attempt { id: string; platform: ConnectorKey; purpose: string; status: "pending" | "processing" | "succeeded" | "failed"; message: string; accounts_added: number }
+export interface Job { id: number; kind: string; status: string; attempts: number; max_attempts: number; error: string | null; created_at: string; finished_at: string | null }
+
+export interface Dashboard {
+  accounts: { sources_total: number; sources_monitoring: number; sources_authorized: number; destinations_total: number; destinations_connected: number; creators: number; routes: number };
+  connections: Connection[];
+  platforms: { key: ConnectorKey; label: string; configured: boolean }[];
+  pipeline: { videos_collected: number | null; clips_generated: number | null; clips_awaiting_approval: number | null; clips_published: number | null; tracked_from: Record<string, string> };
+  jobs: { by_status: Record<string, number>; recent: Job[] };
+  storage: { data_dir: string; used_bytes: number; disk_free_bytes: number; disk_total_bytes: number };
+  secret_backend: string;
+}
+
+export interface AppSettings {
+  storage: { max_cache_gb: number; keep_original_imports: boolean };
+  ai: { prefer_local_models: boolean; monthly_budget_usd: number; hard_stop_at_budget: boolean; warn_at_percent: number; transcription: string; text_model_tier: string };
+  processing: { max_concurrent_jobs: number; quality: string };
+  publishing: { require_approval: boolean; allow_auto_publish_rules: boolean };
+  privacy: { allow_cloud_upload_of_footage: boolean };
+}
+export interface Health { ok: boolean; version: string; secret_backend: string; worker_running: boolean; desktop_mode: boolean; ffmpeg: boolean }
+export interface AuditEntry { id: number; ts: string; action: string; entity: string; entity_id: string; details: Record<string, unknown> }
+
+export class ApiError extends Error {
+  constructor(public status: number, public code: string, message: string) { super(message); }
+}
+
+function token(): string {
+  const meta = document.querySelector('meta[name="clippr-token"]') as HTMLMetaElement | null;
+  return meta?.content || (import.meta.env.VITE_CLIPPR_TOKEN as string | undefined) || "";
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { "X-Clippr-Token": token() };
+  let payload: BodyInit | undefined;
+  if (body instanceof FormData) payload = body;
+  else if (body !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, { method, headers, body: payload });
+  } catch {
+    throw new ApiError(0, "offline", "Can't reach the AI Clipper background service. It may be restarting.");
+  }
+  if (res.status === 204) return undefined as T;
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(res.status, data?.error?.code ?? "error", data?.error?.message ?? `Request failed (${res.status})`);
+  return data as T;
+}
+
+const qs = (p: Record<string, string | number | undefined | null>) => {
+  const e = Object.entries(p).filter(([, v]) => v !== undefined && v !== null && v !== "");
+  return e.length ? "?" + new URLSearchParams(e.map(([k, v]) => [k, String(v)])).toString() : "";
+};
+
+export const api = {
+  health: () => request<Health>("GET", "/health"),
+  dashboard: () => request<Dashboard>("GET", "/dashboard"),
+  creators: () => request<Creator[]>("GET", "/creators"),
+  createCreator: (b: { name: string; color?: string }) => request<Creator>("POST", "/creators", b),
+  updateCreator: (id: number, b: Partial<Creator>) => request<Creator>("PATCH", `/creators/${id}`, b),
+  deleteCreator: (id: number) => request<void>("DELETE", `/creators/${id}`),
+  folders: () => request<Folder[]>("GET", "/folders"),
+  createFolder: (name: string) => request<Folder>("POST", "/folders", { name }),
+  renameFolder: (id: number, name: string) => request<Folder>("PATCH", `/folders/${id}`, { name }),
+  deleteFolder: (id: number) => request<void>("DELETE", `/folders/${id}`),
+  sources: (f: { q?: string; creator_id?: number | null; folder_id?: number | null; monitoring?: string; platform?: string } = {}) =>
+    request<Source[]>("GET", "/sources" + qs(f)),
+  addSource: (b: { input: string; platform: Platform; creator_id?: number | null; folder_id?: number | null }) => request<Source>("POST", "/sources", b),
+  updateSource: (id: number, b: Partial<{ creator_id: number | null; folder_id: number | null; monitoring: string; notes: string }>) =>
+    request<Source>("PATCH", `/sources/${id}`, b),
+  deleteSource: (id: number) => request<void>("DELETE", `/sources/${id}`),
+  bulkSources: (b: { ids: number[]; action: "pause" | "resume" | "delete" | "assign"; creator_id?: number | null; folder_id?: number | null }) =>
+    request<{ updated: number }>("POST", "/sources/bulk", b),
+  importSourcesFile: (file: File) => { const fd = new FormData(); fd.append("file", file); return request<ImportResult>("POST", "/sources/import", fd); },
+  importSourcesText: (b: { text: string; platform: Platform; creator_id?: number | null; folder_id?: number | null }) =>
+    request<ImportResult>("POST", "/sources/import-text", b),
+  destinations: () => request<Destination[]>("GET", "/destinations"),
+  addDestinationDraft: (b: { platform: Platform; display_name: string; creator_id?: number | null }) => request<Destination>("POST", "/destinations", b),
+  updateDestination: (id: number, b: Partial<{ display_name: string; creator_id: number | null; enabled: boolean; settings: Partial<DestinationSettings> }>) =>
+    request<Destination>("PATCH", `/destinations/${id}`, b),
+  deleteDestination: (id: number) => request<void>("DELETE", `/destinations/${id}`),
+  funnel: () => request<Funnel>("GET", "/funnel"),
+  addRoute: (b: { source_id: number; destination_id: number; allow_cross_creator?: boolean }) => request<Route>("POST", "/funnel/routes", b),
+  updateRoute: (id: number, b: Partial<{ enabled: boolean; allow_cross_creator: boolean }>) => request<Route>("PATCH", `/funnel/routes/${id}`, b),
+  deleteRoute: (id: number) => request<void>("DELETE", `/funnel/routes/${id}`),
+  autoRoute: (creator_id?: number | null) => request<{ created: number }>("POST", "/funnel/auto-route", { creator_id: creator_id ?? null }),
+  saveLayout: (positions: Record<string, { x: number; y: number }>) => request<{ saved: number }>("PUT", "/funnel/layout", { positions }),
+  resolve: (sourceId: number) => request<(Destination & { route_id: number })[]>("GET", `/funnel/resolve/${sourceId}`),
+  platforms: () => request<PlatformStatus[]>("GET", "/platforms"),
+  setApp: (key: ConnectorKey, b: { client_id: string; client_secret: string; redirect_uri?: string | null }) => request<PlatformStatus>("PUT", `/platforms/${key}/app`, b),
+  uploadGoogleClient: (file: File) => { const fd = new FormData(); fd.append("file", file); return request<PlatformStatus>("POST", "/platforms/youtube/client-file", fd); },
+  removeApp: (key: ConnectorKey) => request<void>("DELETE", `/platforms/${key}/app`),
+  startConnect: (b: { platform: ConnectorKey; purpose?: "destination" | "source"; link_destination_id?: number | null }) =>
+    request<{ attempt: Attempt; authorize_url: string; opened_by_app: boolean }>("POST", "/connections/start", b),
+  attempt: (id: string) => request<Attempt>("GET", `/connections/attempts/${encodeURIComponent(id)}`),
+  connections: () => request<Connection[]>("GET", "/connections"),
+  refreshConnection: (id: number) => request<{ status: string }>("POST", `/connections/${id}/refresh`),
+  disconnect: (id: number) => request<void>("DELETE", `/connections/${id}`),
+  settings: () => request<AppSettings>("GET", "/settings"),
+  saveSettings: (b: Partial<{ [K in keyof AppSettings]: Partial<AppSettings[K]> }>) => request<AppSettings>("PUT", "/settings", b),
+  jobs: () => request<Job[]>("GET", "/jobs"),
+  cancelJob: (id: number) => request("POST", `/jobs/${id}/cancel`),
+  retryJob: (id: number) => request("POST", `/jobs/${id}/retry`),
+  audit: () => request<AuditEntry[]>("GET", "/audit"),
+};
+
+export interface ImportResult { added: number; skipped_duplicates: number; errors: { line: number; input: string; message: string }[] }
+
+export const PLATFORM_LABEL: Record<string, string> = {
+  tiktok: "TikTok", youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", twitch: "Twitch", meta: "Facebook & Instagram",
+};
+export const CONNECTOR_FOR: Record<string, ConnectorKey> = { tiktok: "tiktok", youtube: "youtube", instagram: "meta", facebook: "meta" };

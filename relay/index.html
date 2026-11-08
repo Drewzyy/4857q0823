@@ -1,0 +1,26 @@
+<!doctype html>
+<!--
+  Optional OAuth relay for platforms that refuse http://localhost redirect URIs (Meta in Live mode).
+  Host this single static file on any HTTPS host you control (GitHub Pages works), register its URL
+  as the redirect URI, and paste the same URL into AI Clipper's Meta setup under "Advanced".
+  It forwards the browser back to the app on this computer. It stores nothing and loads nothing.
+  The authorization code alone is useless without the app secret, which never leaves your Mac.
+-->
+<html lang="en"><head><meta charset="utf-8"><title>Returning to AI Clipper…</title>
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<style>body{background:#0d0d10;color:#a3a3ad;font:15px -apple-system,sans-serif;display:grid;place-items:center;height:100vh;margin:0}</style>
+</head><body><p id="m">Returning to AI Clipper…</p>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var state = q.get("state") || "";
+  var m = /^(\d{2,5})\.[A-Za-z0-9_-]{16,64}$/.exec(state);
+  if (!m) { document.getElementById("m").textContent = "This sign-in link is invalid. Start again from AI Clipper."; return; }
+  var port = Number(m[1]);
+  if (port < 1024 || port > 65535) { document.getElementById("m").textContent = "Invalid sign-in link."; return; }
+  var out = new URLSearchParams();
+  ["code", "state", "error", "error_reason", "error_description"].forEach(function (k) { if (q.has(k)) out.set(k, q.get(k)); });
+  location.replace("http://127.0.0.1:" + port + "/oauth/callback/meta?" + out.toString());
+})();
+</script></body></html>

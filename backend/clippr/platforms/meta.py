@@ -62,6 +62,7 @@ class MetaConnector(OAuthConnector):
             SetupStep("Create a Meta app", "Pick 'Other' then 'Business' (or the 'Manage everything on your Page' use case).", "https://developers.facebook.com/apps/creation/"),
             SetupStep("Add Facebook Login for Business", "In Settings, add this as a Valid OAuth Redirect URI. In Development mode localhost is accepted.", None, redirect_uri),
             SetupStep("Add the Instagram product", "Choose 'API setup with Facebook login' so linked Instagram accounts can publish."),
+            SetupStep("If Meta rejects the localhost address", "Host relay/index.html from the AI Clipper folder on any HTTPS site (GitHub Pages is free), register that URL instead, and paste it under Advanced below."),
             SetupStep("Paste the App ID and App secret below", "They're under App settings > Basic. AI Clipper checks them with Meta immediately.", "https://developers.facebook.com/apps/"),
         ]
 

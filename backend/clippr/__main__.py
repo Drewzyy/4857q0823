@@ -18,8 +18,8 @@ def main() -> None:
         os.environ["CLIPPR_DATA_DIR"] = args.data_dir
     import uvicorn
 
-    from .app import create_app
-    from .config import Config
+    from clippr.app import create_app
+    from clippr.config import Config
 
     cfg = Config(port=args.port)
     if args.frontend:

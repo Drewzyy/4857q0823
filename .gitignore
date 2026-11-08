@@ -14,3 +14,7 @@ desktop/src-tauri/binaries/
 .clippr-data/
 .env
 .DS_Store
+backend/build/
+*.egg-info/
+desktop/node_modules/
+desktop/src-tauri/gen/

@@ -182,3 +182,17 @@ def test_network_failure_is_friendly(client):
     respx.post(youtube.TOKEN_URL).mock(side_effect=httpx.ConnectError("down"))
     r = client.put("/api/platforms/youtube/app", json={"client_id": "a", "client_secret": "b"})
     assert r.status_code == 502 and "internet" in r.json()["error"]["message"]
+
+
+@respx.mock
+def test_meta_https_relay_redirect(client):
+    respx.get(f"{meta.GRAPH}/oauth/access_token").mock(return_value=httpx.Response(200, json={"access_token": "app|tok"}))
+    bad = client.put("/api/platforms/meta/app", json={"client_id": "a", "client_secret": "b", "redirect_uri": "http://evil.example/cb"})
+    assert bad.status_code == 422
+    ok = client.put("/api/platforms/meta/app", json={"client_id": "a", "client_secret": "b", "redirect_uri": "https://me.github.io/relay/"})
+    assert ok.status_code == 200 and ok.json()["redirect_uri"] == "https://me.github.io/relay/" and ok.json()["custom_redirect"]
+    _, q = start(client, "meta")
+    assert q["redirect_uri"] == "https://me.github.io/relay/"
+    # tiktok cannot use a custom redirect
+    respx.post(tiktok.TOKEN_URL).mock(return_value=httpx.Response(200, json={"access_token": "x"}))
+    assert client.put("/api/platforms/tiktok/app", json={"client_id": "a", "client_secret": "b", "redirect_uri": "https://x.io/"}).status_code == 422

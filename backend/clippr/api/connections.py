@@ -32,12 +32,13 @@ def platforms(c=Depends(ctx)):
 class AppCredsIn(BaseModel):
     client_id: str = Field(min_length=1, max_length=300)
     client_secret: str = Field(min_length=1, max_length=300)
+    redirect_uri: str | None = Field(None, max_length=300)
 
 
 @router.put("/platforms/{key}/app")
 def set_app(key: str, body: AppCredsIn, c=Depends(ctx)):
     try:
-        return c.connections.set_app_credentials(key, body.client_id, body.client_secret)
+        return c.connections.set_app_credentials(key, body.client_id, body.client_secret, body.redirect_uri)
     except PlatformError as e:
         raise _err(e)
 

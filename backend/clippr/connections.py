@@ -83,21 +83,36 @@ class ConnectionService:
             return AppCredentials(bundled["client_id"], bundled.get("client_secret", ""))
         return None
 
-    def set_app_credentials(self, key: str, client_id: str, client_secret: str) -> dict[str, Any]:
+    def redirect_uri(self, key: str) -> str:
+        stored = self.ctx.secrets.get(f"app:{key}") or {}
+        return stored.get("redirect_uri") or self.connector(key).redirect_uri(self.ctx.config.base_url)
+
+    def set_app_credentials(self, key: str, client_id: str, client_secret: str, redirect_uri: str | None = None) -> dict[str, Any]:
         conn = self.connector(key)
         client_id, client_secret = client_id.strip(), client_secret.strip()
         if not client_id or not client_secret or len(client_id) > 300 or len(client_secret) > 300:
             raise PlatformError("Both fields are required", code="validation")
+        redirect_uri = (redirect_uri or "").strip() or None
+        if redirect_uri:
+            from urllib.parse import urlparse
+
+            u = urlparse(redirect_uri)
+            if key != "meta" or u.scheme != "https" or not u.netloc or u.query or u.fragment or len(redirect_uri) > 300:
+                raise PlatformError("A custom redirect must be a plain https:// URL (Facebook & Instagram only).", code="validation")
         app = AppCredentials(client_id, client_secret)
         with self._http_factory() as http:
             try:
                 conn.validate_app(http, app, conn.redirect_uri(self.ctx.config.base_url))
             except httpx.HTTPError:
                 raise PlatformError(f"Couldn't reach {conn.label} to check the credentials. Check your internet connection and try again.", code="network")
-        self.ctx.secrets.set(f"app:{key}", {"client_id": client_id, "client_secret": client_secret})
+        record = {"client_id": client_id, "client_secret": client_secret}
+        if redirect_uri:
+            record["redirect_uri"] = redirect_uri
+        self.ctx.secrets.set(f"app:{key}", record)
         with self.ctx.db.session() as s:
             meta = self._app_meta(s)
-            meta[key] = {"validated_at": datetime.now(timezone.utc).isoformat(), "client_id_hint": client_id[:6] + "…" + client_id[-4:]}
+            meta[key] = {"validated_at": datetime.now(timezone.utc).isoformat(), "client_id_hint": client_id[:6] + "…" + client_id[-4:],
+                         "redirect_uri": redirect_uri}
             self._save_app_meta(s, meta)
             audit(s, "platform_app.configured", "platform", key)
         return self.platform_status(key)
@@ -139,7 +154,8 @@ class ConnectionService:
                 "validated_at": (meta.get(k) or {}).get("validated_at"),
                 "client_id_hint": (meta.get(k) or {}).get("client_id_hint"),
                 "destination_platforms": list(c.destination_platforms), "supports_source": c.supports_source,
-                "redirect_uri": c.registered_redirect_uri(base),
+                "redirect_uri": (meta.get(k) or {}).get("redirect_uri") or c.registered_redirect_uri(base),
+                "custom_redirect": bool((meta.get(k) or {}).get("redirect_uri")),
                 "credential_fields": [vars(f) for f in c.credential_fields],
                 "setup_steps": [vars(st) for st in c.setup_steps(c.registered_redirect_uri(base))],
                 "notes": c.notes, "connections": counts.get(k, 0),
@@ -168,7 +184,7 @@ class ConnectionService:
             # Port prefix lets an optional HTTPS relay page bounce the browser back to this app.
             state = f"{self.ctx.config.port}.{secrets.token_urlsafe(24)}"
             verifier = new_pkce_verifier() if conn.uses_pkce else None
-            attempt = Attempt(state, key, purpose, conn.redirect_uri(self.ctx.config.base_url), verifier, link_destination_id)
+            attempt = Attempt(state, key, purpose, self.redirect_uri(key), verifier, link_destination_id)
             self._attempts[state] = attempt
         return attempt, conn.authorize_url(app, attempt.redirect_uri, state, verifier, purpose)
 

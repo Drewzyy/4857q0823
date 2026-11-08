@@ -39,7 +39,7 @@ def _dir_size(path: Path, limit: int = 200_000) -> int:
 def health(c=Depends(ctx), s: Session = Depends(db)):
     s.execute(select(1))
     return {"ok": True, "version": __version__, "secret_backend": c.secrets.name,
-            "worker_running": c.config.run_worker, "ffmpeg": shutil.which("ffmpeg") is not None}
+            "worker_running": c.config.run_worker, "desktop_mode": c.config.desktop_mode, "ffmpeg": shutil.which("ffmpeg") is not None}
 
 
 @router.get("/dashboard")
