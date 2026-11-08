@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3
+
+- Installer checks now install exactly like a person: on Mac, open the .dmg, drag Vyral to Applications, launch it from there; on Windows, run the installer. A build is only published if the installed app's window loads the interface.
+- Background service trimmed (unused packages removed).
+- Groundwork for automatic updates (update status in the app).
+
 ## 0.3.2
 
 - Fixed: the installed app could hang forever on "Starting background service". The background service now ships as a ready-to-run folder (starts in about a second instead of unpacking ~250 MB every launch), macOS hardened runtime is off (it blocked the service from loading its libraries; it's only needed for paid notarization), and local networking is explicitly allowed.

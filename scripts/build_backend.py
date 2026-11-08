@@ -28,7 +28,11 @@ def main() -> None:
            "--collect-all", "tokenizers", "--collect-submodules", "huggingface_hub",
            "--add-binary", f"{ffmpeg}{sep}imageio_ffmpeg/binaries",
            "--collect-submodules", "clippr", "--collect-submodules", "keyring", "--collect-submodules", "yt_dlp",
-           "--hidden-import", "keyring.backends.macOS", "--hidden-import", "keyring.backends.Windows"]
+           "--hidden-import", "keyring.backends.macOS", "--hidden-import", "keyring.backends.Windows",
+           # Pulled in as optional extras by dependencies; Vyral never uses them.
+           "--exclude-module", "pandas", "--exclude-module", "PIL", "--exclude-module", "lxml",
+           "--exclude-module", "matplotlib", "--exclude-module", "tkinter", "--exclude-module", "IPython",
+           "--exclude-module", "pytest"]
     if sys.platform == "win32":
         cmd.append("--noconsole")
     cmd.append(str(BACKEND / "clippr" / "__main__.py"))

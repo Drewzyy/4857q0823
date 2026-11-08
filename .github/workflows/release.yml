@@ -88,20 +88,42 @@ jobs:
         working-directory: desktop
         run: npm ci && npx tauri build --bundles ${{ matrix.bundles }}
 
-      - name: Install and launch the real app, wait until its window shows the interface
+      - name: Install the app like a person would (Mac)
+        if: runner.os == 'macOS'
+        run: |
+          DMG=$(ls desktop/src-tauri/target/release/bundle/dmg/*.dmg | head -1)
+          MNT=$(hdiutil attach -nobrowse -readonly "$DMG" | tail -1 | awk -F'\t' '{print $NF}')
+          echo "Disk image contents (should be Vyral.app + an Applications shortcut to drag onto):"
+          ls -la "$MNT"
+          test -L "$MNT/Applications"
+          cp -R "$MNT/Vyral.app" /Applications/
+          hdiutil detach "$MNT"
+          echo "APP_EXE=/Applications/Vyral.app/Contents/MacOS/$(ls /Applications/Vyral.app/Contents/MacOS | head -1)" >> "$GITHUB_ENV"
+
+      - name: Install the app like a person would (Windows, silent installer)
+        if: runner.os == 'Windows'
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem desktop/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          "Installer size: {0:N0} MB" -f ($setup.Length / 1MB)
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -PassThru
+          while (-not $p.HasExited) {
+            Start-Sleep 20
+            $dir = Join-Path $env:LOCALAPPDATA 'Vyral'
+            $mb = if (Test-Path $dir) { [math]::Round(((Get-ChildItem $dir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1MB) } else { 0 }
+            "Still installing after $([int]$sw.Elapsed.TotalSeconds) s, $mb MB written"
+          }
+          "Installer finished in $([int]$sw.Elapsed.TotalSeconds) s with exit code $($p.ExitCode)"
+          $exe = Get-ChildItem $env:LOCALAPPDATA -Recurse -Depth 3 -Filter 'vyral.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "Installed Vyral.exe not found" }
+          "APP_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Launch the installed app and wait until its window shows the interface
         timeout-minutes: 6
         run: |
-          if [ "${{ matrix.label }}" = "mac" ]; then
-            APP=$(ls -d desktop/src-tauri/target/release/bundle/macos/*.app | head -1)
-            "$APP/Contents/MacOS/$(ls "$APP/Contents/MacOS" | grep -v clippr | head -1)" > "$RUNNER_TEMP/app.log" 2>&1 &
-          else
-            SETUP=$(ls desktop/src-tauri/target/release/bundle/nsis/*-setup.exe | head -1)
-            "$SETUP" /S
-            sleep 5
-            EXE=$(find "$LOCALAPPDATA" -maxdepth 3 -iname "vyral.exe" | head -1)
-            echo "installed: $EXE"
-            "$EXE" > "$RUNNER_TEMP/app.log" 2>&1 &
-          fi
+          "$APP_EXE" > "$RUNNER_TEMP/app.log" 2>&1 &
           for i in $(seq 1 120); do
             H=$(curl -s -m 3 http://127.0.0.1:8765/api/health || true)
             echo "$H" | grep -q '"ui_served":true' && { echo "App window loaded the interface after ~$((i*2)) s: $H"; exit 0; }
@@ -133,6 +155,7 @@ jobs:
 
   release:
     needs: build
+    if: ${{ !cancelled() }}  # publish whichever installers passed every check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -142,16 +165,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          ls dist/* >/dev/null 2>&1 || { echo "No installer passed its checks; nothing to publish."; exit 1; }
           VERSION=$(python3 -c "import json;print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
-          cat > notes.md <<NOTES
-          **Download the file for your computer below, under Assets.**
-
-          - **Mac (Apple Silicon: M1/M2/M3/M4):** Vyral-Mac-AppleSilicon.dmg. Open it and drag Vyral into Applications. The first time, macOS will say it can't verify the developer: open **System Settings > Privacy & Security**, scroll down, click **Open Anyway**.
-          - **Windows 10/11:** Vyral-Windows-Setup.exe. Run it. If Windows shows "Windows protected your PC", click **More info > Run anyway**.
-
-          Those warnings appear because the app isn't signed with a paid Apple / Microsoft certificate yet.
-
-          Built from ${GITHUB_SHA::7}, version ${VERSION}.
-          NOTES
+          {
+            echo "**Download the file for your computer below, under Assets.**"
+            echo
+            if [ -f dist/Vyral-Mac-AppleSilicon.dmg ]; then
+              echo "- **Mac (Apple Silicon: M1 to M4):** Vyral-Mac-AppleSilicon.dmg. Open it and drag Vyral onto the Applications folder. The first time, macOS says it can't verify the developer: open **System Settings > Privacy & Security**, scroll down, click **Open Anyway**."
+            fi
+            if [ -f dist/Vyral-Windows-Setup.exe ]; then
+              echo "- **Windows 10/11:** Vyral-Windows-Setup.exe. Run it. If Windows shows \"Windows protected your PC\", click **More info > Run anyway**."
+            fi
+            echo
+            echo "Those warnings appear because the app isn't signed with a paid Apple / Microsoft certificate yet."
+            echo
+            echo "Built from ${GITHUB_SHA::7}, version ${VERSION}. Every installer here was installed and launched on a real Mac / Windows machine before publishing."
+          } > notes.md
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest dist/* --title "Vyral ${VERSION} (latest build)" --notes-file notes.md --target "$GITHUB_SHA" --latest

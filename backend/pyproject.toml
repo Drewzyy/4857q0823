@@ -1,6 +1,6 @@
 [project]
 name = "clippr"
-version = "0.3.2"
+version = "0.3.3"
 description = "Vyral local backend: monitoring, clip pipeline, API, database and job runner"
 requires-python = ">=3.11"
 dependencies = [
