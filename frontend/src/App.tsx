@@ -13,10 +13,11 @@ import Ready from "./pages/Ready";
 import ActivityPage from "./pages/Activity";
 import UpdateBanner from "./components/UpdateBanner";
 import AnalyticsPage from "./pages/AnalyticsPage";
+import EditorPage from "./pages/Editor";
 
 const PAGES: Record<string, JSX.Element> = {
   "/": <Dashboard />, "/ready": <Ready />, "/activity": <ActivityPage />, "/sources": <Sources />, "/destinations": <Destinations />,
-  "/funnel": <FunnelPage />, "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />,
+  "/funnel": <FunnelPage />, "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />, "/editor": <EditorPage />,
 };
 
 export default function App() {
@@ -70,6 +71,7 @@ export default function App() {
           {MODULES.map((m) => (
             <Route key={m.path} path={m.path} element={PAGES[m.path] ?? <Planned module={m} />} />
           ))}
+          <Route path="/editor/:clipId" element={<EditorPage />} />
           <Route path="*" element={<Dashboard />} />
         </Routes>
       </main>

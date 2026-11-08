@@ -9,14 +9,12 @@ export interface ModuleDef {
 export const MODULES: ModuleDef[] = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard, group: "Overview", status: "ready" },
   { path: "/ready", label: "Ready to Upload", icon: Download, group: "Overview", status: "ready" },
+  { path: "/editor", label: "Video Editor", icon: Clapperboard, group: "Overview", status: "ready" },
   { path: "/activity", label: "Activity", icon: Activity, group: "Overview", status: "ready" },
   { path: "/analytics", label: "Analytics", icon: BarChart3, group: "Overview", status: "ready" },
   { path: "/sources", label: "Source Accounts", icon: Users, group: "Accounts", status: "ready" },
   { path: "/destinations", label: "Destinations", icon: Upload, group: "Accounts", status: "ready" },
   { path: "/funnel", label: "Account Funnel", icon: GitFork, group: "Accounts", status: "ready" },
-  { path: "/editor", label: "Video Editor", icon: Clapperboard, group: "Coming next", status: "planned", milestone: 3,
-    summary: "Fine-tune a clip before you download it: captions, trims, zoom and text.",
-    scope: ["Bold orange/white word-synced captions, fully customizable", "Trim, split, speed, zoom and text overlays", "Undo/redo, autosave, presets"] },
 
   { path: "/settings", label: "Settings", icon: Settings, group: "", status: "ready" },
 ];

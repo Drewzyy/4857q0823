@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle2, Clock, Copy, Download, ExternalLink, FolderDown, RefreshCw, Trash2, Type, Undo2 } from "lucide-react";
+import { Check, CheckCircle2, Clapperboard, Clock, Copy, Download, ExternalLink, FolderDown, RefreshCw, Trash2, Type, Undo2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, PLATFORM_LABEL, type ClipOutputT, type ClipT } from "../lib/api";
 import { bytes, ConfirmModal, Empty, ErrorNote, Loading, PlatformBadge, relTime, useToast } from "../components/ui";
@@ -87,6 +87,7 @@ function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: 
         <div className="row wrap">
           <h2 className="ellipsis" style={{ flex: 1, minWidth: 0 }}>{clip.title}</h2>
           {clip.creator && <span className="chip"><span className="dot" style={{ background: clip.creator.color }} />{clip.creator.name}</span>}
+          {clip.editable && <Link className="btn sm" to={`/editor/${clip.id}`}><Clapperboard size={13} />Edit video</Link>}
           <button className="btn ghost icon" aria-label="Delete clip" onClick={onRemove}><Trash2 size={14} /></button>
         </div>
         <div className="row wrap small muted" style={{ gap: 14 }}>

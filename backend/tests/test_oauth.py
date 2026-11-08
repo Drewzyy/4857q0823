@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-import pytest
 import respx
 
 from clippr.models import Connection
@@ -55,7 +54,7 @@ def test_youtube_setup_and_connect(client, ctx):
     assert good.status_code == 200, good.text
     assert good.json()["configured"] is True and "good-secret" not in good.text
 
-    body, q = start(client, "youtube")
+    _body, q = start(client, "youtube")
     assert q["client_id"] == "good-id" and q["code_challenge_method"] == "S256" and q["access_type"] == "offline"
     assert q["redirect_uri"] == "http://127.0.0.1:8765/oauth/callback/youtube"
     state = q["state"]

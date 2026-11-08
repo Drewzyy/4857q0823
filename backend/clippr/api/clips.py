@@ -20,9 +20,10 @@ from sqlalchemy.orm import Session
 from .. import notify
 from ..audit import audit
 from ..fetch import FetchError
+from ..media.ffmpeg import probe
 from ..media.overlay import Word, apply_text_edit
 from ..models import Clip, ClipOutput, Creator, ReferenceVideo, Setting, SourceAccount
-from ..schemas import OverlaySettings
+from ..schemas import ClipEdit, OverlaySettings
 from .deps import ApiError, ctx, db, get_or_404
 
 router = APIRouter()
@@ -66,7 +67,7 @@ def list_clips(status: Literal["ready", "uploaded", "expired", "all"] = "ready",
                     "creator": {"id": c.creator.id, "name": c.creator.name, "color": c.creator.color} if c.creator else None,
                     "vod_url": c.vod_url, "vod_start": c.vod_start, "vod_end": c.vod_end, "stream_date": _dt(c.stream_date),
                     "captions_text": " ".join(w["text"] for w in (c.words or [])), "has_captions": bool(c.words),
-                    "captions_note": c.captions_note, "editable": bool(c.source_path and Path(c.source_path).exists()),
+                    "captions_note": c.captions_note, "editable": _has_footage(c),
                     "reference": _reference(c.reference), "outputs": outputs})
     return out
 
@@ -146,13 +147,32 @@ class VideoTextIn(BaseModel):
     apply_style_to_all: bool = False  # use this style for every page of this clip
 
 
+def _has_footage(clip: Clip) -> bool:
+    """The downloaded stream section the clip was cut from is deleted when the clip expires."""
+    return bool(clip.source_path and Path(clip.source_path).exists())
+
+
+def _footage(clip: Clip) -> Path:
+    if not _has_footage(clip):
+        raise ApiError(410, "expired", "The original footage for this clip has expired, so it can't be changed anymore")
+    return Path(clip.source_path)
+
+
+def _footage_seconds(clip: Clip) -> float:
+    # The section always covers the matched cut, so that's a safe floor if the file reports no length.
+    return probe(_footage(clip)).duration or (clip.source_start or 0.0) + (clip.source_duration or 0.0)
+
+
+def _live_outputs(s: Session, cid: int) -> list[ClipOutput]:
+    return list(s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid, ClipOutput.status != "expired")).unique())
+
+
 @router.patch("/outputs/{oid}/video")
 def edit_video_text(oid: int, body: VideoTextIn, c=Depends(ctx), s: Session = Depends(db)):
     """Change the title / caption style burned into this video, then re-render it."""
     o = get_or_404(s, ClipOutput, oid, "Clip")
     clip = s.get(Clip, o.clip_id)
-    if not clip.source_path or not Path(clip.source_path).exists():
-        raise ApiError(410, "expired", "The original footage for this clip has expired, so it can't be re-rendered")
+    _footage(clip)
     targets = [o]
     if body.overlay is not None:
         try:
@@ -161,7 +181,7 @@ def edit_video_text(oid: int, body: VideoTextIn, c=Depends(ctx), s: Session = De
             first = e.errors()[0]
             raise ApiError(422, "validation", f"{'.'.join(str(x) for x in first['loc'])}: {first['msg']}")
         if body.apply_style_to_all:
-            targets = list(s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id, ClipOutput.status != "expired")).unique())
+            targets = _live_outputs(s, clip.id)
         for t in targets:
             t.overlay = ov
     if body.video_title is not None:
@@ -173,6 +193,37 @@ def edit_video_text(oid: int, body: VideoTextIn, c=Depends(ctx), s: Session = De
     return _output(o)
 
 
+@router.get("/clips/{cid}/editor")
+def editor_data(cid: int, s: Session = Depends(db)):
+    clip = get_or_404(s, Clip, cid, "Clip")
+    start = round(clip.source_start or 0.0, 2)
+    edit = clip.edit or ClipEdit(start=start, end=round(start + (clip.source_duration or 1.0), 2)).model_dump()
+    return {"id": clip.id, "title": clip.title, "section_duration": _footage_seconds(clip),
+            "original_start": clip.source_start or 0.0, "original_duration": clip.source_duration or 0.0,
+            "edit": edit, "words": clip.words or [], "outputs": [_output(o) for o in _live_outputs(s, cid)]}
+
+
+@router.get("/media/clips/{cid}/source")
+def clip_source(cid: int, s: Session = Depends(db)):
+    return FileResponse(_footage(get_or_404(s, Clip, cid, "Clip")), media_type="video/mp4")
+
+
+@router.put("/clips/{cid}/edit")
+def save_edit(cid: int, body: ClipEdit, c=Depends(ctx), s: Session = Depends(db)):
+    """Save the editor's changes and re-render every page of this clip."""
+    clip = get_or_404(s, Clip, cid, "Clip")
+    if body.end > _footage_seconds(clip) + 0.05 or body.end - body.start < 1:
+        raise ApiError(422, "validation", "The clip must be at least 1 second long and inside the downloaded footage")
+    clip.edit = body.model_dump()
+    outs = _live_outputs(s, cid)
+    for o in outs:
+        o.render_state, o.render_error = "rendering", None
+    s.flush()
+    c.jobs.enqueue("clip.rerender", {"output_ids": [o.id for o in outs]}, max_attempts=1, session=s)
+    audit(s, "clip.edited", "clip", cid)
+    return {"rendering": len(outs)}
+
+
 class CaptionsIn(BaseModel):
     text: str = Field(max_length=20000)
 
@@ -181,12 +232,11 @@ class CaptionsIn(BaseModel):
 def edit_captions(cid: int, body: CaptionsIn, c=Depends(ctx), s: Session = Depends(db)):
     """Fix wrongly heard words. Timing is kept; every page of this clip is re-rendered."""
     clip = get_or_404(s, Clip, cid, "Clip")
-    if not clip.source_path or not Path(clip.source_path).exists():
-        raise ApiError(410, "expired", "The original footage for this clip has expired, so it can't be re-rendered")
+    _footage(clip)
     if not clip.words:
         raise ApiError(409, "no_captions", "This clip has no captions to edit")
     clip.words = [w.to_dict() for w in apply_text_edit([Word.from_dict(w) for w in clip.words], body.text)]
-    outs = list(s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid, ClipOutput.status != "expired")).unique())
+    outs = _live_outputs(s, cid)
     for o in outs:
         o.render_state, o.render_error = "rendering", None
     s.flush()

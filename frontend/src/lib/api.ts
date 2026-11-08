@@ -88,6 +88,12 @@ export interface ClipT {
   stream_date: string | null; captions_text: string; has_captions: boolean; captions_note: string; editable: boolean;
   reference: RefPost | null; outputs: ClipOutputT[];
 }
+export interface TextOverlayT { text: string; start: number; end: number; y_percent: number; size: number; color: string; font: FontKey; all_caps: boolean; outline: number }
+export interface ClipEditT { start: number; end: number; zoom: number; pan_x: number; pan_y: number; speed: number; texts: TextOverlayT[] }
+export interface EditorData {
+  id: number; title: string; section_duration: number; original_start: number; original_duration: number;
+  edit: ClipEditT; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
+}
 export interface NotifyState { configured: boolean; webhook_hint: string | null; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }
 
 export interface AppUpdate {
@@ -200,6 +206,9 @@ export const api = {
     `/api/media/outputs/${id}?t=${encodeURIComponent(token())}${download ? "&download=true" : ""}${version ? `&v=${encodeURIComponent(version)}` : ""}`,
   editVideoText: (id: number, b: { video_title?: string; overlay?: Partial<Overlay>; apply_style_to_all?: boolean }) => request<ClipOutputT>("PATCH", `/outputs/${id}/video`, b),
   editCaptions: (clipId: number, text: string) => request<{ captions_text: string; rendering: number }>("PATCH", `/clips/${clipId}/captions`, { text }),
+  editor: (clipId: number) => request<EditorData>("GET", `/clips/${clipId}/editor`),
+  saveEdit: (clipId: number, e: ClipEditT) => request<{ rendering: number }>("PUT", `/clips/${clipId}/edit`, e),
+  sourceUrl: (clipId: number) => `/api/media/clips/${clipId}/source?t=${encodeURIComponent(token())}`,
   references: () => request<RefPost[]>("GET", "/references"),
   addReference: (b: { url: string; creator_id?: number | null; source_id?: number | null }) => request<{ id: number }>("POST", "/references", b),
   retryReference: (id: number, vod_url?: string) => request<RefPost>("POST", `/references/${id}/retry`, { vod_url: vod_url || null }),

@@ -160,7 +160,7 @@ def _clean(text: str, caps: bool) -> str:
     return text.upper() if caps else text
 
 
-def build_ass(width: int, height: int, overlay: dict, title_text: str, words: list[Word], duration: float) -> str:
+def build_ass(width: int, height: int, overlay: dict, title_text: str, words: list[Word], duration: float, texts: list[dict] | None = None) -> str:
     scale = width / 1080
     t, c = overlay["title"], overlay["captions"]
 
@@ -188,6 +188,13 @@ def build_ass(width: int, height: int, overlay: dict, title_text: str, words: li
             if w.end <= 0 or w.start >= duration:
                 continue
             lines.append(f"Dialogue: 0,{_ts(w.start)},{_ts(min(w.end, duration))},Caption,,0,0,0,,{{\\pos({width // 2},{y})}}{_clean(w.text, c['all_caps'])}")
+    for tx in texts or []:  # extra text added in the video editor
+        if tx["end"] <= tx["start"] or tx["start"] >= duration:
+            continue
+        y = round(height * tx["y_percent"] / 100)
+        style = (f"{{\\pos({width // 2},{y})\\fn{FONTS[tx['font']][1]}\\fs{round(tx['size'] * scale)}\\c{_ass_color(tx['color'])}"
+                 f"\\3c{_ass_color('#000000')}\\bord{tx['outline'] * scale:.1f}}}")
+        lines.append(f"Dialogue: 2,{_ts(tx['start'])},{_ts(min(tx['end'], duration))},Title,,0,0,0,,{style}{_clean(tx['text'], tx['all_caps'])}")
     return "\n".join(lines) + "\n"
 
 

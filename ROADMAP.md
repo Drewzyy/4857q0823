@@ -1,9 +1,9 @@
 # Roadmap
 
-## In progress (Nov 2026)
+## Done (Nov 2026)
 
-1. **Analytics** (building now): after uploading, paste the post link on the clip (Ready to Upload). Vyral reads public views/likes/comments/shares for TikTok and YouTube every few hours (yt-dlp, no login) and stores snapshots; Instagram/Facebook numbers can be typed in. Analytics page: totals, by platform/streamer/page, by clip length, top clips, views over time. Unavailable shown as unavailable, never 0.
-2. **Video editor** (next): per-clip editor opened from Ready to Upload: trim start/end within the downloaded cut, zoom + pan, speed, extra text overlays with timing, live 9:16 preview (blurred background, title, captions), undo/redo, then re-render. Edit state stored on the clip; words re-timed from the trim.
+1. **Analytics**: after uploading, paste the post link on the clip (Ready to Upload). Vyral reads public views/likes/comments/shares for TikTok and YouTube every few hours (yt-dlp, no login) and stores snapshots; Instagram/Facebook numbers can be typed in. Analytics page: totals, by platform/streamer/page, by clip length, top clips, views over time. Unavailable shown as unavailable, never 0.
+2. **Video editor**: opened from the sidebar or "Edit video" on a clip. Trim start/end anywhere in the downloaded footage (drag handles, number fields, or [ and ] at the playhead), zoom + pan, speed 0.5x to 2x, up to 20 timed text overlays, live 9:16 preview (canvas-blurred background, title, synced captions, texts), undo/redo (Cmd/Ctrl+Z, Shift+Cmd+Z). Save re-renders every page's video. Edit stored on the clip (`clips.edit`), caption words re-timed from the trim and speed.
 
 Done this round: real platform logos, Kick stream channels, one clipping account covering several streamers, auto-updates via Drewzyy/vyral-releases (latest.json).
 
@@ -55,7 +55,7 @@ Not started. Plan, in order:
 
 ## Milestone 3: Video editor
 
-Not started. Non-destructive edit list (JSON timeline) rendered by FFmpeg; preview in the webview with canvas compositing for the blurred background and captions. Word-synced captions (orange emphasis / white base default preset). Undo/redo via command stack, autosave with versioned snapshots.
+First version done (see above). Still to do: split/multiple segments, autosave drafts, presets. Non-destructive edit list (JSON timeline) rendered by FFmpeg; preview in the webview with canvas compositing for the blurred background and captions. Word-synced captions (orange emphasis / white base default preset). Undo/redo via command stack, autosave with versioned snapshots.
 
 ## Milestone 4: AI clipping and VOD matching
 

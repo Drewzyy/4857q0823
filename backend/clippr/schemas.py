@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Strict(BaseModel):
@@ -130,3 +130,31 @@ class AppSettings(Strict):
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
     publishing: PublishingSettings = Field(default_factory=PublishingSettings)
     privacy: PrivacySettings = Field(default_factory=PrivacySettings)
+
+
+class TextOverlay(Strict):
+    text: str = Field(min_length=1, max_length=200)
+    start: float = Field(0, ge=0)  # seconds in the finished clip
+    end: float = Field(3, ge=0)
+    y_percent: int = Field(50, ge=3, le=97)
+    size: int = Field(70, ge=20, le=200)
+    color: str = Field("#FFFFFF", pattern=HEXCOLOR)
+    font: FontName = "montserrat"
+    all_caps: bool = True
+    outline: int = Field(6, ge=0, le=20)
+
+    @model_validator(mode="after")
+    def _ordered(self):
+        if self.end <= self.start:
+            raise ValueError("a text must end after it starts")
+        return self
+
+
+class ClipEdit(Strict):
+    start: float = Field(ge=0)  # seconds within the downloaded cut
+    end: float = Field(gt=0)
+    zoom: float = Field(1.0, ge=1.0, le=3.0)
+    pan_x: float = Field(0.5, ge=0, le=1)  # which part stays in view when zoomed (0 left, 1 right)
+    pan_y: float = Field(0.5, ge=0, le=1)
+    speed: float = Field(1.0, ge=0.5, le=2.0)
+    texts: list[TextOverlay] = Field(default_factory=list, max_length=20)

@@ -3,11 +3,9 @@ from __future__ import annotations
 
 from urllib.parse import urlencode
 
-import httpx
 
 from .base import (
     AccountIdentity,
-    AppCredentials,
     ConnectedIdentity,
     CredentialField,
     OAuthConnector,

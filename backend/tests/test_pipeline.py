@@ -1,5 +1,4 @@
 """The automatic loop end to end: real audio matching, real FFmpeg renders, simulated internet."""
-import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,9 +9,9 @@ from fastapi.testclient import TestClient
 
 from clippr.app import build_context, create_app
 from clippr.config import Config
-from clippr.fetch import FetchError, RemotePost, RemoteVod
+from clippr.fetch import RemotePost
 from clippr.media.ffmpeg import probe, run
-from clippr.models import Clip, ClipOutput, ReferenceVideo
+from clippr.models import Clip, ClipOutput
 from clippr.secrets_store import MemoryStore
 from fakes import FakeFetcher, FakeTranscriber
 from media_fixtures import make_stream_and_clip, speechlike, write_wav
@@ -92,7 +91,7 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     ctx, c, fake = env
     discord = respx.post(HOOK).mock(return_value=httpx.Response(204))
     assert c.put("/api/notifications", json={"webhook_url": HOOK}).json()["configured"] is True
-    cid, sid, tt, yt = setup_accounts(c)
+    _, sid, *_ = setup_accounts(c)
 
     # First check records what's already there and makes nothing.
     fake.posts = [RemotePost("old1", "https://www.tiktok.com/@a.clips/video/old1", "old one")]
@@ -228,7 +227,7 @@ def test_problems_are_explained_and_pinged(env):
 
 def test_monitoring_backoff_and_scheduling(env):
     ctx, c, fake = env
-    cid, sid, *_ = setup_accounts(c)
+    _, sid, *_ = setup_accounts(c)
     c.post("/api/sources", json={"input": "https://www.twitch.tv/somestreamer"})  # not watchable, must be skipped
     assert ctx.pipeline.tick()["queued"] == 1
     assert ctx.pipeline.tick()["queued"] == 0  # not due again yet
@@ -245,7 +244,7 @@ def test_monitoring_backoff_and_scheduling(env):
 
 
 def test_creator_links_and_webhook_validation(env):
-    ctx, c, _ = env
+    _ctx, c, _ = env
     r = c.post("/api/creators", json={"name": "X", "vod_channels": ["twitch.tv/xqc", "https://www.youtube.com/@Someone/videos", "https://evil.com/a"]})
     assert r.status_code == 422 and "evil.com" in r.json()["error"]["message"]
     r = c.post("/api/creators", json={"name": "X", "vod_channels": ["twitch.tv/xqc", "https://www.youtube.com/@Someone/videos", "kick.com/xqc",
@@ -265,7 +264,7 @@ def test_creator_links_and_webhook_validation(env):
 def test_captions_skipped_gracefully_without_speech_model(env):
     ctx, c, fake = env
     ctx.transcriber = FakeTranscriber(fail=True)
-    cid, sid, *_ = setup_accounts(c)
+    _, sid, *_ = setup_accounts(c)
     fake.posts = []
     ctx.pipeline.check_source(sid)
     fake.posts = [RemotePost("q1", "https://www.tiktok.com/@a.clips/video/q1", "quiet one")]
@@ -283,8 +282,8 @@ def test_one_clipping_account_covering_several_streamers(env):
     b = c.post("/api/creators", json={"name": "Streamer B", "clip_permission": True, "vod_channels": ["https://kick.com/streamerb"]}).json()["id"]
     src = c.post("/api/sources", json={"input": "@general.clips", "creator_ids": [a, b]}).json()
     assert [x["name"] for x in src["creators"]] == ["Streamer A", "Streamer B"]
-    da = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": a}).json()["id"]
-    db_ = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "B page", "creator_id": b}).json()["id"]
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": a})
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "B page", "creator_id": b})
     assert c.post("/api/funnel/auto-route", json={}).json()["created"] == 2  # one account feeds both streamers' pages
     assert len(c.get("/api/sources", params={"creator_id": b}).json()) == 1
     # Streamer A's channel listing has no match; Streamer B's (Kick) does.
@@ -307,7 +306,7 @@ def test_one_clipping_account_covering_several_streamers(env):
 
 def test_analytics_from_post_links(env):
     ctx, c, fake = env
-    cid, sid, tt, yt = setup_accounts(c)
+    _, sid, *_ = setup_accounts(c)
     fake.posts = []
     ctx.pipeline.check_source(sid)
     fake.posts = [RemotePost("an1", "https://www.tiktok.com/@a.clips/video/an1", "big moment")]
@@ -337,3 +336,38 @@ def test_analytics_from_post_links(env):
     c.post(f"/api/outputs/{outs['tiktok']['id']}/metrics", json={"views": 20000})
     assert c.get("/api/analytics").json()["totals"]["views"] == 23000
     assert ctx.pipeline.refresh_metrics()["queued"] == 2
+
+
+def test_video_editor_trim_zoom_speed_and_text(env):
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("ed1", "https://www.tiktok.com/@a.clips/video/ed1", "edit me")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    clip = c.get("/api/clips").json()[0]
+    ed = c.get(f"/api/clips/{clip['id']}/editor").json()
+    e = ed["edit"]
+    assert e["zoom"] == 1 and e["speed"] == 1 and ed["section_duration"] > e["end"] - e["start"]
+    assert c.get(f"/api/media/clips/{clip['id']}/source", headers={"X-Clippr-Token": ""}, params={"t": TOKEN}).status_code == 200
+    # Trim 4 s off the end, zoom in, speed up 1.25x, add a text from 1 s to 3 s.
+    new = {**e, "end": e["end"] - 4, "zoom": 1.5, "pan_x": 0.3, "speed": 1.25,
+           "texts": [{"text": "WAIT FOR IT", "start": 1, "end": 3, "y_percent": 40, "size": 90, "color": "#22C55E", "font": "anton", "all_caps": True, "outline": 6}]}
+    assert c.put(f"/api/clips/{clip['id']}/edit", json={**new, "end": e["start"] + 0.5}).status_code == 422
+    assert c.put(f"/api/clips/{clip['id']}/edit", json={**new, "zoom": 5}).status_code == 422
+    backwards = {**new["texts"][0], "start": 3, "end": 1}
+    assert c.put(f"/api/clips/{clip['id']}/edit", json={**new, "texts": [backwards]}).status_code == 422
+    assert c.put(f"/api/clips/{clip['id']}/edit", json=new).json()["rendering"] == 2
+    drain(ctx)
+    outs = c.get("/api/clips").json()[0]["outputs"]
+    assert all(o["render_state"] == "ready" for o in outs)
+    with ctx.db.session() as s:
+        path = Path(s.get(ClipOutput, outs[0]["id"]).file_path)
+    info = probe(path)
+    expect = (new["end"] - new["start"]) / 1.25
+    assert abs(info.duration - expect) < 0.4, (info.duration, expect)
+    f = _frame(path, 2.0)  # the green text is burned in during its window
+    g = ((f[..., 1] > 170) & (f[..., 0] < 90) & (f[..., 2] < 120)).sum()
+    assert g > 1500
+    assert c.get(f"/api/clips/{clip['id']}/editor").json()["edit"]["zoom"] == 1.5

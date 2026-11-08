@@ -200,3 +200,51 @@ test("post links feed the analytics page", async ({ page }) => {
   await page.getByRole("button", { name: "All time" }).click();
   await expect(page.getByRole("heading", { name: "By platform" })).toBeVisible();
 });
+
+test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ page }) => {
+  await page.goto("/editor");
+  await page.getByRole("link", { name: /He did NOT just say that/ }).click();
+  await expect(page).toHaveURL(/\/editor\/\d+$/);
+  const video = page.locator(".ed-preview video");
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1)).toBe(true);
+  const save = page.getByRole("button", { name: "Save & render" });
+  await expect(save).toBeDisabled();
+
+  const start = Number(await page.getByLabel("Start (s)").inputValue());
+  await page.getByLabel("End (s)").fill(String(start + 6));
+  await page.getByRole("group", { name: "Speed" }).getByRole("button", { name: "1.5x" }).click();
+  await page.getByLabel(/^Zoom:/).fill("1.5");
+  await expect(video).toHaveCSS("transform", /matrix\(1\.5/);
+  await page.getByRole("button", { name: "Add text" }).click();
+  await page.getByLabel("Text 1", { exact: true }).fill("WAIT FOR IT");
+  await expect(page.locator(".ed-preview .ov-text", { hasText: "WAIT FOR IT" })).toBeVisible();
+  await expect(page.getByText(/Kept 6\.0 s/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByLabel("Text 1", { exact: true })).toHaveValue("NEW TEXT");
+  await page.getByRole("button", { name: "Redo" }).click();
+  await expect(page.getByLabel("Text 1", { exact: true })).toHaveValue("WAIT FOR IT");
+
+  await save.click();
+  await expect(page).toHaveURL(/\/ready$/);
+  await expect(page.getByText(/Re-rendering 2 videos with your edits/)).toBeVisible();
+  // 6 s kept at 1.5x speed is a 4 s video, on every page.
+  const lengths = () => page.evaluate(async () => {
+    const t = (document.querySelector('meta[name="clippr-token"]') as HTMLMetaElement).content;
+    const clips = await (await fetch("/api/clips?status=all", { headers: { "X-Clippr-Token": t } })).json();
+    const outs = clips.find((c: { title: string }) => c.title.includes("He did NOT")).outputs;
+    if (outs.some((o: { render_state: string }) => o.render_state !== "ready")) return [];
+    return Promise.all(outs.map((o: { id: number; version: string }) => new Promise<number>((res) => {
+      const v = document.createElement("video");
+      v.onloadedmetadata = () => res(Math.round(v.duration * 2) / 2);
+      v.onerror = () => res(-1);
+      v.src = `/api/media/outputs/${o.id}?t=${t}&v=${o.version}`;
+    })));
+  });
+  await expect.poll(lengths, { timeout: 60_000 }).toEqual([4, 4]);
+  // Reopening the editor shows the saved edit.
+  await page.goto("/editor");
+  await page.getByRole("link", { name: /He did NOT just say that/ }).click();
+  await expect(page.getByLabel("Text 1", { exact: true })).toHaveValue("WAIT FOR IT");
+  await expect(page.getByRole("group", { name: "Speed" }).getByRole("button", { name: "1.5x" })).toHaveClass(/on/);
+});

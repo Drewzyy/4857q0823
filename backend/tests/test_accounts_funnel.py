@@ -59,7 +59,7 @@ def _setup(client):
 
 
 def test_funnel_rules(client):
-    a, b, sa, sa2, sb, d = _setup(client)
+    a, b, sa, _sa2, sb, d = _setup(client)
     r = client.post("/api/funnel/routes", json={"source_id": sa, "destination_id": d["A TikTok"]})
     assert r.status_code == 201
     dup = client.post("/api/funnel/routes", json={"source_id": sa, "destination_id": d["A TikTok"]})

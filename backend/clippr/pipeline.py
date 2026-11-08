@@ -353,12 +353,20 @@ class Pipeline:
         return when
 
     def _render(self, source: Path, out: Path, fmt_raw: dict, start: float, dur: float, ov: dict, title_text: str,
-                words: list[Word], ov_dir: Path) -> Path:
+                words: list[Word], ov_dir: Path, edit: dict | None = None) -> Path:
+        """`words` are timed from `start`; an editor `edit` may move the cut, zoom/pan, change speed and add texts."""
         fmt = OutputFormat.from_settings(fmt_raw)
-        use_text = (ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words)
+        zoom, pan, speed, texts = 1.0, (0.5, 0.5), 1.0, []
+        if edit:
+            shift = start - edit["start"]  # words were timed from the original cut
+            start, dur = edit["start"], edit["end"] - edit["start"]
+            zoom, pan, speed, texts = edit["zoom"], (edit["pan_x"], edit["pan_y"]), edit["speed"], edit["texts"]
+            words = [Word((w.start + shift) / speed, (w.end + shift) / speed, w.text) for w in words]
+        out_dur = dur / speed
+        use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         if use_text:
-            overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, dur))
-        return render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None)
+            overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts))
+        return render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan, speed=speed)
 
     def rerender(self, output_ids: list[int]) -> dict:
         """Re-render outputs after their text or style was edited. Each gets its own new file."""
@@ -372,13 +380,14 @@ class Pipeline:
                         o.render_state, o.render_error = "failed", "The original footage for this clip has expired."
                     continue
                 job = (Path(clip.source_path), Path(clip.files_dir), dict(o.format or {}), dict(o.overlay or {}), o.video_title,
-                       [Word.from_dict(w) for w in clip.words or []], clip.source_start or 0.0, clip.source_duration or 0.0, o.file_path)
-            source, cdir, fmt_raw, ov, vtitle, words, start, dur, old = job
+                       [Word.from_dict(w) for w in clip.words or []], clip.source_start or 0.0, clip.source_duration or 0.0, o.file_path,
+                       dict(clip.edit) if clip.edit else None)
+            source, cdir, fmt_raw, ov, vtitle, words, start, dur, old, edit = job
             ov = OverlaySettings.model_validate(ov or {}).model_dump()
             out = cdir / f"output-{oid}-{int(now().timestamp() * 1000)}.mp4"
             work = self._dir("tmp") / f"rerender-{oid}-{random.randrange(1 << 30)}"
             try:
-                self._render(source, out, fmt_raw, start, dur, ov, vtitle, words, work)
+                self._render(source, out, fmt_raw, start, dur, ov, vtitle, words, work, edit)
                 info = probe(out)
                 with self.ctx.db.session() as s:
                     o = s.get(ClipOutput, oid)

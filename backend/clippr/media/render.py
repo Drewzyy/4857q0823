@@ -27,7 +27,7 @@ class OutputFormat:
 
 
 def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = None, duration: float | None = None,
-           overlay_dir: Path | None = None) -> Path:
+           overlay_dir: Path | None = None, zoom: float = 1.0, pan: tuple[float, float] = (0.5, 0.5), speed: float = 1.0) -> Path:
     """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in)."""
     src, out = src.resolve(), out.resolve()
     info = probe(src)
@@ -37,7 +37,9 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
     W, H = fmt.width, fmt.height
     bw, bh = W // 4 // 2 * 2, H // 4 // 2 * 2
     vf = (
-        f"[0:v]fps={fps:.3f},split=2[bg][fg];"
+        # Editor zoom/pan crops the source; speed retimes it. Both are no-ops at their defaults.
+        f"[0:v]crop=iw/{zoom:.4f}:ih/{zoom:.4f}:(iw-iw/{zoom:.4f})*{pan[0]:.4f}:(ih-ih/{zoom:.4f})*{pan[1]:.4f},"
+        f"setpts=PTS/{speed:.4f},fps={fps:.3f},split=2[bg][fg];"
         # Blur at quarter size then scale up: same look as a full-size blur, many times faster.
         f"[bg]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},gblur=sigma=10,"
         f"scale={W}:{H}:flags=bicubic,eq=brightness=-0.12:saturation=1.15[b];"
@@ -52,12 +54,12 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
     args = []
     if start is not None:
         args += ["-ss", f"{start:.3f}"]
-    args += ["-i", str(src)]
     if duration is not None:
-        args += ["-t", f"{duration:.3f}"]
+        args += ["-t", f"{duration:.3f}"]  # input option: limits source time, so speed changes the output length
+    args += ["-i", str(src)]
     args += ["-filter_complex", vf, "-map", "[v]"]
     if info.has_audio:
-        args += ["-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
+        args += ["-map", "0:a:0", "-af", (f"atempo={speed:.4f}," if abs(speed - 1) > 1e-3 else "") + "loudnorm=I=-14:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
     args += [*vcodec, "-preset", os.environ.get("CLIPPR_RENDER_PRESET", "medium"), "-maxrate", maxrate, "-bufsize", f"{fmt.bitrate_mbps * 3:.1f}M",
              "-movflags", "+faststart", str(out)]
     out.parent.mkdir(parents=True, exist_ok=True)
