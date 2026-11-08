@@ -17,7 +17,7 @@ const SourceNode = memo(({ data }: NodeProps<Node<SrcData>>) => (
     <span className="strip" style={{ background: data.item.creator?.color ?? "var(--card-3)" }} />
     <Avatar url={data.item.avatar_url} platform={data.item.platform} />
     <div className="meta"><div className="name ellipsis">@{data.item.username}</div>
-      <div className="sub ellipsis">{data.item.creator?.name ?? "No creator"} · {PLATFORM_LABEL[data.item.platform]}{data.item.monitoring === "paused" ? " · paused" : ""}</div></div>
+      <div className="sub ellipsis">{data.item.creators.length ? data.item.creators.map((c) => c.name).join(" + ") : "No creator"} · {PLATFORM_LABEL[data.item.platform]}{data.item.monitoring === "paused" ? " · paused" : ""}</div></div>
     <Handle type="source" position={Position.Right} aria-label={`Drag from @${data.item.username} to a destination`} />
   </div>
 ));

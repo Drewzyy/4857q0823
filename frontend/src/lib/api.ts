@@ -8,7 +8,7 @@ export interface Folder { id: number; name: string; sources?: number }
 
 export interface Source {
   id: number; platform: Platform; username: string; display_name: string; profile_url: string; avatar_url: string | null;
-  monitoring: "active" | "paused"; notes: string; creator: Creator | null; folder: Folder | null;
+  monitoring: "active" | "paused"; notes: string; creator: Creator | null; creators: Creator[]; folder: Folder | null;
   authorized: boolean; connection_status: string | null; last_synced_at: string | null; next_check_at: string | null;
   last_error: string | null; watching_supported: boolean; baseline_done: boolean; created_at: string;
   route_count: number; videos_discovered: number | null; videos_analyzed: number | null;
@@ -144,8 +144,8 @@ export const api = {
   deleteFolder: (id: number) => request<void>("DELETE", `/folders/${id}`),
   sources: (f: { q?: string; creator_id?: number | null; folder_id?: number | null; monitoring?: string; platform?: string } = {}) =>
     request<Source[]>("GET", "/sources" + qs(f)),
-  addSource: (b: { input: string; platform: Platform; creator_id?: number | null; folder_id?: number | null }) => request<Source>("POST", "/sources", b),
-  updateSource: (id: number, b: Partial<{ creator_id: number | null; folder_id: number | null; monitoring: string; notes: string }>) =>
+  addSource: (b: { input: string; platform: Platform; creator_ids?: number[]; folder_id?: number | null }) => request<Source>("POST", "/sources", b),
+  updateSource: (id: number, b: Partial<{ creator_id: number | null; creator_ids: number[]; folder_id: number | null; monitoring: string; notes: string }>) =>
     request<Source>("PATCH", `/sources/${id}`, b),
   deleteSource: (id: number) => request<void>("DELETE", `/sources/${id}`),
   bulkSources: (b: { ids: number[]; action: "pause" | "resume" | "delete" | "assign"; creator_id?: number | null; folder_id?: number | null }) =>

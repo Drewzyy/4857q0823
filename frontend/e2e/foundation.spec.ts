@@ -99,15 +99,20 @@ test("creators carry their stream channels and permission, sources show watch st
 
   await page.getByRole("button", { name: "Add account" }).first().click();
   await page.getByLabel("Username or profile link").fill("@streamerb.clips");
-  await page.getByLabel("Creator", { exact: true }).selectOption({ label: "Streamer B" });
+  await page.getByRole("button", { name: "Creator", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Streamer B" }).check();
+  await page.getByRole("checkbox", { name: "Streamer A" }).check();  // one account clipping two streamers
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByRole("button", { name: "Check @streamerb.clips now" })).toBeVisible();
+  const picker = page.getByRole("button", { name: "Creators for @streamerb.clips" });
+  await expect(picker).toContainText("Streamer A");
+  await expect(picker).toContainText("Streamer B");
 
   // Funnel: dragging B's source onto A's page asks first.
   await nav(page, "Account Funnel");
+  // It clips Streamer A too, so routing it to A's page is allowed without the mix warning.
   await dragRoute(page, "@streamerb.clips", "Streamer A YouTube");
-  await expect(page.getByRole("heading", { name: "Mix creators?" })).toBeVisible();
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("heading", { name: "Mix creators?" })).toHaveCount(0);
 });
 
 test("discord and storage settings", async ({ page }) => {

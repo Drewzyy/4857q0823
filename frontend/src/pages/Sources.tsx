@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ExternalLink, FolderPlus, Import, Pause, Pencil, Play, Plus, RefreshCw, Search, Trash2, UserPlus, Users } from "lucide-react";
 import { api, type Creator, type Folder, type ImportResult, type Platform, type Source } from "../lib/api";
+import CreatorPicker from "../components/CreatorPicker";
 import { Avatar, ConfirmModal, CREATOR_COLORS, Empty, ErrorNote, Loading, Modal, relTime, Toggle, useToast } from "../components/ui";
 
 const SOURCE_PLATFORMS: Platform[] = ["tiktok", "youtube", "twitch", "instagram"];
@@ -106,7 +107,7 @@ export default function Sources() {
                 <thead><tr>
                   <th style={{ width: 32 }}><input type="checkbox" aria-label="Select all" checked={allSelected}
                     onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))} /></th>
-                  <th>Account</th><th>Creator</th><th>Folder</th><th title="New posts seen / clips made">Posts · clips</th><th>Routes</th><th>Last check</th><th>Watch</th><th />
+                  <th>Account</th><th>Streamers</th><th>Folder</th><th title="New posts seen / clips made">Posts · clips</th><th>Routes</th><th>Last check</th><th>Watch</th><th />
                 </tr></thead>
                 <tbody>
                   {rows.map((s) => <SourceRow key={s.id} s={s} creators={creators.data ?? []} folders={folders.data ?? []}
@@ -161,14 +162,13 @@ function SourceRow({ s, creators, folders, selected, onSelect, onUpdate, onDelet
           <div className="row" style={{ gap: 6 }}><strong className="ellipsis">@{s.username}</strong>{s.authorized && <span className="pill ok nodot" title="You authorized this account">Authorized</span>}</div>
           <div className="small faint ellipsis">{s.display_name || s.platform}</div>
           {!s.watching_supported && <div className="small faint">Vyral can't watch {s.platform} accounts yet</div>}
-          {s.creator && (!s.creator.clip_permission || s.creator.vod_channels.length === 0) && (
-            <div className="small" style={{ color: "var(--warn)" }}><AlertTriangle size={11} /> {s.creator.vod_channels.length === 0 ? `Add ${s.creator.name}'s stream channel` : `Confirm permission for ${s.creator.name}`}</div>)}
-          {!s.creator && <div className="small" style={{ color: "var(--warn)" }}><AlertTriangle size={11} /> Pick a creator</div>}
+          {s.creators.filter((c) => !c.clip_permission || c.vod_channels.length === 0).map((c) => (
+            <div key={c.id} className="small" style={{ color: "var(--warn)" }}><AlertTriangle size={11} /> {c.vod_channels.length === 0 ? `Add ${c.name}'s stream channel` : `Confirm permission for ${c.name}`}</div>))}
+          {s.creators.length === 0 && <div className="small" style={{ color: "var(--warn)" }}><AlertTriangle size={11} /> Pick a creator</div>}
           {s.last_error && <div className="small" style={{ color: "#ff8a8d" }} title={s.last_error}>{s.last_error.slice(0, 70)}</div>}
         </div>
       </div></td>
-      <td><select className="select" style={{ minWidth: 130 }} aria-label={`Creator for @${s.username}`} value={s.creator?.id ?? ""} onChange={(e) => onUpdate({ creator_id: e.target.value ? Number(e.target.value) : null })}>
-        <option value="">None</option>{creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td>
+      <td><CreatorPicker label={`Creators for @${s.username}`} creators={creators} value={s.creators.map((c) => c.id)} onChange={(ids) => onUpdate({ creator_ids: ids })} /></td>
       <td><select className="select" style={{ minWidth: 110 }} aria-label={`Folder for @${s.username}`} value={s.folder?.id ?? ""} onChange={(e) => onUpdate({ folder_id: e.target.value ? Number(e.target.value) : null })}>
         <option value="">None</option>{folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></td>
       <td title={s.baseline_done ? "" : "Not checked yet"}>{s.videos_discovered === null ? <span className="faint">—</span> : `${s.videos_discovered} · ${s.videos_analyzed}`}</td>
@@ -188,7 +188,7 @@ function AddSourceModal({ creators, folders, defaults, onClose, onDone }: { crea
   const toast = useToast();
   const [input, setInput] = useState("");
   const [platform, setPlatform] = useState<Platform>("tiktok");
-  const [creatorId, setCreatorId] = useState<number | null>(defaults.kind === "creator" ? defaults.id : null);
+  const [creatorIds, setCreatorIds] = useState<number[]>(defaults.kind === "creator" ? [defaults.id] : []);
   const [folderId, setFolderId] = useState<number | null>(defaults.kind === "folder" ? defaults.id : null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -200,7 +200,7 @@ function AddSourceModal({ creators, folders, defaults, onClose, onDone }: { crea
   const submit = async (keepOpen: boolean) => {
     setBusy(true); setError(null);
     try {
-      const s = await api.addSource({ input, platform: detected ?? platform, creator_id: creatorId, folder_id: folderId });
+      const s = await api.addSource({ input, platform: detected ?? platform, creator_ids: creatorIds, folder_id: folderId });
       toast("ok", `Added @${s.username}`); onDone();
       if (keepOpen) setInput(""); else onClose();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -222,9 +222,8 @@ function AddSourceModal({ creators, folders, defaults, onClose, onDone }: { crea
           <div className="field"><label htmlFor="src-plat">Platform</label>
             <select id="src-plat" className="select" value={detected ?? platform} disabled={!!detected} onChange={(e) => setPlatform(e.target.value as Platform)}>
               {SOURCE_PLATFORMS.map((p) => <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)}</option>)}</select></div>
-          <div className="field"><label htmlFor="src-creator">Creator</label>
-            <select id="src-creator" className="select" value={creatorId ?? ""} onChange={(e) => setCreatorId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">None</option>{creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+          <div className="field"><span className="label-text">Streamers this account clips</span>
+            <CreatorPicker label="Creator" creators={creators} value={creatorIds} onChange={setCreatorIds} /></div>
           <div className="field"><label htmlFor="src-folder">Folder</label>
             <select id="src-folder" className="select" value={folderId ?? ""} onChange={(e) => setFolderId(e.target.value ? Number(e.target.value) : null)}>
               <option value="">None</option>{folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div>
