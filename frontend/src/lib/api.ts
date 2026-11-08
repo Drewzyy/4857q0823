@@ -205,6 +205,6 @@ export const api = {
 export interface ImportResult { added: number; skipped_duplicates: number; errors: { line: number; input: string; message: string }[] }
 
 export const PLATFORM_LABEL: Record<string, string> = {
-  tiktok: "TikTok", youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", twitch: "Twitch", meta: "Facebook & Instagram",
+  tiktok: "TikTok", youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", twitch: "Twitch", kick: "Kick", meta: "Facebook & Instagram",
 };
 export const CONNECTOR_FOR: Record<string, ConnectorKey> = { tiktok: "tiktok", youtube: "youtube", instagram: "meta", facebook: "meta" };

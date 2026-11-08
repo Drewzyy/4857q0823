@@ -248,8 +248,14 @@ def test_creator_links_and_webhook_validation(env):
     ctx, c, _ = env
     r = c.post("/api/creators", json={"name": "X", "vod_channels": ["twitch.tv/xqc", "https://www.youtube.com/@Someone/videos", "https://evil.com/a"]})
     assert r.status_code == 422 and "evil.com" in r.json()["error"]["message"]
-    r = c.post("/api/creators", json={"name": "X", "vod_channels": ["twitch.tv/xqc", "https://www.youtube.com/@Someone/videos"]})
-    assert r.json()["vod_channels"] == ["https://twitch.tv/xqc", "https://www.youtube.com/@Someone/videos"]
+    r = c.post("/api/creators", json={"name": "X", "vod_channels": ["twitch.tv/xqc", "https://www.youtube.com/@Someone/videos", "kick.com/xqc",
+                                                                   "https://kick.com/xqc/videos/0a1b2c3d-1111-2222-3333-444455556666"]})
+    assert r.json()["vod_channels"] == ["https://twitch.tv/xqc", "https://www.youtube.com/@Someone/videos", "https://kick.com/xqc",
+                                        "https://kick.com/xqc/videos/0a1b2c3d-1111-2222-3333-444455556666"]
+    from clippr.fetch import channel_vod_listing, is_single_video
+    assert channel_vod_listing("https://kick.com/xqc") == "https://kick.com/xqc/videos"
+    assert channel_vod_listing("youtube.com/@Someone") == "https://www.youtube.com/@Someone/streams"
+    assert is_single_video("https://kick.com/xqc/videos/0a1b2c3d-1111-2222-3333-444455556666")
     for bad in ["https://example.com/api/webhooks/1/x", "http://discord.com/api/webhooks/123456/abcdefghijklmnopqrstuvwxyz", "not a url"]:
         assert c.put("/api/notifications", json={"webhook_url": bad}).status_code == 422
     assert c.post("/api/notifications/test").status_code == 409

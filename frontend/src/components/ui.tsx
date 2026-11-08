@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, Check, CheckCircle2, Copy, X } from "lucide-react";
+import { siFacebook, siInstagram, siKick, siTiktok, siTwitch, siYoutube } from "simple-icons";
 import { PLATFORM_LABEL, type Creator } from "../lib/api";
 
 /* ---------- toasts ---------- */
@@ -71,9 +72,26 @@ export function ConfirmModal({ open, title, message, confirmLabel = "Confirm", d
 }
 
 /* ---------- small pieces ---------- */
-const SHORT: Record<string, string> = { tiktok: "TT", youtube: "YT", instagram: "IG", facebook: "FB", twitch: "TW", meta: "FB" };
+// Official brand marks (Simple Icons, CC0) used to label each platform.
+const BRANDS: Record<string, { path: string; bg: string; fg: string }> = {
+  tiktok: { path: siTiktok.path, bg: "#000000", fg: "#FFFFFF" },
+  instagram: { path: siInstagram.path, bg: "linear-gradient(45deg,#F58529,#DD2A7B 45%,#8134AF 75%,#515BD4)", fg: "#FFFFFF" },
+  youtube: { path: siYoutube.path, bg: "#FFFFFF", fg: "#FF0000" },
+  facebook: { path: siFacebook.path, bg: "#0866FF", fg: "#FFFFFF" },
+  meta: { path: siFacebook.path, bg: "#0866FF", fg: "#FFFFFF" },
+  twitch: { path: siTwitch.path, bg: "#9146FF", fg: "#FFFFFF" },
+  kick: { path: siKick.path, bg: "#000000", fg: "#53FC19" },
+};
+
 export function PlatformBadge({ platform, large }: { platform: string; large?: boolean }) {
-  return <span className={`plat ${platform}${large ? " lg" : ""}`} title={PLATFORM_LABEL[platform] ?? platform} aria-label={PLATFORM_LABEL[platform] ?? platform}>{SHORT[platform] ?? "?"}</span>;
+  const b = BRANDS[platform];
+  const label = PLATFORM_LABEL[platform] ?? platform;
+  if (!b) return <span className={`plat${large ? " lg" : ""}`} aria-label={label}>?</span>;
+  return (
+    <span className={`plat${large ? " lg" : ""}`} style={{ background: b.bg }} title={label} aria-label={label} role="img">
+      <svg viewBox="0 0 24 24" width="62%" height="62%" fill={b.fg} aria-hidden="true"><path d={b.path} /></svg>
+    </span>
+  );
 }
 
 export function Avatar({ url, platform }: { url: string | null; platform: string }) {

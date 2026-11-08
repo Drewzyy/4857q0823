@@ -298,8 +298,8 @@ function CreatorModal({ creator, onClose, onDone, onDelete }: { creator: Creator
         <div className="field"><label htmlFor="cr-name">Streamer / creator name</label>
           <input id="cr-name" className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Streamer A" /></div>
         <div className="field"><label htmlFor="cr-ch">Where their full streams are (one per line)</label>
-          <textarea id="cr-ch" className="textarea mono" rows={3} value={channels} onChange={(e) => setChannels(e.target.value)} placeholder={"https://www.twitch.tv/streamera\nhttps://www.youtube.com/@streamera"} />
-          <span className="hint">Twitch or YouTube channel links. Vyral searches the latest streams on these for each new post.</span></div>
+          <textarea id="cr-ch" className="textarea mono" rows={3} value={channels} onChange={(e) => setChannels(e.target.value)} placeholder={"https://www.twitch.tv/streamera\nhttps://www.youtube.com/@streamera\nhttps://kick.com/streamera"} />
+          <span className="hint">Twitch, YouTube or Kick channel links (all of them if they multistream). Vyral searches the latest streams on each for every new post.</span></div>
         <label className="check"><input type="checkbox" checked={permission} onChange={(e) => setPermission(e.target.checked)} />I have permission to clip this creator's streams (for example, I'm in their clipping program)</label>
         {error && <span className="error small" style={{ color: "#ff8a8d" }}>{error}</span>}
         <div className="field"><span className="label-text">Color</span><div className="row">

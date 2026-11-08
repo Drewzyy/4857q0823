@@ -55,7 +55,7 @@ class Fetcher(Protocol):
 
 MONITORABLE = ("tiktok", "youtube")
 
-_SINGLE_VOD = re.compile(r"(twitch\.tv/videos/\d+|youtube\.com/watch\?|youtu\.be/|youtube\.com/live/)", re.I)
+_SINGLE_VOD = re.compile(r"(twitch\.tv/videos/\d+|youtube\.com/watch\?|youtu\.be/|youtube\.com/live/|kick\.com/video/[\w-]+|kick\.com/[\w-]+/videos/[\w-]+)", re.I)
 
 
 def is_single_video(url: str) -> bool:
@@ -71,7 +71,10 @@ def channel_vod_listing(url: str) -> str:
     m = re.match(r"^(?:https?://)?(?:www\.|m\.)?youtube\.com/((?:@[\w.\-]+)|(?:channel/[\w\-]+)|(?:c/[\w.\-]+))(?:/.*)?$", u)
     if m:
         return f"https://www.youtube.com/{m[1]}/streams"
-    raise FetchError("Use a Twitch channel link (twitch.tv/name), a YouTube channel link (youtube.com/@name) or a single stream link")
+    m = re.match(r"^(?:https?://)?(?:www\.)?kick\.com/([A-Za-z0-9_-]{2,40})(?:/.*)?$", u)
+    if m and m[1].lower() not in ("video", "categories", "browse", "following"):
+        return f"https://kick.com/{m[1]}/videos"
+    raise FetchError("Use a Twitch (twitch.tv/name), YouTube (youtube.com/@name) or Kick (kick.com/name) channel link, or a single stream link")
 
 
 def validate_stream_link(url: str) -> str:
