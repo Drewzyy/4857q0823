@@ -12,10 +12,11 @@ import Planned from "./pages/Planned";
 import Ready from "./pages/Ready";
 import ActivityPage from "./pages/Activity";
 import UpdateBanner from "./components/UpdateBanner";
+import AnalyticsPage from "./pages/AnalyticsPage";
 
 const PAGES: Record<string, JSX.Element> = {
   "/": <Dashboard />, "/ready": <Ready />, "/activity": <ActivityPage />, "/sources": <Sources />, "/destinations": <Destinations />,
-  "/funnel": <FunnelPage />, "/settings": <SettingsPage />,
+  "/funnel": <FunnelPage />, "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />,
 };
 
 export default function App() {

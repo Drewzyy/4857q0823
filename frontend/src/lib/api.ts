@@ -80,7 +80,7 @@ export interface ClipOutputT {
   id: number; platform: Platform; title: string; description: string; status: "ready" | "uploaded" | "expired";
   destination: { id: number; display_name: string; handle: string } | null;
   width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; uploaded_at: string | null;
-  video_title: string; overlay: Overlay; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
+  video_title: string; overlay: Overlay; post_url: string | null; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
 }
 export interface ClipT {
   id: number; title: string; status: string; created_at: string; expires_at: string;
@@ -94,6 +94,17 @@ export interface AppUpdate {
   available: boolean; state: "idle" | "checking" | "none" | "downloading" | "ready" | "installing" | "error";
   current: string; version: string | null; notes: string; error: string | null; progress: number | null; checked_at: string | null;
   check_requested: boolean; install_requested: boolean;
+}
+
+export interface Totals { views: number | null; likes: number | null; comments: number | null; shares: number | null; engagement_rate: number | null; avg_views: number | null }
+export interface GroupRow extends Totals { key: string | number | null; label: string; posts: number; tracked: number }
+export interface Analytics {
+  range_days: number; clips_made: number; uploaded: number; tracked: number; totals: Totals;
+  untracked: { output_id: number; title: string; platform: Platform; has_link: boolean }[];
+  by_platform: GroupRow[]; by_creator: GroupRow[]; by_destination: GroupRow[]; by_length: GroupRow[];
+  top: { output_id: number; title: string; platform: Platform; post_url: string | null; destination: string | null; duration: number | null;
+    uploaded_at: string; views: number | null; likes: number | null; comments: number | null; shares: number | null; updated: string }[];
+  timeline: { day: string; posts: number; views: number }[];
 }
 
 export interface Health { ok: boolean; version: string; secret_backend: string; worker_running: boolean; desktop_mode: boolean; ffmpeg: boolean }
@@ -192,6 +203,10 @@ export const api = {
   references: () => request<RefPost[]>("GET", "/references"),
   addReference: (b: { url: string; creator_id?: number | null; source_id?: number | null }) => request<{ id: number }>("POST", "/references", b),
   retryReference: (id: number, vod_url?: string) => request<RefPost>("POST", `/references/${id}/retry`, { vod_url: vod_url || null }),
+  analytics: (f: { days: number; platform?: string; creator_id?: number | null }) => request<Analytics>("GET", "/analytics" + qs(f)),
+  setPostLink: (id: number, post_url: string) => request<{ post_url: string; auto: boolean }>("PUT", `/outputs/${id}/post`, { post_url }),
+  addMetrics: (id: number, b: { views?: number | null; likes?: number | null; comments?: number | null; shares?: number | null }) =>
+    request<{ ok: boolean }>("POST", `/outputs/${id}/metrics`, b),
   appUpdate: () => request<AppUpdate>("GET", "/app-update"),
   checkForUpdates: () => request<AppUpdate>("POST", "/app-update/check"),
   installUpdate: () => request<AppUpdate>("POST", "/app-update/install"),

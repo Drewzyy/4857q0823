@@ -182,3 +182,21 @@ test("each page has its own default text style", async ({ page }) => {
   await expect(page.getByLabel("Captions color", { exact: true })).toHaveValue("#38bdf8");
   await expect(page.getByLabel("Position: 80% from top")).toBeVisible();
 });
+
+test("post links feed the analytics page", async ({ page }) => {
+  await page.goto("/ready");
+  const card = page.locator(".card", { hasText: "He did NOT just say that" }).first();
+  await card.getByRole("tab", { name: /Streamer A YouTube/ }).click();
+  await card.getByLabel(/Link to your post/).fill("https://www.tiktok.com/@x/video/1");
+  await card.getByRole("button", { name: "Save link" }).click();
+  await expect(page.getByText(/isn't a Youtube link/)).toBeVisible();
+  await card.getByLabel(/Link to your post/).fill("https://youtube.com/shorts/abc123");
+  await card.getByRole("button", { name: "Save link" }).click();
+  await expect(page.getByText(/Vyral will read its views/)).toBeVisible();
+  await page.getByRole("navigation").getByRole("link", { name: "Analytics" }).click();
+  await expect(page.getByRole("heading", { name: "Analytics" })).toBeVisible();
+  await expect(page.locator(".stat", { hasText: "Clips" }).locator(".value")).not.toHaveText("0");
+  await expect(page.getByText(/uploads have numbers/)).toBeVisible();
+  await page.getByRole("button", { name: "All time" }).click();
+  await expect(page.getByRole("heading", { name: "By platform" })).toBeVisible();
+});

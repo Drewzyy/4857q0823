@@ -157,6 +157,40 @@ function VideoTextPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: Cl
   );
 }
 
+function PostLink({ o, onChange, toast }: { o: ClipOutputT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+  const [url, setUrl] = useState(o.post_url ?? "");
+  const [nums, setNums] = useState({ views: "", likes: "", comments: "", shares: "" });
+  const auto = o.platform === "tiktok" || o.platform === "youtube";
+  const saveLink = async () => {
+    try { const r = await api.setPostLink(o.id, url.trim()); toast("ok", r.auto ? "Saved. Vyral will read its views and likes every few hours." : "Saved. Add its numbers below whenever you like."); onChange(); }
+    catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
+  };
+  const saveNums = async () => {
+    const v = (x: string) => (x.trim() === "" ? null : Number(x.replace(/[,\s]/g, "")));
+    try { await api.addMetrics(o.id, { views: v(nums.views), likes: v(nums.likes), comments: v(nums.comments), shares: v(nums.shares) });
+      toast("ok", "Numbers saved to Analytics"); setNums({ views: "", likes: "", comments: "", shares: "" }); }
+    catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
+  };
+  return (
+    <div className="field">
+      <label htmlFor={`post-${o.id}`} className="label-text">Link to your post (after uploading, for Analytics)</label>
+      <div className="row">
+        <input id={`post-${o.id}`} className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder={`https://www.${o.platform === "youtube" ? "youtube.com/shorts/…" : o.platform + ".com/…"}`} />
+        <button className="btn" disabled={!url.trim() || url.trim() === (o.post_url ?? "")} onClick={saveLink}>Save link</button>
+      </div>
+      {o.post_url && !auto && (
+        <div className="row wrap" style={{ marginTop: 6 }}>
+          {(["views", "likes", "comments", "shares"] as const).map((k) => (
+            <input key={k} className="input" style={{ width: 110 }} inputMode="numeric" aria-label={`${k} on ${o.platform}`} placeholder={k[0].toUpperCase() + k.slice(1)}
+              value={nums[k]} onChange={(e) => setNums({ ...nums, [k]: e.target.value })} />))}
+          <button className="btn sm" disabled={Object.values(nums).every((x) => !x.trim())} onClick={saveNums}>Save numbers</button>
+          <span className="hint">{o.platform === "instagram" ? "Instagram" : "Facebook"} only shows numbers when logged in, so type them from the app.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
   const [showText, setShowText] = useState(false);
   const [title, setTitle] = useState(o.title);
@@ -214,6 +248,7 @@ function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT
         {o.status === "ready" && <button className="btn" onClick={() => mark("uploaded")}><CheckCircle2 size={14} />Mark uploaded</button>}
         {o.status === "uploaded" && <button className="btn ghost" onClick={() => mark("ready")}><Undo2 size={14} />Not uploaded</button>}
       </div>
+      <PostLink o={o} onChange={onChange} toast={toast} />
       <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} aria-expanded={showText} onClick={() => setShowText(!showText)}>
         <Type size={13} />{showText ? "Hide text on video" : "Edit text on video (title, captions, colors, font, size, position)"}</button>
       {showText && <VideoTextPanel o={o} clip={clip} onChange={onChange} toast={toast} />}
