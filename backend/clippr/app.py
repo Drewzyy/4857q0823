@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .api import accounts, clips, connections as connections_api, funnel, system
 from .api.system import load_settings
 from .fetch import YtDlpFetcher
+from .media.transcribe import WhisperTranscriber
 from .api.deps import ApiError
 from .config import Config
 from .connections import CALLBACK_PAGE, ConnectionService
@@ -43,6 +44,7 @@ class AppContext:
     bundled_apps: dict[str, Any] = field(default_factory=dict)
     connections: ConnectionService = None  # type: ignore[assignment]
     fetcher: Any = None
+    transcriber: Any = None
     pipeline: Any = None
 
 
@@ -58,7 +60,7 @@ def _load_bundled_apps(config: Config) -> dict[str, Any]:
     return {}
 
 
-def build_context(config: Config, secrets: SecretStore | None = None, http_factory=None, fetcher=None) -> AppContext:
+def build_context(config: Config, secrets: SecretStore | None = None, http_factory=None, fetcher=None, transcriber=None) -> AppContext:
     config.ensure_dirs()
     setup_logging(config.data_dir / "logs")
     database = Database(f"sqlite:///{config.db_path}")
@@ -69,6 +71,7 @@ def build_context(config: Config, secrets: SecretStore | None = None, http_facto
     ctx.jobs.register("connections.refresh_due", lambda jc, p: ctx.connections.refresh_due())
     ctx.jobs.every("connections.refresh_due", 600)
     ctx.fetcher = fetcher or YtDlpFetcher()
+    ctx.transcriber = transcriber or WhisperTranscriber(config.data_dir / "models")
     from .pipeline import register
 
     register(ctx)

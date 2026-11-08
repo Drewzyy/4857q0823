@@ -218,6 +218,7 @@ class VodAsset(Base):
     title: Mapped[str] = mapped_column(Text, default="")
     duration: Mapped[float | None] = mapped_column(nullable=True)
     features_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     last_used_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
@@ -231,6 +232,14 @@ class Clip(Base):
     vod_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     vod_start: Mapped[float | None] = mapped_column(nullable=True)
     vod_end: Mapped[float | None] = mapped_column(nullable=True)
+    stream_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Full-quality cut of the stream kept until expiry so text edits can be re-rendered.
+    files_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_start: Mapped[float | None] = mapped_column(nullable=True)
+    source_duration: Mapped[float | None] = mapped_column(nullable=True)
+    words: Mapped[list[Any]] = mapped_column(default=list)  # [{start, end, text}] relative to the clip
+    captions_note: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="ready")  # ready | expired
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
@@ -255,6 +264,11 @@ class ClipOutput(Base):
     fps: Mapped[float | None] = mapped_column(nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="ready")  # ready | uploaded | expired
+    video_title: Mapped[str] = mapped_column(Text, default="")  # the title burned into the top of the video
+    overlay: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    format: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    render_state: Mapped[str] = mapped_column(String(16), default="ready")  # ready | rendering | failed
+    render_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     uploaded_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 

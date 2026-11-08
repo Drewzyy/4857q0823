@@ -33,12 +33,11 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1 && v.duration > 10)).toBe(true);
   expect(await video.evaluate((v: HTMLVideoElement) => v.videoHeight)).toBe(1920);
 
-  // TikTok tab: caption without the source's #fyp, with our hashtags.
+  // TikTok tab: post text, streamer + stream date, original hashtags + page hashtags + #vyralclips.
   await card.getByRole("tab", { name: /Streamer A TikTok/ }).click();
   const caption = card.getByLabel("Caption");
-  await expect(caption).toHaveValue(/^He did NOT just say that/);
-  await expect(caption).toHaveValue(/#gaming #StreamerA/);
-  await expect(caption).not.toHaveValue(/#fyp/);
+  await expect(caption).toHaveValue(/^He did NOT just say that\n\nStreamer: Streamer A\nStreamed Nov [78], 2026\n\n#fyp #gaming #vyralclips$/);
+  await expect(card.getByText(/Streamed Nov [78], 2026/).first()).toBeVisible();
   await card.getByRole("button", { name: "Save to computer" }).click();
   await expect(page.getByText(/Saved to .*Downloads.Vyral.*Streamer A TikTok - He did NOT just say that\.mp4/)).toBeVisible();
 
@@ -52,7 +51,7 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   // YouTube tab has a separate title and #shorts.
   await page.getByRole("tab", { name: /Streamer A YouTube/ }).click();
   await expect(page.getByLabel("Title")).toHaveValue("He did NOT just say that");
-  await expect(page.getByLabel("Description")).toHaveValue(/#shorts/);
+  await expect(page.getByLabel("Description")).toHaveValue(/#fyp #vyralclips #shorts$/);
 
   // Mark TikTok uploaded -> it moves to the Uploaded tab, YouTube stays Ready.
   await page.getByRole("tab", { name: /Streamer A TikTok/ }).click();
@@ -131,4 +130,45 @@ test("discord and storage settings", async ({ page }) => {
 test("the API refuses requests without the window token", async ({ request }) => {
   expect((await request.get("/api/sources")).status()).toBe(401);
   expect((await request.get("/api/media/outputs/1")).status()).toBe(401);
+});
+
+test("edit the text burned into a clip and re-render it", async ({ page }) => {
+  await page.goto("/ready");
+  const card = page.locator(".card", { hasText: "He did NOT just say that" }).first();
+  await card.getByRole("tab", { name: /Streamer A YouTube/ }).click();
+  const video = card.locator("video");
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1)).toBe(true);
+  const before = await video.getAttribute("src");
+
+  await card.getByRole("button", { name: /Edit text on video/ }).click();
+  await expect(card.getByLabel("Title on the video")).toHaveValue("He did NOT just say that");
+  // Defaults: bright yellow, all caps, title shown 5 s.
+  await expect(card.getByLabel("Title color", { exact: true })).toHaveValue("#ffe500");
+  await expect(card.getByText("Shows for 5 s")).toBeVisible();
+  await card.getByLabel("Title on the video").fill("BRO REALLY SAID IT");
+  await card.getByRole("button", { name: "Title color #FFFFFF" }).click();
+  await card.getByLabel("Size: 88").fill("120");
+  await expect(card.locator(".ov-preview .ov-text").first()).toHaveText("BRO REALLY SAID IT");
+  await card.getByRole("button", { name: "Re-render with changes" }).click();
+  await expect(page.getByText(/Re-rendering\. The new version/)).toBeVisible();
+  await expect.poll(async () => card.locator("video").getAttribute("src"), { timeout: 40_000 }).not.toBe(before);
+  await expect.poll(() => card.locator("video").evaluate((v: HTMLVideoElement) => v.readyState >= 1 && v.videoHeight === 1920), { timeout: 20_000 }).toBe(true);
+
+  // Fix a caption word: applies to every page (the edit panel stays open after re-rendering).
+  await card.getByLabel(/Caption words/).fill("no way he ACTUALLY did that right now");
+  await card.getByRole("button", { name: "Save captions" }).click();
+  await expect(page.getByText(/Captions updated/)).toBeVisible();
+});
+
+test("each page has its own default text style", async ({ page }) => {
+  await page.goto("/destinations");
+  await page.locator(".card", { hasText: "Streamer A YouTube" }).getByRole("button", { name: /Text, caption & format/ }).click();
+  await page.getByLabel("Captions color", { exact: true }).fill("#38bdf8");
+  await page.getByLabel("Position: 70% from top").fill("80");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Saved")).toBeVisible();
+  await page.reload();
+  await page.locator(".card", { hasText: "Streamer A YouTube" }).getByRole("button", { name: /Text, caption & format/ }).click();
+  await expect(page.getByLabel("Captions color", { exact: true })).toHaveValue("#38bdf8");
+  await expect(page.getByLabel("Position: 80% from top")).toBeVisible();
 });

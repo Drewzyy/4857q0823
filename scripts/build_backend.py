@@ -20,6 +20,9 @@ def main() -> None:
     cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--name", "clippr-backend",
            "--distpath", str(build / "dist"), "--workpath", str(build / "work"), "--specpath", str(build),
            "--add-data", f"{BACKEND / 'clippr' / 'migrations'}{sep}clippr/migrations",
+           "--add-data", f"{BACKEND / 'clippr' / 'media' / 'fonts'}{sep}clippr/media/fonts",
+           "--collect-all", "faster_whisper", "--collect-all", "ctranslate2", "--collect-all", "av",
+           "--collect-all", "tokenizers", "--collect-submodules", "huggingface_hub",
            "--add-binary", f"{ffmpeg}{sep}imageio_ffmpeg/binaries",
            "--collect-submodules", "clippr", "--collect-submodules", "keyring", "--collect-submodules", "yt_dlp",
            "--hidden-import", "keyring.backends.macOS", "--hidden-import", "keyring.backends.Windows"]

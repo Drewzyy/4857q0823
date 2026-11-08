@@ -14,7 +14,7 @@ from clippr.fetch import FetchError, RemotePost, RemoteVod
 from clippr.media.ffmpeg import probe, run
 from clippr.models import Clip, ClipOutput, ReferenceVideo
 from clippr.secrets_store import MemoryStore
-from fakes import FakeFetcher
+from fakes import FakeFetcher, FakeTranscriber
 from media_fixtures import make_stream_and_clip, speechlike, write_wav
 
 HOOK = "https://discord.com/api/webhooks/123456789/abcdefghijklmnopqrstuvwxyz_123"
@@ -38,9 +38,33 @@ def env(tmp_path, media, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
     fake = FakeFetcher(media)
     cfg = Config(data_dir=tmp_path / "data", port=8765, api_token=TOKEN, run_worker=False, secret_backend="memory")
-    ctx = build_context(cfg, secrets=MemoryStore(), fetcher=fake)
+    ctx = build_context(cfg, secrets=MemoryStore(), fetcher=fake, transcriber=FakeTranscriber())
     with TestClient(create_app(ctx=ctx), base_url="http://127.0.0.1:8765", headers={"X-Clippr-Token": TOKEN}) as c:
         yield ctx, c, fake
+
+
+def _frame(path, t):
+    import numpy as np
+    from clippr.media.ffmpeg import ffmpeg_exe
+    import subprocess
+    raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", str(t), "-i", str(path), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         capture_output=True, check=True).stdout
+    info = probe(path)
+    return np.frombuffer(raw, np.uint8).reshape(info.height, info.width, 3).astype(int)
+
+
+def yellow_pixels(path, t, top):
+    f = _frame(path, t)
+    h = f.shape[0]
+    region = f[: int(h * 0.25)] if top else f[int(h * 0.6): int(h * 0.8)]
+    r, g, b = region[..., 0], region[..., 1], region[..., 2]
+    return int(((r > 235) & (g > 210) & (b < 60)).sum())
+
+
+def white_pixels(path, t):
+    f = _frame(path, t)
+    region = f[: int(f.shape[0] * 0.25)]
+    return int(((region > 240).all(axis=2)).sum())
 
 
 def drain(ctx):
@@ -92,9 +116,18 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert outs["tiktok"]["width"] == 1080 and outs["tiktok"]["height"] == 1920
     assert outs["youtube"]["width"] == 720 and outs["youtube"]["height"] == 1280
     tdesc = outs["tiktok"]["description"]
-    assert tdesc.startswith("He actually did it 😭") and "#fyp" not in tdesc and "@someone" not in tdesc
-    assert "Follow for more" in tdesc and "#gaming #clips #StreamerA" in tdesc
-    assert outs["youtube"]["title"] == "He actually did it 😭" and "#shorts" in outs["youtube"]["description"]
+    local = datetime(2026, 11, 7, 20, tzinfo=timezone.utc).astimezone()
+    assert tdesc == (f"He actually did it 😭\n\nFollow for more\n\nStreamer: Streamer A\nStreamed {local:%b} {local.day}, {local.year}"
+                     "\n\n#fyp #gaming #clips #vyralclips"), tdesc
+    assert "@someone" not in tdesc
+    assert outs["youtube"]["title"] == "He actually did it 😭"
+    assert outs["youtube"]["description"].endswith("#fyp #vyralclips #shorts")
+
+    # Text on the video: default is ALL CAPS bold bright yellow, title at the top for 5 s, captions from speech.
+    tt_out = outs["tiktok"]
+    assert tt_out["video_title"] == "He actually did it 😭"
+    assert tt_out["overlay"]["title"]["color"] == "#FFE500" and tt_out["overlay"]["title"]["all_caps"] and tt_out["overlay"]["title"]["duration"] == 5
+    assert clips[0]["captions_text"] == "no way he actually did that right now" and clips[0]["editable"]
     assert outs["tiktok"]["destination"]["handle"] == "@streamera.tt"
 
     # Rendered from the original stream, cut to the moment (20 s clip + 3 s jump cut + padding).
@@ -102,6 +135,10 @@ def test_new_post_becomes_ready_to_upload_clip(env):
         path = Path(s.get(ClipOutput, outs["tiktok"]["id"]).file_path)
     info = probe(path)
     assert 22.5 < info.duration < 25.5 and info.has_audio
+    # The yellow title is really burned in at the top during the first seconds, and gone after 5 s.
+    assert yellow_pixels(path, 2.0, top=True) > 2000
+    assert yellow_pixels(path, 7.0, top=True) < 50
+    assert yellow_pixels(path, 1.2, top=False) > 2000  # caption "NO WAY HE" in the lower part
 
     # Discord got "new post" then "ready" with both platforms.
     msgs = [httpx.Request("POST", HOOK, content=call.request.content) for call in discord.calls]
@@ -109,12 +146,37 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert len(msgs) == 2 and "a.clips" in bodies[0] and "just posted" in bodies[0]
     assert "Clip ready for upload" in bodies[1] and "TikTok" in bodies[1] and "YouTube" in bodies[1] and "@streamera.tt" in bodies[1]
 
+    # Edit the burned-in title + style for one page and re-render it.
+    old_file = path
+    r = c.patch(f"/api/outputs/{tt_out['id']}/video", json={"video_title": "NEW TITLE", "overlay": {"title": {"color": "#FFFFFF", "size": 90}}})
+    assert r.status_code == 200 and r.json()["render_state"] == "rendering"
+    assert c.post(f"/api/outputs/{tt_out['id']}/save").status_code == 409  # not mid-render
+    drain(ctx)
+    o2 = next(o for o in c.get("/api/clips").json()[0]["outputs"] if o["id"] == tt_out["id"])
+    assert o2["render_state"] == "ready" and o2["video_title"] == "NEW TITLE" and o2["overlay"]["title"]["color"] == "#FFFFFF"
+    assert o2["version"] != tt_out["version"] and not old_file.exists()
+    with ctx.db.session() as s:
+        path = Path(s.get(ClipOutput, tt_out["id"]).file_path)
+    assert yellow_pixels(path, 2.0, top=True) < 50 and white_pixels(path, 2.0) > 2000
+    assert c.patch(f"/api/outputs/{tt_out['id']}/video", json={"overlay": {"title": {"color": "red"}}}).status_code == 422
+
+    # Fix a misheard word: timing is kept, every page re-renders.
+    r = c.patch(f"/api/clips/{clips[0]['id']}/captions", json={"text": "no way he ACTUALLY did that right now bro"})
+    assert r.json()["rendering"] == 2
+    drain(ctx)
+    with ctx.db.session() as s:
+        words = s.get(Clip, clips[0]["id"]).words
+    assert [w["text"] for w in words][3] == "ACTUALLY" and words[3]["start"] == pytest.approx(0.4 + 3 * 0.45)
+    assert words[-1]["text"] == "bro"
+
     # Preview stream works with the token in the query (for <video src>), not without.
     oid = outs["tiktok"]["id"]
     assert c.get(f"/api/media/outputs/{oid}", headers={"X-Clippr-Token": ""}, params={"t": TOKEN}).status_code == 200
     assert c.get(f"/api/media/outputs/{oid}", headers={"X-Clippr-Token": ""}).status_code == 401
 
     # Save to Downloads, edit caption, mark uploaded.
+    with ctx.db.session() as s:
+        path = Path(s.get(ClipOutput, oid).file_path)  # replaced by the re-renders above
     saved = Path(c.post(f"/api/outputs/{oid}/save").json()["path"])
     assert saved.exists() and saved.parent.name == "Vyral" and saved.stat().st_size == path.stat().st_size
     assert c.patch(f"/api/outputs/{oid}", json={"description": "edited"}).json()["description"] == "edited"
@@ -190,3 +252,17 @@ def test_creator_links_and_webhook_validation(env):
         assert c.put("/api/notifications", json={"webhook_url": bad}).status_code == 422
     assert c.post("/api/notifications/test").status_code == 409
     assert c.get("/api/notifications").json()["configured"] is False
+
+
+def test_captions_skipped_gracefully_without_speech_model(env):
+    ctx, c, fake = env
+    ctx.transcriber = FakeTranscriber(fail=True)
+    cid, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("q1", "https://www.tiktok.com/@a.clips/video/q1", "quiet one")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    clip = c.get("/api/clips").json()[0]
+    assert clip["has_captions"] is False and "Captions skipped" in clip["captions_note"]
+    assert c.get("/api/references").json()[0]["status"] == "ready"

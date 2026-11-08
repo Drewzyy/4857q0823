@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Text on the video: title at the top for the first 5 seconds, captions synced to speech. Default ALL CAPS, bold, bright yellow with black outline. Font (4 bundled), size, color, outline, position, title duration and words at a time editable per page and per clip, with a live preview.
+- Local speech-to-text (faster-whisper, runs on your computer; model downloads once).
+- Fix misheard caption words; word timing is kept. Re-render any clip after editing; the full-quality source cut is kept until the clip expires.
+- Captions now keep the post's own hashtags (mentions removed), add #vyralclips, the streamer line and the stream date.
+- Fixed: editing endpoints could wait on their own database lock; the job worker could not restart after stopping.
+
 ## 0.2.0: Vyral
 
 - Renamed to Vyral.

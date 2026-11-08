@@ -51,3 +51,22 @@ def test_crash_recovery_requeues_running(ctx):
     assert q.run_one()
     with ctx.db.session() as s:
         assert s.get(Job, jid).status == "succeeded"
+
+
+def test_worker_can_restart_after_stop(ctx):
+    import time
+
+    q = JobQueue(ctx.db)
+    q.register("ok", lambda jc, p: None)
+    q.start(1)
+    q.stop()
+    jid = q.enqueue("ok")
+    q.start(1)
+    for _ in range(50):
+        with ctx.db.session() as s:
+            if s.get(Job, jid).status == "succeeded":
+                break
+        time.sleep(0.1)
+    q.stop()
+    with ctx.db.session() as s:
+        assert s.get(Job, jid).status == "succeeded"

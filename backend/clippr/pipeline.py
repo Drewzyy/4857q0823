@@ -5,6 +5,7 @@ Every step is a persistent job, so a crash or restart resumes where it left off.
 """
 from __future__ import annotations
 
+import json
 import logging
 import random
 import shutil
@@ -13,18 +14,21 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from . import describe, notify
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost
 from .jobs import PermanentJobError
-from .media import match
-from .media.ffmpeg import FFmpegError, probe
+from .media import match, overlay
+from .media.ffmpeg import FFmpegError, probe, run
+from .media.overlay import Word
+from .media.transcribe import TranscribeError
 from .media.render import OutputFormat, render
 from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, ReferenceVideo, SourceAccount, VodAsset
 from .routing import resolve_destinations
+from .schemas import OverlaySettings
 
 log = logging.getLogger("clippr.pipeline")
 POSTS_PER_CHECK = 12
@@ -84,7 +88,7 @@ class Pipeline:
                 # Spread checks out so we never hit a platform with a burst of requests.
                 src.next_check_at = now() + timedelta(minutes=st.interval_minutes, seconds=random.randint(0, 90))
                 self.ctx.jobs.enqueue("source.check", {"source_id": src.id}, idempotency_key=f"check:{src.id}:{int(now().timestamp() // 60)}",
-                                      max_attempts=1, delay=i * random.uniform(4, 10))
+                                      max_attempts=1, delay=i * random.uniform(4, 10), session=s)
         return {"queued": len(due)}
 
     def check_source(self, source_id: int) -> dict:
@@ -246,30 +250,45 @@ class Pipeline:
             local = match.find_in_stream(ref_feats, match.extract_features(section), pad=0.4)
             start, dur = (local.start, local.end - local.start) if local else (min(lead, m.start), m.end - m.start)
 
-            self._set(rid, "processing", "Rendering")
+            # Keep the full-quality cut until the clip expires so text edits can be re-rendered later.
             clip_dir = self._dir("clips") / f"ref{rid}-{int(now().timestamp())}"
+            clip_dir.mkdir(parents=True, exist_ok=True)
+            source = clip_dir / f"source{section.suffix or '.mp4'}"
+            shutil.move(str(section), source)
+
+            self._set(rid, "processing", "Writing captions")
+            words, captions_note = self._transcribe(source, start, dur, work)
+            stream_date = self._stream_date(vod)
+            clean = describe.clean_title(ref_title, creator_name)
+
+            self._set(rid, "processing", "Rendering")
             renders: dict[str, Path] = {}
-            for _, _, _, _, st in dest_info:
-                fmt = OutputFormat.from_settings(st.get("format") or {})
-                if fmt.key not in renders:
-                    renders[fmt.key] = render(section, clip_dir / f"{fmt.key}.mp4", fmt, start=start, duration=dur)
+            planned = []
+            for did, platform, name, handle, st in dest_info:
+                fmt_raw = dict(st.get("format") or {})
+                ov = OverlaySettings.model_validate(st.get("overlay") or {}).model_dump()
+                key = json.dumps([fmt_raw, ov], sort_keys=True)
+                if key not in renders:
+                    renders[key] = self._render(source, clip_dir / f"render-{len(renders)}.mp4", fmt_raw, start, dur, ov, clean, words, work / f"ov{len(renders)}")
+                planned.append((did, platform, st, fmt_raw, ov, renders[key]))
 
             with self.ctx.db.session() as s:
-                clip = Clip(reference_id=rid, creator_id=ref.creator_id or (src.creator_id if src else None), title=describe.clean_title(ref_title, creator_name),
-                            vod_url=vod.url, vod_start=m.start, vod_end=m.end, status="ready",
+                clip = Clip(reference_id=rid, creator_id=ref.creator_id or (src.creator_id if src else None), title=clean,
+                            vod_url=vod.url, vod_start=m.start, vod_end=m.end, stream_date=stream_date, status="ready",
+                            files_dir=str(clip_dir), source_path=str(source), source_start=start, source_duration=dur,
+                            words=[w.to_dict() for w in words], captions_note=captions_note,
                             expires_at=now() + timedelta(days=cfg.storage.retention_days))
                 s.add(clip)
                 s.flush()
-                for did, platform, _, _, st in dest_info:
-                    fmt = OutputFormat.from_settings(st.get("format") or {})
-                    path = renders[fmt.key]
+                for did, platform, st, fmt_raw, ov, path in planned:
                     info = probe(path)
-                    title, desc = describe.build(platform, ref_title, creator_name, st)
+                    title, desc = describe.build(platform, ref_title, creator_name, st, stream_date)
                     s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=title, description=desc,
+                                     video_title=clean, overlay=ov, format=fmt_raw,
                                      file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))
                 audit(s, "clip.ready", "clip", clip.id, {"reference": rid, "destinations": len(dest_info)})
                 clip_title = clip.title
-            self._set(rid, "ready", f"Ready to upload to {len(dest_info)} destination(s)")
+            self._set(rid, "ready", f"Ready to upload to {len(dest_info)} destination(s)" + (f". {captions_note}" if captions_note else ""))
             self.notify("on_clip_ready", notify.ready_message(clip_title, creator_name, [(p, n, h) for _, p, n, h, _ in dest_info]))
             return {"status": "ready", "outputs": len(dest_info)}
         except FetchError as e:
@@ -279,6 +298,80 @@ class Pipeline:
             return self._stop(rid, "failed", str(e), account, ref_url)
         finally:
             shutil.rmtree(work, ignore_errors=True)
+
+    def _transcribe(self, source: Path, start: float, dur: float, work: Path) -> tuple[list[Word], str]:
+        """Words spoken in the clip, timed from the clip's start. Captions are skipped (with a note) if this fails."""
+        audio = work / "speech.wav"
+        try:
+            run(["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{dur:.3f}", "-vn", "-ac", "1", "-ar", "16000", str(audio)])
+            return self.ctx.transcriber.words(audio), ""
+        except (TranscribeError, FFmpegError) as e:
+            return [], f"Captions skipped: {e}"
+        except Exception as e:
+            log.exception("transcription failed")
+            return [], f"Captions skipped: speech recognition failed ({type(e).__name__})"
+
+    def _stream_date(self, vod) -> datetime | None:
+        if vod.published_at:
+            return vod.published_at
+        with self.ctx.db.session() as s:
+            asset = s.scalar(select(VodAsset).where(VodAsset.url == vod.url))
+            if asset and asset.published_at:
+                return asset.published_at
+        try:
+            when = self.ctx.fetcher.vod_details(vod.url).published_at
+        except FetchError:
+            return None  # the date line is simply left out
+        if when:
+            with self.ctx.db.session() as s:
+                asset = s.scalar(select(VodAsset).where(VodAsset.url == vod.url))
+                if asset:
+                    asset.published_at = when
+        return when
+
+    def _render(self, source: Path, out: Path, fmt_raw: dict, start: float, dur: float, ov: dict, title_text: str,
+                words: list[Word], ov_dir: Path) -> Path:
+        fmt = OutputFormat.from_settings(fmt_raw)
+        use_text = (ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words)
+        if use_text:
+            overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, dur))
+        return render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None)
+
+    def rerender(self, output_ids: list[int]) -> dict:
+        """Re-render outputs after their text or style was edited. Each gets its own new file."""
+        done = 0
+        for oid in output_ids:
+            with self.ctx.db.session() as s:
+                o = s.get(ClipOutput, oid)
+                clip = s.get(Clip, o.clip_id) if o else None
+                if not o or not clip or clip.status != "ready" or not clip.source_path or not Path(clip.source_path).exists():
+                    if o:
+                        o.render_state, o.render_error = "failed", "The original footage for this clip has expired."
+                    continue
+                job = (Path(clip.source_path), Path(clip.files_dir), dict(o.format or {}), dict(o.overlay or {}), o.video_title,
+                       [Word.from_dict(w) for w in clip.words or []], clip.source_start or 0.0, clip.source_duration or 0.0, o.file_path)
+            source, cdir, fmt_raw, ov, vtitle, words, start, dur, old = job
+            ov = OverlaySettings.model_validate(ov or {}).model_dump()
+            out = cdir / f"output-{oid}-{int(now().timestamp() * 1000)}.mp4"
+            work = self._dir("tmp") / f"rerender-{oid}-{random.randrange(1 << 30)}"
+            try:
+                self._render(source, out, fmt_raw, start, dur, ov, vtitle, words, work)
+                info = probe(out)
+                with self.ctx.db.session() as s:
+                    o = s.get(ClipOutput, oid)
+                    o.file_path, o.width, o.height, o.fps, o.size_bytes = str(out), info.width, info.height, info.fps, out.stat().st_size
+                    o.render_state, o.render_error = "ready", None
+                    still_used = s.scalar(select(func.count()).select_from(ClipOutput).where(ClipOutput.file_path == old)) if old else 0
+                if old and not still_used:
+                    Path(old).unlink(missing_ok=True)
+                done += 1
+            except FFmpegError as e:
+                with self.ctx.db.session() as s:
+                    o = s.get(ClipOutput, oid)
+                    o.render_state, o.render_error = "failed", str(e)[:300]
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        return {"rendered": done}
 
     # ---------- storage ----------
     def cleanup(self) -> dict:
@@ -291,12 +384,10 @@ class Pipeline:
                 for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id)).unique():
                     if o.file_path:
                         Path(o.file_path).unlink(missing_ok=True)
-                        try:
-                            Path(o.file_path).parent.rmdir()
-                        except OSError:
-                            pass
                     o.file_path, o.status = None, "expired"
-                clip.status = "expired"
+                if clip.files_dir:
+                    shutil.rmtree(clip.files_dir, ignore_errors=True)  # renders + the kept source cut
+                clip.status, clip.source_path = "expired", None
                 expired += 1
             vods = 0
             for v in s.scalars(select(VodAsset).where(VodAsset.last_used_at <= cutoff)):
@@ -328,7 +419,8 @@ def register(ctx: Any) -> Pipeline:
     q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url")))
     q.register("notify.discord", lambda jc, pl: p.send_discord(pl))
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())
+    q.register("clip.rerender", lambda jc, pl: p.rerender(pl["output_ids"]))
     q.every("monitor.tick", 60)
     q.every("storage.cleanup", 6 * 3600)
-    q.heavy = {"clip.build"}
+    q.heavy = {"clip.build", "clip.rerender"}
     return p

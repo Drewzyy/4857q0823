@@ -1,0 +1,141 @@
+"""Text burned into the video: a title at the top for the first seconds, and captions synced to speech.
+
+Rendered with libass (inside the bundled FFmpeg) from an .ass subtitle file, using fonts that ship
+with the app so the result looks identical on every computer."""
+from __future__ import annotations
+
+import difflib
+import re
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+
+FONT_DIR = Path(__file__).parent / "fonts"
+FONTS = {  # key -> (file, family name inside the font)
+    "montserrat": ("Montserrat_900Black.ttf", "Montserrat Black"),
+    "anton": ("Anton_400Regular.ttf", "Anton"),
+    "bebas": ("BebasNeue_400Regular.ttf", "Bebas Neue"),
+    "poppins": ("Poppins_800ExtraBold.ttf", "Poppins ExtraBold"),
+}
+
+
+@dataclass
+class Word:
+    start: float
+    end: float
+    text: str
+
+    def to_dict(self) -> dict:
+        return {"start": round(self.start, 3), "end": round(self.end, 3), "text": self.text}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Word":
+        return cls(float(d["start"]), float(d["end"]), str(d["text"]))
+
+
+def chunk_words(words: list[Word], per: int) -> list[Word]:
+    """Group words into short on-screen captions; break early at sentence ends and pauses."""
+    out: list[Word] = []
+    cur: list[Word] = []
+    for w in words:
+        if cur and (len(cur) >= per or w.start - cur[-1].end > 0.6):
+            out.append(Word(cur[0].start, cur[-1].end, " ".join(x.text for x in cur)))
+            cur = []
+        cur.append(w)
+        if re.search(r"[.!?]$", w.text):
+            out.append(Word(cur[0].start, cur[-1].end, " ".join(x.text for x in cur)))
+            cur = []
+    if cur:
+        out.append(Word(cur[0].start, cur[-1].end, " ".join(x.text for x in cur)))
+    # Hold each caption until the next one starts (no flicker in short gaps).
+    for a, b in zip(out, out[1:]):
+        if 0 <= b.start - a.end < 0.35:
+            a.end = b.start
+    return out
+
+
+def apply_text_edit(words: list[Word], new_text: str) -> list[Word]:
+    """Keep word timings when the user corrects the transcript text."""
+    new = new_text.split()
+    if not words:
+        return []
+    old = [w.text for w in words]
+    sm = difflib.SequenceMatcher(a=[o.lower().strip(".,!?") for o in old], b=[n.lower().strip(".,!?") for n in new], autojunk=False)
+    out: list[Word] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            out += [Word(words[i1 + k].start, words[i1 + k].end, new[j1 + k]) for k in range(i2 - i1)]
+        elif tag in ("replace", "insert"):
+            if i2 > i1:
+                start, end = words[i1].start, words[i2 - 1].end
+            else:  # pure insert: squeeze next to the previous word
+                prev = out[-1] if out else words[0]
+                start, end = prev.end, prev.end + 0.3
+            n = j2 - j1
+            span = max(end - start, 0.05 * n)
+            out += [Word(start + span * k / n, start + span * (k + 1) / n, new[j1 + k]) for k in range(n)]
+    return out
+
+
+def _ass_color(hex_color: str) -> str:
+    h = hex_color.lstrip("#")
+    return f"&H00{h[4:6]}{h[2:4]}{h[0:2]}".upper()
+
+
+def _ts(t: float) -> str:
+    t = max(0.0, t)
+    return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
+
+
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0000FE0F\U0000200D\U0001F1E6-\U0001F1FF]")
+
+
+def _clean(text: str, caps: bool) -> str:
+    # Color emoji can't be drawn by the video text renderer; they stay in the written caption only.
+    text = re.sub(r"\s+", " ", _EMOJI.sub("", text))
+    text = text.replace("\\", "/").replace("{", "(").replace("}", ")").replace("\n", " ").strip()
+    return text.upper() if caps else text
+
+
+def build_ass(width: int, height: int, overlay: dict, title_text: str, words: list[Word], duration: float) -> str:
+    scale = width / 1080
+    t, c = overlay["title"], overlay["captions"]
+
+    def style(name: str, s: dict) -> str:
+        font = FONTS[s["font"]][1]
+        return (f"Style: {name},{font},{round(s['size'] * scale)},{_ass_color(s['color'])},{_ass_color(s['color'])},"
+                f"{_ass_color(s['outline_color'])},&H64000000,-1,0,0,0,100,100,0,0,1,{s['outline'] * scale:.1f},{2 * scale:.1f},5,"
+                f"{round(70 * scale)},{round(70 * scale)},0,1")
+
+    lines = [
+        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {width}", f"PlayResY: {height}", "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        style("Title", t), style("Caption", c), "",
+        "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    if t["enabled"] and title_text.strip():
+        y = round(height * t["y_percent"] / 100)
+        end = min(float(t["duration"]), duration)
+        lines.append(f"Dialogue: 1,{_ts(0)},{_ts(end)},Title,,0,0,0,,{{\\pos({width // 2},{y})\\fad(150,300)}}{_clean(title_text, t['all_caps'])}")
+    if c["enabled"]:
+        y = round(height * c["y_percent"] / 100)
+        for w in chunk_words(words, int(c["words_per_caption"])):
+            if w.end <= 0 or w.start >= duration:
+                continue
+            lines.append(f"Dialogue: 0,{_ts(w.start)},{_ts(min(w.end, duration))},Caption,,0,0,0,,{{\\pos({width // 2},{y})}}{_clean(w.text, c['all_caps'])}")
+    return "\n".join(lines) + "\n"
+
+
+def prepare(workdir: Path, ass_text: str) -> tuple[str, str]:
+    """Write the subtitle file and fonts next to each other; FFmpeg runs in workdir with relative paths
+    (avoids Windows drive-letter escaping problems inside filter arguments)."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    (workdir / "overlay.ass").write_text(ass_text, encoding="utf-8")
+    fonts = workdir / "fonts"
+    fonts.mkdir(exist_ok=True)
+    for file, _ in FONTS.values():
+        if not (fonts / file).exists():
+            shutil.copyfile(FONT_DIR / file, fonts / file)
+    return "overlay.ass", "fonts"

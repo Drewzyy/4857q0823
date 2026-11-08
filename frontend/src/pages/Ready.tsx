@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle2, Clock, Copy, Download, ExternalLink, FolderDown, Trash2, Undo2 } from "lucide-react";
+import { Check, CheckCircle2, Clock, Copy, Download, ExternalLink, FolderDown, RefreshCw, Trash2, Type, Undo2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, PLATFORM_LABEL, type ClipOutputT, type ClipT } from "../lib/api";
 import { bytes, ConfirmModal, Empty, ErrorNote, Loading, PlatformBadge, relTime, useToast } from "../components/ui";
+import { OverlayEditor } from "../components/OverlayEditor";
+import type { Overlay } from "../lib/api";
 
 type Tab = "ready" | "uploaded" | "expired";
 
@@ -22,7 +24,11 @@ export default function Ready() {
   const [tab, setTab] = useState<Tab>("ready");
   const qc = useQueryClient();
   const toast = useToast();
-  const clips = useQuery({ queryKey: ["clips", tab], queryFn: () => api.clips(tab), refetchInterval: 15_000 });
+  const clips = useQuery({
+    queryKey: ["clips", tab], queryFn: () => api.clips(tab),
+    // Poll quickly while a video is being re-rendered so the new version appears right away.
+    refetchInterval: (q) => (q.state.data?.some((c) => c.outputs.some((o) => o.render_state === "rendering")) ? 2500 : 15_000),
+  });
   const [removing, setRemoving] = useState<ClipT | null>(null);
   const refresh = () => ["clips", "dashboard"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   const list = clips.data ?? [];
@@ -66,8 +72,11 @@ function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: 
   return (
     <div className="card" style={{ display: "grid", gridTemplateColumns: "minmax(200px, 270px) 1fr", gap: 20 }}>
       <div>
-        {current?.available ? (
-          <video key={current.id} src={api.mediaUrl(current.id)} controls preload="metadata" playsInline
+        {current?.render_state === "rendering" ? (
+          <div className="empty" style={{ aspectRatio: "9 / 16", background: "var(--bg-2)", borderRadius: 10, justifyContent: "center" }}>
+            <span className="spinner" /><span className="small">Re-rendering with your changes…</span></div>
+        ) : current?.available ? (
+          <video key={`${current.id}-${current.version}`} src={api.mediaUrl(current.id, false, current.version)} controls preload="metadata" playsInline
             style={{ width: "100%", aspectRatio: `${current.width ?? 9} / ${current.height ?? 16}`, background: "#000", borderRadius: 10 }} />
         ) : (
           <div className="empty" style={{ aspectRatio: "9 / 16", background: "var(--bg-2)", borderRadius: 10, justifyContent: "center" }}>
@@ -84,6 +93,7 @@ function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: 
           {ref?.source && <span>From <a href={ref.url} target="_blank" rel="noopener noreferrer">@{ref.source.username}'s post <ExternalLink size={11} /></a></span>}
           {!ref?.source && ref && <a href={ref.url} target="_blank" rel="noopener noreferrer">Original post <ExternalLink size={11} /></a>}
           {clip.vod_url && <span>Cut from <a href={clip.vod_url} target="_blank" rel="noopener noreferrer">the stream</a> at {hms(clip.vod_start)} to {hms(clip.vod_end)}</span>}
+          {clip.stream_date && <span>Streamed {new Date(clip.stream_date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span>}
           <span>Made {relTime(clip.created_at)}</span>
           {clip.status === "ready" && <span className="pill warn nodot">{daysLeft(clip.expires_at)}</span>}
         </div>
@@ -98,7 +108,8 @@ function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: 
             </button>
           ))}
         </div>
-        {current && <OutputPanel key={current.id} o={current} onChange={onChange} toast={toast} />}
+        {clip.captions_note && <div className="banner warn small">{clip.captions_note}</div>}
+        {current && <OutputPanel key={current.id} o={current} clip={clip} onChange={onChange} toast={toast} />}
       </div>
     </div>
   );
@@ -109,7 +120,45 @@ function daysLeftLabel(c: ClipT) {
   return `${days} days`;
 }
 
-function OutputPanel({ o, onChange, toast }: { o: ClipOutputT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+function VideoTextPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+  const [title, setTitle] = useState(o.video_title);
+  const [overlay, setOverlay] = useState<Overlay>(structuredClone(o.overlay));
+  const [all, setAll] = useState(false);
+  const [captions, setCaptions] = useState(clip.captions_text);
+  const [busy, setBusy] = useState(false);
+  const styleDirty = JSON.stringify(overlay) !== JSON.stringify(o.overlay) || title !== o.video_title;
+  const run = async (fn: () => Promise<unknown>, msg: string) => {
+    setBusy(true);
+    try { await fn(); toast("ok", msg); onChange(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  if (!clip.editable) return <p className="small faint">The original footage for this clip has expired, so its text can't be changed anymore.</p>;
+  return (
+    <div className="stack">
+      <div className="field"><label htmlFor={`vt-${o.id}`}>Title on the video</label>
+        <input id={`vt-${o.id}`} className="input" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Leave empty for no title" /></div>
+      <OverlayEditor value={overlay} onChange={setOverlay} title={title} />
+      <div className="row wrap">
+        {clip.outputs.length > 1 && <label className="check small"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />Use this style for every page of this clip</label>}
+        <span className="spacer" />
+        <button className="btn primary" disabled={!styleDirty || busy || o.render_state === "rendering"}
+          onClick={() => run(() => api.editVideoText(o.id, { video_title: title, overlay, apply_style_to_all: all }), "Re-rendering. The new version appears in a moment.")}>
+          <RefreshCw size={14} />Re-render with changes</button>
+      </div>
+      {clip.has_captions && (
+        <div className="field"><label htmlFor={`cap-${clip.id}`}>Caption words (fix anything misheard; timing is kept)</label>
+          <textarea id={`cap-${clip.id}`} className="textarea" rows={3} value={captions} onChange={(e) => setCaptions(e.target.value)} />
+          <div className="row"><span className="hint">Changes the captions on every page of this clip.</span><span className="spacer" />
+            <button className="btn" disabled={captions === clip.captions_text || busy}
+              onClick={() => run(() => api.editCaptions(clip.id, captions), "Captions updated. Re-rendering every page.")}>Save captions</button></div>
+        </div>
+      )}
+      {o.render_state === "failed" && <div className="banner warn small">Re-render failed: {o.render_error}</div>}
+    </div>
+  );
+}
+
+function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+  const [showText, setShowText] = useState(false);
   const [title, setTitle] = useState(o.title);
   const [desc, setDesc] = useState(o.description);
   const [copied, setCopied] = useState<string | null>(null);
@@ -156,15 +205,18 @@ function OutputPanel({ o, onChange, toast }: { o: ClipOutputT; onChange: () => v
         <div className="row"><label htmlFor={`d-${o.id}`} className="label-text">{isYT ? "Description" : "Caption"}</label><span className="spacer" />
           <span className="small faint">{desc.length}/{isYT ? 5000 : 2200}</span>
           <button className="btn sm" onClick={() => copy(desc, "desc")}>{copied === "desc" ? <Check size={12} /> : <Copy size={12} />}{copied === "desc" ? "Copied" : "Copy caption"}</button></div>
-        <textarea id={`d-${o.id}`} className="textarea" rows={5} maxLength={5000} value={desc} onChange={(e) => setDesc(e.target.value)} onBlur={persist} />
+        <textarea id={`d-${o.id}`} className="textarea" rows={8} maxLength={5000} value={desc} onChange={(e) => setDesc(e.target.value)} onBlur={persist} />
       </div>
       <div className="row wrap">
-        <button className="btn primary" disabled={!o.available || busy} onClick={save}>{busy ? <span className="spinner" /> : <FolderDown size={14} />}Save to computer</button>
-        {o.available && !health?.desktop_mode && <a className="btn" href={api.mediaUrl(o.id, true)} download><Download size={14} />Download</a>}
+        <button className="btn primary" disabled={!o.available || busy || o.render_state === "rendering"} onClick={save}>{busy ? <span className="spinner" /> : <FolderDown size={14} />}Save to computer</button>
+        {o.available && !health?.desktop_mode && o.render_state !== "rendering" && <a className="btn" href={api.mediaUrl(o.id, true, o.version)} download><Download size={14} />Download</a>}
         <span className="spacer" />
         {o.status === "ready" && <button className="btn" onClick={() => mark("uploaded")}><CheckCircle2 size={14} />Mark uploaded</button>}
         {o.status === "uploaded" && <button className="btn ghost" onClick={() => mark("ready")}><Undo2 size={14} />Not uploaded</button>}
       </div>
+      <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} aria-expanded={showText} onClick={() => setShowText(!showText)}>
+        <Type size={13} />{showText ? "Hide text on video" : "Edit text on video (title, captions, colors, font, size, position)"}</button>
+      {showText && <VideoTextPanel o={o} clip={clip} onChange={onChange} toast={toast} />}
       <p className="small faint">Save to computer puts the full-quality file in Downloads › Vyral and shows it in {navigator.userAgent.includes("Windows") ? "File Explorer" : "Finder"}.</p>
     </div>
   );

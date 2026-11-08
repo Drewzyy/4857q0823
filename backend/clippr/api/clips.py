@@ -13,14 +13,16 @@ from typing import Literal
 import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import notify
 from ..audit import audit
 from ..fetch import FetchError
+from ..media.overlay import Word, apply_text_edit
 from ..models import Clip, ClipOutput, Creator, ReferenceVideo, Setting, SourceAccount
+from ..schemas import OverlaySettings
 from .deps import ApiError, ctx, db, get_or_404
 
 router = APIRouter()
@@ -35,7 +37,11 @@ def _output(o: ClipOutput) -> dict:
     return {"id": o.id, "platform": o.platform, "title": o.title, "description": o.description, "status": o.status,
             "destination": {"id": d.id, "display_name": d.display_name, "handle": d.handle} if d else None,
             "width": o.width, "height": o.height, "fps": o.fps, "size_bytes": o.size_bytes,
-            "available": bool(o.file_path and Path(o.file_path).exists()), "uploaded_at": _dt(o.uploaded_at)}
+            "available": bool(o.file_path and Path(o.file_path).exists()), "uploaded_at": _dt(o.uploaded_at),
+            "video_title": o.video_title, "overlay": OverlaySettings.model_validate(o.overlay or {}).model_dump(),
+            "render_state": o.render_state, "render_error": o.render_error,
+            # Changes whenever the file is re-rendered, so the preview reloads.
+            "version": Path(o.file_path).name if o.file_path else None}
 
 
 def _reference(r: ReferenceVideo | None) -> dict | None:
@@ -58,7 +64,9 @@ def list_clips(status: Literal["ready", "uploaded", "expired", "all"] = "ready",
             continue
         out.append({"id": c.id, "title": c.title, "status": c.status, "created_at": _dt(c.created_at), "expires_at": _dt(c.expires_at),
                     "creator": {"id": c.creator.id, "name": c.creator.name, "color": c.creator.color} if c.creator else None,
-                    "vod_url": c.vod_url, "vod_start": c.vod_start, "vod_end": c.vod_end,
+                    "vod_url": c.vod_url, "vod_start": c.vod_start, "vod_end": c.vod_end, "stream_date": _dt(c.stream_date),
+                    "captions_text": " ".join(w["text"] for w in (c.words or [])), "has_captions": bool(c.words),
+                    "captions_note": c.captions_note, "editable": bool(c.source_path and Path(c.source_path).exists()),
                     "reference": _reference(c.reference), "outputs": outputs})
     return out
 
@@ -105,6 +113,8 @@ def save_to_downloads(oid: int, s: Session = Depends(db), c=Depends(ctx)):
     o = get_or_404(s, ClipOutput, oid, "Clip")
     if not o.file_path or not Path(o.file_path).exists():
         raise ApiError(410, "expired", "This clip's video has expired and was deleted to save space")
+    if o.render_state == "rendering":
+        raise ApiError(409, "rendering", "This video is being re-rendered with your changes. Try again in a moment.")
     folder = Path(os.environ.get("CLIPPR_DOWNLOADS_DIR") or Path.home() / "Downloads") / "Vyral"
     folder.mkdir(parents=True, exist_ok=True)
     dest_name = o.destination.display_name if o.destination else o.platform
@@ -130,16 +140,75 @@ def media(oid: int, download: bool = False, s: Session = Depends(db)):
                         content_disposition_type="attachment" if download else "inline")
 
 
+class VideoTextIn(BaseModel):
+    video_title: str | None = Field(None, max_length=200)
+    overlay: dict | None = None
+    apply_style_to_all: bool = False  # use this style for every page of this clip
+
+
+@router.patch("/outputs/{oid}/video")
+def edit_video_text(oid: int, body: VideoTextIn, c=Depends(ctx), s: Session = Depends(db)):
+    """Change the title / caption style burned into this video, then re-render it."""
+    o = get_or_404(s, ClipOutput, oid, "Clip")
+    clip = s.get(Clip, o.clip_id)
+    if not clip.source_path or not Path(clip.source_path).exists():
+        raise ApiError(410, "expired", "The original footage for this clip has expired, so it can't be re-rendered")
+    targets = [o]
+    if body.overlay is not None:
+        try:
+            ov = OverlaySettings.model_validate(_merge(OverlaySettings.model_validate(o.overlay or {}).model_dump(), body.overlay)).model_dump()
+        except ValidationError as e:
+            first = e.errors()[0]
+            raise ApiError(422, "validation", f"{'.'.join(str(x) for x in first['loc'])}: {first['msg']}")
+        if body.apply_style_to_all:
+            targets = list(s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id, ClipOutput.status != "expired")).unique())
+        for t in targets:
+            t.overlay = ov
+    if body.video_title is not None:
+        o.video_title = body.video_title.strip()
+    for t in targets:
+        t.render_state, t.render_error = "rendering", None
+    s.flush()
+    c.jobs.enqueue("clip.rerender", {"output_ids": [t.id for t in targets]}, max_attempts=1, session=s)
+    return _output(o)
+
+
+class CaptionsIn(BaseModel):
+    text: str = Field(max_length=20000)
+
+
+@router.patch("/clips/{cid}/captions")
+def edit_captions(cid: int, body: CaptionsIn, c=Depends(ctx), s: Session = Depends(db)):
+    """Fix wrongly heard words. Timing is kept; every page of this clip is re-rendered."""
+    clip = get_or_404(s, Clip, cid, "Clip")
+    if not clip.source_path or not Path(clip.source_path).exists():
+        raise ApiError(410, "expired", "The original footage for this clip has expired, so it can't be re-rendered")
+    if not clip.words:
+        raise ApiError(409, "no_captions", "This clip has no captions to edit")
+    clip.words = [w.to_dict() for w in apply_text_edit([Word.from_dict(w) for w in clip.words], body.text)]
+    outs = list(s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid, ClipOutput.status != "expired")).unique())
+    for o in outs:
+        o.render_state, o.render_error = "rendering", None
+    s.flush()
+    c.jobs.enqueue("clip.rerender", {"output_ids": [o.id for o in outs]}, max_attempts=1, session=s)
+    return {"captions_text": " ".join(w["text"] for w in clip.words), "rendering": len(outs)}
+
+
+def _merge(base: dict, patch: dict) -> dict:
+    out = dict(base)
+    for k, v in patch.items():
+        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
 @router.delete("/clips/{cid}", status_code=204)
 def delete_clip(cid: int, s: Session = Depends(db)):
     clip = get_or_404(s, Clip, cid, "Clip")
     for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)).unique():
         if o.file_path:
             Path(o.file_path).unlink(missing_ok=True)
-            try:
-                Path(o.file_path).parent.rmdir()
-            except OSError:
-                pass
+    if clip.files_dir:
+        shutil.rmtree(clip.files_dir, ignore_errors=True)
     audit(s, "clip.deleted", "clip", cid)
     s.delete(clip)
 
@@ -191,7 +260,7 @@ def retry_reference(rid: int, body: RetryIn, c=Depends(ctx), s: Session = Depend
             raise ApiError(422, "invalid_input", "Paste the link to the specific stream (twitch.tv/videos/… or a YouTube video link)")
         payload["vod_url"] = body.vod_url.strip()
     r.status, r.status_detail = "new", "Queued"
-    c.jobs.enqueue("clip.build", payload, max_attempts=3)
+    c.jobs.enqueue("clip.build", payload, max_attempts=3, session=s)
     return _reference(r)
 
 
@@ -202,7 +271,7 @@ def check_now(sid: int, c=Depends(ctx), s: Session = Depends(db)):
 
     if src.platform not in MONITORABLE:
         raise ApiError(422, "unsupported", f"Vyral can't watch {src.platform} accounts yet. TikTok and YouTube are supported.")
-    c.jobs.enqueue("source.check", {"source_id": sid}, max_attempts=1)
+    c.jobs.enqueue("source.check", {"source_id": sid}, max_attempts=1, session=s)
     return {"queued": True}
 
 

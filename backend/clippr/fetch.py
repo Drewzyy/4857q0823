@@ -41,6 +41,7 @@ class RemoteVod:
     url: str
     title: str = ""
     duration: float | None = None
+    published_at: datetime | None = None
 
 
 class Fetcher(Protocol):
@@ -48,6 +49,7 @@ class Fetcher(Protocol):
     def post_details(self, url: str) -> RemotePost: ...
     def download_audio(self, url: str, dest_dir: Path) -> Path: ...
     def recent_vods(self, channel_url: str, limit: int) -> list[RemoteVod]: ...
+    def vod_details(self, url: str) -> RemoteVod: ...
     def download_section(self, url: str, start: float, end: float, dest_dir: Path) -> Path: ...
 
 
@@ -87,6 +89,17 @@ def _ts(v) -> datetime | None:
         return datetime.fromtimestamp(int(v), tz=timezone.utc) if v else None
     except (TypeError, ValueError, OSError):
         return None
+
+
+def _date(e: dict) -> datetime | None:
+    """When the stream/video happened: exact timestamp if given, else the upload day."""
+    for key in ("release_timestamp", "timestamp"):
+        if e.get(key):
+            return _ts(e[key])
+    d = e.get("upload_date")
+    if d and re.fullmatch(r"\d{8}", str(d)):
+        return datetime(int(d[:4]), int(d[4:6]), int(d[6:8]), 12, tzinfo=timezone.utc)
+    return None
 
 
 def _post(e: dict, fallback_url: str = "") -> RemotePost:
@@ -140,8 +153,12 @@ class YtDlpFetcher:
         out = []
         for e in (info.get("entries") or [])[:limit]:
             if e and e.get("id"):
-                out.append(RemoteVod(str(e["id"]), e.get("url") or e.get("webpage_url"), e.get("title") or "", e.get("duration")))
+                out.append(RemoteVod(str(e["id"]), e.get("url") or e.get("webpage_url"), e.get("title") or "", e.get("duration"), _date(e)))
         return out
+
+    def vod_details(self, url: str) -> RemoteVod:
+        e = self._extract(url, noplaylist=True)
+        return RemoteVod(str(e.get("id")), url, e.get("title") or "", e.get("duration"), _date(e))
 
     def download_section(self, url: str, start: float, end: float, dest_dir: Path) -> Path:
         import yt_dlp

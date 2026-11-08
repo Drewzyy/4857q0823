@@ -2,7 +2,11 @@
 import shutil
 from pathlib import Path
 
+from datetime import datetime, timezone
+
 from clippr.fetch import FetchError, RemotePost, RemoteVod
+from clippr.media.overlay import Word
+from clippr.media.transcribe import TranscribeError
 from clippr.media.ffmpeg import run
 
 
@@ -48,3 +52,22 @@ class FakeFetcher:
         run(["-ss", f"{max(0, start - 1.7):.2f}", "-i", str(self.m["stream"]), "-t", f"{end - start + 1.7:.2f}",
              "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(out)])
         return out
+
+    def vod_details(self, url):
+        self.calls.append(("vod_details", url))
+        return RemoteVod(url.rsplit("/", 1)[-1], url, "Big stream", None, datetime(2026, 11, 7, 20, 0, tzinfo=timezone.utc))
+
+
+class FakeTranscriber:
+    """Stands in for the speech model (which needs a one-time internet download)."""
+
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.calls = 0
+
+    def words(self, audio):
+        self.calls += 1
+        if self.fail:
+            raise TranscribeError("Couldn't load the speech model (ConnectError). Check your internet connection for the one-time download.")
+        text = "no way he actually did that right now".split()
+        return [Word(0.4 + i * 0.45, 0.8 + i * 0.45, t) for i, t in enumerate(text)]

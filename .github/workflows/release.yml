@@ -62,6 +62,28 @@ jobs:
           grep -q '"ffmpeg":true' "$RUNNER_TEMP/health.json"
           curl -sf http://127.0.0.1:8777/ | grep -q clippr-token
 
+      - name: Make a real speech sample (macOS voice)
+        if: runner.os == 'macOS'
+        run: say -o "$RUNNER_TEMP/speech.aiff" "This is a test of the Vyral captions. No way he actually did that."
+
+      - name: Make a real speech sample (Windows voice)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Speech
+          $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $s.SetOutputToWaveFile("$env:RUNNER_TEMP\speech.wav")
+          $s.Speak("This is a test of the Vyral captions. No way he actually did that.")
+          $s.Dispose()
+
+      - name: Self-test captions inside the packaged service (real speech model + burned-in text)
+        run: |
+          BIN=$(ls desktop/src-tauri/binaries/clippr-backend-*)
+          SAMPLE=$(ls "$RUNNER_TEMP"/speech.* | head -1)
+          "$BIN" --self-test "$SAMPLE" --data-dir "$RUNNER_TEMP/selftest" | tee "$RUNNER_TEMP/selftest.json"
+          grep -qi '"render": \[1080, 1920\]' "$RUNNER_TEMP/selftest.json"
+          grep -qiE 'test|captions|actually' "$RUNNER_TEMP/selftest.json"
+
       - name: Build the app
         working-directory: desktop
         run: npm ci && npx tauri build --bundles ${{ matrix.bundles }}

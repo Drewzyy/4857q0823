@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, Plus, Settings2, Trash2, Upload, X } from "lucide-react";
 import { api, PLATFORM_LABEL, type Creator, type Destination, type DestinationSettings, type Platform } from "../lib/api";
 import { ConfirmModal, CreatorChip, Empty, ErrorNote, Loading, Modal, PlatformBadge, Toggle, useToast } from "../components/ui";
+import { OverlayEditor } from "../components/OverlayEditor";
 
 const DEST_PLATFORMS: Platform[] = ["tiktok", "instagram", "youtube", "facebook"];
 
@@ -46,7 +47,7 @@ export default function Destinations() {
                   <span className="faint">{d.settings.format.resolution} · {d.settings.format.fps} fps max</span>
                 </div>
                 <div className="row" style={{ marginTop: 14 }}>
-                  <button className="btn sm" onClick={() => setEditing(d)}><Settings2 size={12} />Caption & format</button>
+                  <button className="btn sm" onClick={() => setEditing(d)}><Settings2 size={12} />Text, caption & format</button>
                   <span className="spacer" />
                   <Toggle label={`Make clips for ${d.display_name}`} checked={d.enabled} onChange={(v) => quick.mutate({ id: d.id, b: { enabled: v } })} />
                   <button className="btn ghost icon" aria-label={`Remove ${d.display_name}`} onClick={() => setRemoving(d)}><Trash2 size={14} /></button>
@@ -133,7 +134,7 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
   const save = async () => {
     setBusy(true); setError(null);
     const tags = hashtags.split(/[\s,]+/).filter(Boolean).map((t) => (t.startsWith("#") ? t : `#${t}`));
-    try { await api.updateDestination(dest.id, { creator_id: creatorId, settings: { default_caption: s.default_caption, hashtags: tags, format: s.format } }); onSaved(); }
+    try { await api.updateDestination(dest.id, { creator_id: creatorId, settings: { default_caption: s.default_caption, hashtags: tags, format: s.format, overlay: s.overlay } }); onSaved(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -151,7 +152,10 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
       <div className="field"><label htmlFor="ds-cap">Extra caption text</label>
         <textarea id="ds-cap" className="textarea" rows={2} maxLength={2200} value={s.default_caption} onChange={(e) => setS({ ...s, default_caption: e.target.value })} placeholder="Follow for daily clips" /></div>
       <div className="field"><label htmlFor="ds-tags">Hashtags</label><input id="ds-tags" className="input" value={hashtags} onChange={(e) => setHashtags(e.target.value)} placeholder="#gaming #streamer" />
-        <span className="hint">The clip's title comes from the source post (with their tags and @mentions removed). The creator's name is added as a hashtag. YouTube also gets #shorts.</span></div>
+        <span className="hint">Every caption gets the source post's own hashtags, these, and #vyralclips (YouTube also gets #shorts). @mentions from the post are removed.</span></div>
+      <h3>Text on the video</h3>
+      <p className="small faint" style={{ marginTop: -6 }}>The title shows at the top for the first seconds. Captions follow what's being said. These are the defaults for this page; you can still change any single clip before downloading it.</p>
+      <OverlayEditor value={s.overlay} onChange={(overlay) => setS({ ...s, overlay })} title="He did NOT just say that" />
       <h3>Video format</h3>
       <div className="grid cols-4">
         <div className="field"><label htmlFor="ds-asp">Shape</label>

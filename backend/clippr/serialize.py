@@ -46,6 +46,18 @@ def source(s: SourceAccount, route_count: int = 0) -> dict[str, Any]:
     }
 
 
+def normalized_settings(raw: dict | None) -> dict:
+    """Older saved settings get any newly added options filled with defaults."""
+    from pydantic import ValidationError
+
+    from .schemas import DestinationSettings
+
+    try:
+        return DestinationSettings.model_validate(raw or {}).model_dump()
+    except ValidationError:
+        return raw or {}
+
+
 def destination(d: DestinationAccount, route_count: int = 0) -> dict[str, Any]:
     if d.external_id.startswith(("draft:", "manual:")):
         status = "manual"
@@ -56,7 +68,7 @@ def destination(d: DestinationAccount, route_count: int = 0) -> dict[str, Any]:
     return {
         "id": d.id, "platform": d.platform, "external_id": None if d.external_id.startswith(("draft:", "manual:")) else d.external_id,
         "handle": d.handle, "display_name": d.display_name, "avatar_url": d.avatar_url,
-        "creator": creator(d.creator), "settings": d.settings, "enabled": d.enabled,
+        "creator": creator(d.creator), "settings": normalized_settings(d.settings), "enabled": d.enabled,
         "status": status, "connection_id": d.connection_id, "last_error": d.connection.last_error if d.connection else None,
         "route_count": route_count, "created_at": _dt(d.created_at),
     }

@@ -237,3 +237,19 @@ dialog.modal::backdrop { background: rgba(0,0,0,0.6); backdrop-filter: blur(3px)
 .react-flow__controls button { background: var(--card-2) !important; border-color: var(--line) !important; fill: var(--text) !important; color: var(--text) !important; }
 .react-flow__minimap { background: var(--bg-2) !important; }
 .col-label { position: absolute; top: 14px; z-index: 5; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); pointer-events: none; }
+
+/* ---------- text-on-video fonts + preview ---------- */
+@font-face { font-family: "V-montserrat"; src: url("/fonts/Montserrat_900Black.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "V-anton"; src: url("/fonts/Anton_400Regular.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "V-bebas"; src: url("/fonts/BebasNeue_400Regular.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "V-poppins"; src: url("/fonts/Poppins_800ExtraBold.ttf") format("truetype"); font-display: swap; }
+.ov-preview { position: relative; width: 216px; aspect-ratio: 9 / 16; border-radius: 12px; overflow: hidden; flex: none;
+  background: linear-gradient(180deg, #2a2340 0%, #3b3152 30%, #6b5b7b 30%, #8a7a8a 70%, #2a2340 70%, #1c1828 100%); }
+.ov-preview .ov-text { position: absolute; left: 6%; right: 6%; text-align: center; transform: translateY(-50%); line-height: 1.05;
+  paint-order: stroke fill; overflow-wrap: anywhere; }
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.ov-color { display: flex; align-items: center; gap: 6px; }
+.ov-color input[type=color] { -webkit-appearance: none; appearance: none; width: 30px; height: 26px; border: 1px solid var(--line-2); border-radius: 6px; background: none; padding: 0; cursor: pointer; flex: none; }
+.ov-color input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
+.ov-color input[type=color]::-webkit-color-swatch { border: none; border-radius: 4px; }
+input[type=range] { accent-color: var(--accent); }

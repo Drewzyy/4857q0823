@@ -28,9 +28,24 @@ The first check of a new source account only records what it already posted. Fro
 1. Discord: "@account just posted a new video."
 2. Vyral listens to the post and searches the creator's latest streams (4 by default) for the same audio. It handles jump cuts and music added on top. If it can't find the moment with confidence it says so instead of guessing, and you can paste the exact stream link to retry.
 3. It downloads only that part of the stream in the best quality available and renders it per destination format (1080x1920, up to 60 fps by default).
-4. **Ready to Upload** shows the clip with a caption per page: the post's title without their hashtags and @mentions, your extra caption, the creator credit and your hashtags. YouTube gets a separate title and #shorts.
-5. Discord: "Clip ready for upload" with every page and platform it's for.
-6. You click **Save to computer** (full quality, into Downloads > Vyral), upload, and click **Mark uploaded**.
+4. It writes captions of what's being said (speech-to-text runs on your computer; the ~145 MB speech model downloads once, the first time) and burns into the video:
+   - a **title at the top** for the first 5 seconds (the post's text), and
+   - **captions** synced to the speech, a few words at a time.
+   Default look: ALL CAPS, big, bold, bright yellow with a black outline. Font, size, color, outline, position, title duration and words-at-a-time are all editable per page (Destinations > Text, caption & format) and per clip (Ready to Upload > Edit text on video, then Re-render). You can also fix misheard words; timing is kept.
+5. **Ready to Upload** shows the clip with a caption per page:
+
+   ```
+   He did NOT just say that
+
+   Streamer: Streamer A
+   Streamed Nov 7, 2026
+
+   #fyp #kai #gaming #vyralclips
+   ```
+
+   The post's own text and hashtags (its @mentions removed), your page's extra caption and hashtags, the streamer, the stream date when Twitch/YouTube provides it, and always #vyralclips. YouTube gets a separate title and #shorts.
+6. Discord: "Clip ready for upload" with every page and platform it's for.
+7. You click **Save to computer** (full quality, into Downloads > Vyral), upload, and click **Mark uploaded**.
 
 Clips and cached stream data are deleted automatically after 30 days (changeable in Settings). Files you saved to your computer are never touched.
 
@@ -39,7 +54,8 @@ Clips and cached stream data are deleted automatically after 30 days (changeable
 - **TikTok has no official way to watch accounts you don't own.** Vyral reads their public profile page the same way a browser would, with no login, checking every 10 minutes with backoff. TikTok's terms don't allow automated access, and TikTok changes its site often, so checks can stop working until Vyral gets an update. If that happens the Source Accounts page shows the error, and you can still paste a post link on the Activity page.
 - **Instagram and Twitch accounts can't be watched** as sources (Instagram requires a login). Twitch and YouTube work as stream sources.
 - **Only Apple Silicon Macs** are built right now. Intel Mac builds can be added.
-- **No captions are burned into the video yet.** The word-by-word orange/white captions are part of the Video Editor, which is next.
+- **Emoji aren't drawn on the video** (the video text renderer can't draw color emoji). They stay in the written caption.
+- **Captions need the one-time model download.** If it can't download (no internet), the clip is still made, without captions, and says why.
 
 ## For developers
 

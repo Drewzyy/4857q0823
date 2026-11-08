@@ -366,6 +366,13 @@ class DestinationPatch(BaseModel):
     settings: dict | None = None
 
 
+def _deep_merge(base: dict, patch: dict) -> dict:
+    out = dict(base)
+    for k, v in patch.items():
+        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
 def _handle(h: str) -> str:
     h = h.strip()
     m = re.search(r"(?:tiktok\.com/|instagram\.com/|youtube\.com/|facebook\.com/)(@?[\w.\-]+)", h)
@@ -410,7 +417,7 @@ def update_destination(did: int, body: DestinationPatch, s: Session = Depends(db
     _check_refs(s, data.get("creator_id"), None)
     if "settings" in data:
         try:
-            merged = {**(d.settings or {}), **(data.pop("settings") or {})}
+            merged = _deep_merge(ser.normalized_settings(d.settings), data.pop("settings") or {})
             d.settings = DestinationSettings.model_validate(merged).model_dump()
         except ValidationError as e:
             first = e.errors()[0]

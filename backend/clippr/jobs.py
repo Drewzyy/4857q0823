@@ -64,9 +64,20 @@ class JobQueue:
         self.periodic.append((kind, seconds, payload))
 
     def enqueue(self, kind: str, payload: dict[str, Any] | None = None, *, idempotency_key: str | None = None,
-                max_attempts: int = 5, delay: float = 0) -> int | None:
+                max_attempts: int = 5, delay: float = 0, session=None) -> int | None:
+        """Pass `session` to queue the job inside a transaction that's already writing (avoids lock waits)."""
         if kind not in self.handlers:
             raise ValueError(f"No handler for job kind '{kind}'")
+        if session is not None:
+            job = Job(kind=kind, payload=payload or {}, idempotency_key=idempotency_key, max_attempts=max_attempts,
+                      run_after=datetime.now(timezone.utc) + timedelta(seconds=delay))
+            try:
+                with session.begin_nested():  # savepoint: a duplicate key doesn't spoil the caller's transaction
+                    session.add(job)
+                    session.flush()
+            except IntegrityError:
+                return None
+            return job.id
         try:
             with self.db.session() as s:
                 job = Job(kind=kind, payload=payload or {}, idempotency_key=idempotency_key, max_attempts=max_attempts,
@@ -172,6 +183,8 @@ class JobQueue:
                 self._stop.wait(5.0)
 
     def start(self, workers: int = 1) -> None:
+        self._stop.clear()  # allow restarting after stop()
+        self._threads = [t for t in self._threads if t.is_alive()]
         self.recover()
         for i in range(workers):
             t = threading.Thread(target=self._loop, name=f"clippr-worker-{i}", daemon=True)

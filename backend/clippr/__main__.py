@@ -38,6 +38,31 @@ def _watch_parent(pid: int) -> None:
             os._exit(0)
 
 
+def _self_test(audio: Path, data_dir: Path) -> int:
+    """Used by the installer build: real transcription + burned-in text inside the packaged app."""
+    import json
+    import tempfile
+
+    from clippr.media import overlay
+    from clippr.media.ffmpeg import probe, run
+    from clippr.media.render import OutputFormat, render
+    from clippr.media.transcribe import WhisperTranscriber
+    from clippr.schemas import OverlaySettings
+
+    words = WhisperTranscriber(data_dir / "models").words(audio)
+    print(json.dumps({"words": [w.text for w in words]}))
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        run(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=3", "-i", str(audio), "-shortest",
+             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(d / "src.mp4")])
+        ass = overlay.build_ass(1080, 1920, OverlaySettings().model_dump(), "Self test title", words, 3)
+        overlay.prepare(d / "ov", ass)
+        out = render(d / "src.mp4", d / "out.mp4", OutputFormat(), duration=3, overlay_dir=d / "ov")
+        info = probe(out)
+        print(json.dumps({"render": [info.width, info.height]}))
+    return 0 if words and info.height == 1920 else 1
+
+
 def main() -> None:
     # Windowed builds on Windows have no console: give logging somewhere to write.
     if sys.stdout is None:
@@ -50,7 +75,11 @@ def main() -> None:
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--frontend", default=os.environ.get("CLIPPR_FRONTEND_DIST"), help="path to built frontend (dist/)")
     parser.add_argument("--parent-pid", type=int, default=None)
+    parser.add_argument("--self-test", metavar="SPEECH_AUDIO", default=None,
+                        help="check speech-to-text and text rendering work in this build, then exit")
     args = parser.parse_args()
+    if args.self_test:
+        sys.exit(_self_test(Path(args.self_test), Path(args.data_dir or ".")))
 
     if args.parent_pid:
         threading.Thread(target=_watch_parent, args=(args.parent_pid,), daemon=True).start()

@@ -15,7 +15,11 @@ export interface Source {
 }
 
 export interface PublishSlot { weekday: number; time: string }
+export type FontKey = "montserrat" | "anton" | "bebas" | "poppins";
+export interface TextStyle { enabled: boolean; font: FontKey; size: number; color: string; outline_color: string; outline: number; all_caps: boolean; y_percent: number }
+export interface Overlay { title: TextStyle & { duration: number }; captions: TextStyle & { words_per_caption: number } }
 export interface DestinationSettings {
+  overlay: Overlay;
   default_caption: string; hashtags: string[]; categories: string[]; approval_required: boolean;
   visibility: "public" | "private" | "unlisted" | "friends"; schedule: PublishSlot[];
   format: { aspect: "9:16" | "16:9" | "1:1"; resolution: string; fps: number; codec: "h264" | "h265"; bitrate_mbps: number };
@@ -75,10 +79,12 @@ export interface ClipOutputT {
   id: number; platform: Platform; title: string; description: string; status: "ready" | "uploaded" | "expired";
   destination: { id: number; display_name: string; handle: string } | null;
   width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; uploaded_at: string | null;
+  video_title: string; overlay: Overlay; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
 }
 export interface ClipT {
   id: number; title: string; status: string; created_at: string; expires_at: string;
   creator: { id: number; name: string; color: string } | null; vod_url: string | null; vod_start: number | null; vod_end: number | null;
+  stream_date: string | null; captions_text: string; has_captions: boolean; captions_note: string; editable: boolean;
   reference: RefPost | null; outputs: ClipOutputT[];
 }
 export interface NotifyState { configured: boolean; webhook_hint: string | null; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }
@@ -172,7 +178,10 @@ export const api = {
   updateOutput: (id: number, b: Partial<{ title: string; description: string; status: "ready" | "uploaded" }>) => request<ClipOutputT>("PATCH", `/outputs/${id}`, b),
   saveOutput: (id: number) => request<{ path: string }>("POST", `/outputs/${id}/save`),
   deleteClip: (id: number) => request<void>("DELETE", `/clips/${id}`),
-  mediaUrl: (id: number, download = false) => `/api/media/outputs/${id}?t=${encodeURIComponent(token())}${download ? "&download=true" : ""}`,
+  mediaUrl: (id: number, download = false, version?: string | null) =>
+    `/api/media/outputs/${id}?t=${encodeURIComponent(token())}${download ? "&download=true" : ""}${version ? `&v=${encodeURIComponent(version)}` : ""}`,
+  editVideoText: (id: number, b: { video_title?: string; overlay?: Partial<Overlay>; apply_style_to_all?: boolean }) => request<ClipOutputT>("PATCH", `/outputs/${id}/video`, b),
+  editCaptions: (clipId: number, text: string) => request<{ captions_text: string; rendering: number }>("PATCH", `/clips/${clipId}/captions`, { text }),
   references: () => request<RefPost[]>("GET", "/references"),
   addReference: (b: { url: string; creator_id?: number | null; source_id?: number | null }) => request<{ id: number }>("POST", "/references", b),
   retryReference: (id: number, vod_url?: string) => request<RefPost>("POST", `/references/${id}/retry`, { vod_url: vod_url || null }),

@@ -28,6 +28,38 @@ class PublishSlot(Strict):
     time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
+FontName = Literal["montserrat", "anton", "bebas", "poppins"]
+HEXCOLOR = r"^#[0-9a-fA-F]{6}$"
+
+
+class TextStyle(Strict):
+    enabled: bool = True
+    font: FontName = "montserrat"
+    size: int = Field(80, ge=20, le=200)  # pixels on a 1080-wide video; scaled for other sizes
+    color: str = Field("#FFE500", pattern=HEXCOLOR)
+    outline_color: str = Field("#000000", pattern=HEXCOLOR)
+    outline: int = Field(6, ge=0, le=20)
+    all_caps: bool = True
+    y_percent: int = Field(70, ge=3, le=97)  # vertical center of the text, % from the top
+
+
+class TitleStyle(TextStyle):
+    size: int = Field(76, ge=20, le=200)
+    y_percent: int = Field(13, ge=3, le=97)
+    duration: float = Field(5.0, ge=1, le=30)
+
+
+class CaptionStyle(TextStyle):
+    size: int = Field(88, ge=20, le=200)
+    y_percent: int = Field(70, ge=3, le=97)
+    words_per_caption: int = Field(3, ge=1, le=6)
+
+
+class OverlaySettings(Strict):
+    title: TitleStyle = Field(default_factory=TitleStyle)
+    captions: CaptionStyle = Field(default_factory=CaptionStyle)
+
+
 class DestinationSettings(Strict):
     default_caption: str = Field("", max_length=2200)
     hashtags: list[str] = Field(default_factory=list, max_length=30)
@@ -37,6 +69,7 @@ class DestinationSettings(Strict):
     schedule: list[PublishSlot] = Field(default_factory=list, max_length=50)
     format: ExportFormat = Field(default_factory=ExportFormat)
     branding: Branding = Field(default_factory=Branding)
+    overlay: OverlaySettings = Field(default_factory=OverlaySettings)
     caption_preset: str = Field("bold-orange", max_length=60)
     title_style: Literal["curiosity", "reaction", "funny", "dramatic", "question"] = "curiosity"
 

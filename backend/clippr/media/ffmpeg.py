@@ -36,10 +36,10 @@ def ffmpeg_exe() -> str:
     raise FFmpegError("FFmpeg is missing from this installation")
 
 
-def run(args: list[str], timeout: float = 3600) -> str:
+def run(args: list[str], timeout: float = 3600, cwd: Path | None = None) -> str:
     cmd = [ffmpeg_exe(), "-hide_banner", "-nostdin", "-y", *args]
     try:
-        p = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=_NO_WINDOW)
+        p = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=_NO_WINDOW, cwd=cwd)
     except subprocess.TimeoutExpired:
         raise FFmpegError("Video processing took too long and was stopped")
     err = p.stderr.decode("utf-8", "replace")

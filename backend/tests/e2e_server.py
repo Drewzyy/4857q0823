@@ -15,7 +15,7 @@ from clippr.app import build_context, create_app
 from clippr.config import Config
 from clippr.fetch import RemotePost
 from clippr.media.ffmpeg import run
-from fakes import FakeFetcher
+from fakes import FakeFetcher, FakeTranscriber
 from media_fixtures import make_stream_and_clip, speechlike, write_wav
 
 port, data_dir, dist = int(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]).resolve()
@@ -28,7 +28,7 @@ fake = FakeFetcher({"stream": stream, "clip": clip, "other": media_dir / "other.
 
 cfg = Config(data_dir=data_dir, port=port, api_token="e2e-token", run_worker=False, secret_backend="file")
 cfg.frontend_dist = dist
-ctx = build_context(cfg, fetcher=fake)
+ctx = build_context(cfg, fetcher=fake, transcriber=FakeTranscriber())
 app = create_app(ctx=ctx)
 h = {"X-Clippr-Token": "e2e-token"}
 with TestClient(app, base_url=f"http://127.0.0.1:{port}", headers=h) as c:
@@ -45,6 +45,6 @@ with TestClient(app, base_url=f"http://127.0.0.1:{port}", headers=h) as c:
     while ctx.jobs.run_one():
         pass
     assert c.get("/api/clips").json(), "seed clip was not created"
-ctx.config.run_worker = False
+ctx.config.run_worker = True  # re-renders run in the background like the real app
 print("E2E server ready", flush=True)
 uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")

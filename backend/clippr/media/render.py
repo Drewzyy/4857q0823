@@ -26,7 +26,10 @@ class OutputFormat:
         return f"{self.width}x{self.height}_{self.max_fps}_{self.codec}_{int(self.bitrate_mbps)}"
 
 
-def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = None, duration: float | None = None) -> Path:
+def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = None, duration: float | None = None,
+           overlay_dir: Path | None = None) -> Path:
+    """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in)."""
+    src, out = src.resolve(), out.resolve()
     info = probe(src)
     fps = min(info.fps or 30, fmt.max_fps)
     W, H = fmt.width, fmt.height
@@ -34,7 +37,9 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         f"[0:v]fps={fps:g},split=2[bg][fg];"
         f"[bg]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},gblur=sigma=40,eq=brightness=-0.12:saturation=1.15[b];"
         f"[fg]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos[f];"
-        f"[b][f]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[v]"
+        f"[b][f]overlay=(W-w)/2:(H-h)/2,setsar=1"
+        + (",ass=overlay.ass:fontsdir=fonts" if overlay_dir else "")
+        + ",format=yuv420p[v]"
     )
     # High-quality constant-quality encode, capped so platforms don't re-compress it harder.
     maxrate = f"{fmt.bitrate_mbps * 1.5:.1f}M"
@@ -53,6 +58,6 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".part.mp4")
     args[-1] = str(tmp)
-    run(args)
+    run(args, cwd=overlay_dir)
     tmp.replace(out)
     return out
