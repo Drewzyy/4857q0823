@@ -64,9 +64,9 @@ class TikTokConnector(OAuthConnector):
         return [
             SetupStep("Open TikTok for Developers and create an app", "Log in with any TikTok account, then Manage apps > Connect an app.", "https://developers.tiktok.com/apps/"),
             SetupStep("Add the Login Kit product", "Under Login Kit, open the Desktop tab and add this redirect URI.", None, redirect_uri),
-            SetupStep("Add the Content Posting API product", "Enable Direct Post. This is what lets AI Clipper upload clips."),
+            SetupStep("Add the Content Posting API product", "Enable Direct Post. This is what lets Vyral upload clips."),
             SetupStep("Add these scopes", "Under Scopes, tick each of these.", None, "user.info.basic, user.info.profile, user.info.stats, video.list, video.upload, video.publish"),
-            SetupStep("Paste the Client key and Client secret below", "They're on the app's Credentials panel. AI Clipper checks them with TikTok immediately."),
+            SetupStep("Paste the Client key and Client secret below", "They're on the app's Credentials panel. Vyral checks them with TikTok immediately."),
         ]
 
     def authorize_url(self, app, redirect_uri, state, verifier, purpose):

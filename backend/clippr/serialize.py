@@ -11,7 +11,10 @@ def _dt(v):
 
 
 def creator(c: Creator | None) -> dict[str, Any] | None:
-    return {"id": c.id, "name": c.name, "color": c.color, "notes": c.notes} if c else None
+    if not c:
+        return None
+    return {"id": c.id, "name": c.name, "color": c.color, "notes": c.notes,
+            "vod_channels": list(c.vod_channels or []), "clip_permission": bool(c.clip_permission)}
 
 
 def folder(f: Folder | None) -> dict[str, Any] | None:
@@ -35,22 +38,23 @@ def source(s: SourceAccount, route_count: int = 0) -> dict[str, Any]:
         "profile_url": s.profile_url, "avatar_url": s.avatar_url, "monitoring": s.monitoring, "notes": s.notes,
         "creator": creator(s.creator), "folder": folder(s.folder),
         "authorized": s.connection is not None, "connection_status": s.connection.status if s.connection else None,
-        "last_synced_at": _dt(s.last_synced_at), "created_at": _dt(s.created_at),
-        "route_count": route_count,
-        # Collection starts in Milestone 5; null means "not collected yet", not zero.
+        "last_synced_at": _dt(s.last_synced_at), "next_check_at": _dt(s.next_check_at), "last_error": s.last_error,
+        "watching_supported": s.platform in ("tiktok", "youtube"), "baseline_done": s.baseline_done,
+        "created_at": _dt(s.created_at), "route_count": route_count,
+        # Filled in by the accounts list endpoint; None means not counted, not zero.
         "videos_discovered": None, "videos_analyzed": None,
     }
 
 
 def destination(d: DestinationAccount, route_count: int = 0) -> dict[str, Any]:
-    if d.external_id.startswith("draft:"):
-        status = "draft"
+    if d.external_id.startswith(("draft:", "manual:")):
+        status = "manual"
     elif not d.connection:
         status = "disconnected"
     else:
         status = d.connection.status
     return {
-        "id": d.id, "platform": d.platform, "external_id": None if d.external_id.startswith("draft:") else d.external_id,
+        "id": d.id, "platform": d.platform, "external_id": None if d.external_id.startswith(("draft:", "manual:")) else d.external_id,
         "handle": d.handle, "display_name": d.display_name, "avatar_url": d.avatar_url,
         "creator": creator(d.creator), "settings": d.settings, "enabled": d.enabled,
         "status": status, "connection_id": d.connection_id, "last_error": d.connection.last_error if d.connection else None,

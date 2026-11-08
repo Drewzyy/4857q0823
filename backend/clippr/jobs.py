@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .models import Job
@@ -53,6 +53,9 @@ class JobQueue:
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._last_periodic: dict[str, float] = {}
+        # Heavy jobs (downloads + rendering) are capped so monitoring and notifications never wait behind them.
+        self.heavy: set[str] = set()
+        self.heavy_limit: Callable[[], int] = lambda: 1
 
     def register(self, kind: str, handler: Handler) -> None:
         self.handlers[kind] = handler
@@ -100,7 +103,12 @@ class JobQueue:
     def _claim(self) -> int | None:
         now = datetime.now(timezone.utc)
         with self.db.session() as s:
-            job_id = s.scalar(select(Job.id).where(Job.status == "queued", Job.run_after <= now).order_by(Job.run_after, Job.id).limit(1))
+            q = select(Job.id).where(Job.status == "queued", Job.run_after <= now)
+            if self.heavy:
+                running_heavy = s.scalar(select(func.count()).select_from(Job).where(Job.status == "running", Job.kind.in_(self.heavy))) or 0
+                if running_heavy >= self.heavy_limit():
+                    q = q.where(Job.kind.not_in(self.heavy))
+            job_id = s.scalar(q.order_by(Job.run_after, Job.id).limit(1))
             if job_id is None:
                 return None
             # Compare-and-set so concurrent workers never run the same job.

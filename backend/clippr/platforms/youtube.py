@@ -47,17 +47,17 @@ class YouTubeConnector(OAuthConnector):
         CredentialField("client_secret", "Client secret", secret=True),
     ]
     notes = [
-        "While the Google app is in 'Testing', Google expires the login after 7 days; AI Clipper will ask you to sign in again. Publishing the app (no review needed for a personal tool with you as the only user) removes that limit.",
+        "While the Google app is in 'Testing', Google expires the login after 7 days; Vyral will ask you to sign in again. Publishing the app (no review needed for a personal tool with you as the only user) removes that limit.",
         "Videos uploaded through an unverified Google project are locked to private until the project passes Google's API audit.",
     ]
 
     def setup_steps(self, redirect_uri: str) -> list[SetupStep]:
         return [
-            SetupStep("Create a Google Cloud project", "Any name works, for example 'AI Clipper'.", "https://console.cloud.google.com/projectcreate"),
+            SetupStep("Create a Google Cloud project", "Any name works, for example 'Vyral'.", "https://console.cloud.google.com/projectcreate"),
             SetupStep("Turn on the YouTube Data API v3", "Click Enable.", "https://console.cloud.google.com/apis/library/youtube.googleapis.com"),
             SetupStep("Set up the consent screen", "Choose External, fill in the app name and your email, then add your own Google account under Audience > Test users.", "https://console.cloud.google.com/auth/overview"),
             SetupStep("Create an OAuth client", "Application type: Desktop app. No redirect URL is needed for desktop clients. Download the JSON file when it's created.", "https://console.cloud.google.com/auth/clients/create"),
-            SetupStep("Drop the downloaded JSON file here", "Or paste the Client ID and secret below. AI Clipper checks them with Google immediately."),
+            SetupStep("Drop the downloaded JSON file here", "Or paste the Client ID and secret below. Vyral checks them with Google immediately."),
         ]
 
     def authorize_url(self, app, redirect_uri, state, verifier, purpose):

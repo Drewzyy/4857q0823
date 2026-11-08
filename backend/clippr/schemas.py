@@ -43,16 +43,21 @@ class DestinationSettings(Strict):
 
 def default_destination_settings(platform: str) -> dict:
     s = DestinationSettings()
-    if platform == "youtube":
-        s.visibility = "private"  # unverified Google projects can only upload private videos
-    if platform == "tiktok":
-        s.visibility = "private"  # unaudited TikTok apps are forced to SELF_ONLY
+    s.format.fps = 60  # keep smooth source footage smooth; lower-fps sources are never upsampled
     return s.model_dump()
 
 
 class StorageSettings(Strict):
+    retention_days: int = Field(30, ge=1, le=365)  # clips and cached media are deleted after this
     max_cache_gb: float = Field(50, ge=1, le=10000)
     keep_original_imports: bool = True
+
+
+class MonitoringSettings(Strict):
+    enabled: bool = True
+    interval_minutes: int = Field(10, ge=3, le=240)
+    streams_to_search: int = Field(4, ge=1, le=15)
+    max_clip_seconds: int = Field(180, ge=15, le=600)
 
 
 class AISettings(Strict):
@@ -79,6 +84,7 @@ class PrivacySettings(Strict):
 
 
 class AppSettings(Strict):
+    monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     ai: AISettings = Field(default_factory=AISettings)
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)

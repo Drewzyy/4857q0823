@@ -198,7 +198,7 @@ class ConnectionService:
         with self._lock:
             attempt = self._attempts.get(state)
             if not attempt or attempt.platform != key or attempt.status != "pending" or time.time() - attempt.created > ATTEMPT_TTL:
-                raise PlatformError("This sign-in link is invalid or has expired. Start again from AI Clipper.", code="invalid_state")
+                raise PlatformError("This sign-in link is invalid or has expired. Start again from Vyral.", code="invalid_state")
             attempt.status = "processing"
         try:
             if params.get("error"):
@@ -246,7 +246,7 @@ class ConnectionService:
                     dest = s.scalar(select(DestinationAccount).where(DestinationAccount.platform == acct.platform, DestinationAccount.external_id == acct.external_id))
                     if not dest and link_id:
                         draft = s.get(DestinationAccount, link_id)
-                        if draft and draft.platform == acct.platform and draft.external_id.startswith("draft:"):
+                        if draft and draft.platform == acct.platform and draft.external_id.startswith(("draft:", "manual:")):
                             dest, link_id = draft, None
                             dest.external_id = acct.external_id
                     if not dest:
@@ -340,7 +340,7 @@ class ConnectionService:
             s.delete(row)  # destinations/sources keep their settings; FK becomes NULL
 
 
-CALLBACK_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>AI Clipper</title>
+CALLBACK_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Vyral</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#0e0e11;color:#f4f4f6;
 font:16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif}}

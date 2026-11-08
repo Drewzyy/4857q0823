@@ -18,8 +18,10 @@ def test_creator_source_destination_crud(client):
     assert len(client.get("/api/sources", params={"creator_id": b["id"]}).json()) == 0
 
     d = client.post("/api/destinations", json={"platform": "youtube", "display_name": "A YouTube", "creator_id": a["id"]}).json()
-    assert d["status"] == "draft" and d["settings"]["visibility"] == "private"
-    r = client.patch(f"/api/destinations/{d['id']}", json={"settings": {"hashtags": ["#a"], "format": {"fps": 60}}})
+    assert d["status"] == "manual" and d["settings"]["format"]["fps"] == 60
+    r = client.patch(f"/api/destinations/{d['id']}", json={"handle": "https://www.tiktok.com/@A.Page", "display_name": " Renamed ", "settings": {"hashtags": ["#a"], "format": {"fps": 60}}})
+    assert r.json()["handle"] == "@A.Page" and r.json()["display_name"] == "Renamed"
+    assert client.patch(f"/api/destinations/{d['id']}", json={"handle": "bad handle!"}).status_code == 422
     assert r.status_code == 200 and r.json()["settings"]["format"]["fps"] == 60
     assert r.json()["settings"]["format"]["aspect"] == "9:16"  # deep defaults kept
     assert client.patch(f"/api/destinations/{d['id']}", json={"settings": {"format": {"fps": 61}}}).status_code == 422

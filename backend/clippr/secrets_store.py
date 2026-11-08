@@ -17,7 +17,7 @@ import threading
 from pathlib import Path
 from typing import Any, Protocol
 
-SERVICE = "ai-clipper"
+SERVICE = "vyral"
 
 
 class SecretStore(Protocol):

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import uuid
 from typing import Literal
 
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from .. import serialize as ser
 from ..audit import audit
-from ..models import Creator, DestinationAccount, Folder, FunnelRoute, SourceAccount
+from ..models import Creator, DestinationAccount, Folder, FunnelRoute, ReferenceVideo, SourceAccount
 from ..platforms import DESTINATION_PLATFORMS
 from ..platforms.urls import SUPPORTED_SOURCE_PLATFORMS, SourceInputError, parse_source_input
 from ..schemas import DestinationSettings, default_destination_settings
@@ -31,12 +32,32 @@ class CreatorIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     color: str = Field("#8b5cf6", pattern=HEX)
     notes: str = Field("", max_length=2000)
+    vod_channels: list[str] = Field(default_factory=list, max_length=10)
+    clip_permission: bool = False
 
 
 class CreatorPatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
     color: str | None = Field(None, pattern=HEX)
     notes: str | None = Field(None, max_length=2000)
+    vod_channels: list[str] | None = Field(None, max_length=10)
+    clip_permission: bool | None = None
+
+
+def _clean_channels(links: list[str]) -> list[str]:
+    from ..fetch import FetchError, validate_stream_link
+
+    out = []
+    for link in links:
+        if not link.strip():
+            continue
+        try:
+            v = validate_stream_link(link)
+        except FetchError as e:
+            raise ApiError(422, "invalid_input", f"{link.strip()[:80]}: {e}")
+        if v not in out:
+            out.append(v)
+    return out
 
 
 def _creator_counts(s: Session) -> dict[int, dict[str, int]]:
@@ -70,7 +91,8 @@ def _get_or_create_creator(s: Session, name: str) -> Creator:
 def create_creator(body: CreatorIn, s: Session = Depends(db)):
     if s.scalar(select(Creator).where(func.lower(Creator.name) == body.name.strip().lower())):
         raise ApiError(409, "duplicate", f"A creator named '{body.name}' already exists")
-    c = Creator(name=body.name.strip(), color=body.color, notes=body.notes)
+    c = Creator(name=body.name.strip(), color=body.color, notes=body.notes,
+                vod_channels=_clean_channels(body.vod_channels), clip_permission=body.clip_permission)
     s.add(c)
     s.flush()
     audit(s, "creator.created", "creator", c.id, {"name": c.name})
@@ -80,7 +102,10 @@ def create_creator(body: CreatorIn, s: Session = Depends(db)):
 @router.patch("/creators/{cid}")
 def update_creator(cid: int, body: CreatorPatch, s: Session = Depends(db)):
     c = get_or_404(s, Creator, cid, "Creator")
-    for k, v in body.model_dump(exclude_none=True).items():
+    data = body.model_dump(exclude_none=True)
+    if "vod_channels" in data:
+        data["vod_channels"] = _clean_channels(data["vod_channels"])
+    for k, v in data.items():
         setattr(c, k, v.strip() if k == "name" else v)
     try:
         s.flush()
@@ -171,7 +196,15 @@ def list_sources(q: str = "", creator_id: int | None = None, folder_id: int | No
     if platform:
         stmt = stmt.where(SourceAccount.platform == platform)
     counts = _route_counts(s, FunnelRoute.source_id)
-    return [ser.source(x, counts.get(x.id, 0)) for x in s.scalars(stmt).unique()]
+    seen = dict(s.execute(select(ReferenceVideo.source_id, func.count()).group_by(ReferenceVideo.source_id)).all())
+    clipped = dict(s.execute(select(ReferenceVideo.source_id, func.count()).where(ReferenceVideo.status == "ready").group_by(ReferenceVideo.source_id)).all())
+    out = []
+    for x in s.scalars(stmt).unique():
+        d = ser.source(x, counts.get(x.id, 0))
+        if x.baseline_done:
+            d["videos_discovered"], d["videos_analyzed"] = seen.get(x.id, 0), clipped.get(x.id, 0)
+        out.append(d)
+    return out
 
 
 def _check_refs(s: Session, creator_id: int | None, folder_id: int | None) -> None:
@@ -321,14 +354,27 @@ def delete_source(sid: int, s: Session = Depends(db)):
 class DestinationDraftIn(BaseModel):
     platform: Literal["tiktok", "instagram", "youtube", "facebook"]
     display_name: str = Field(min_length=1, max_length=200)
+    handle: str = Field("", max_length=100)
     creator_id: int | None = None
 
 
 class DestinationPatch(BaseModel):
     display_name: str | None = Field(None, min_length=1, max_length=200)
+    handle: str | None = Field(None, max_length=100)
     creator_id: int | None = None
     enabled: bool | None = None
     settings: dict | None = None
+
+
+def _handle(h: str) -> str:
+    h = h.strip()
+    m = re.search(r"(?:tiktok\.com/|instagram\.com/|youtube\.com/|facebook\.com/)(@?[\w.\-]+)", h)
+    if m:
+        h = m.group(1)
+    h = h.lstrip("@").strip("/")
+    if h and not re.fullmatch(r"[\w.\-]{1,60}", h):
+        raise ApiError(422, "invalid_input", "Handles can only contain letters, numbers, dots, dashes and underscores")
+    return f"@{h}" if h else ""
 
 
 @router.get("/destinations")
@@ -344,16 +390,16 @@ def list_destinations(platform: str | None = None, creator_id: int | None = None
 
 @router.post("/destinations", status_code=201)
 def add_destination_draft(body: DestinationDraftIn, s: Session = Depends(db)):
-    """Plan a destination before logging in. Connecting later fills in the real account."""
+    """Add a page you post to. You upload to it yourself, so no login is needed."""
     if body.platform not in DESTINATION_PLATFORMS:
         raise ApiError(422, "validation", "Unsupported platform")
     _check_refs(s, body.creator_id, None)
-    d = DestinationAccount(platform=body.platform, external_id=f"draft:{uuid.uuid4().hex}", display_name=body.display_name.strip(),
-                           creator_id=body.creator_id, settings=default_destination_settings(body.platform))
+    d = DestinationAccount(platform=body.platform, external_id=f"manual:{uuid.uuid4().hex}", display_name=body.display_name.strip(),
+                           handle=_handle(body.handle), creator_id=body.creator_id, settings=default_destination_settings(body.platform))
     s.add(d)
     s.flush()
     s.refresh(d)
-    audit(s, "destination.draft_created", "destination", d.id, {"platform": d.platform})
+    audit(s, "destination.created", "destination", d.id, {"platform": d.platform})
     return ser.destination(d)
 
 
@@ -369,6 +415,10 @@ def update_destination(did: int, body: DestinationPatch, s: Session = Depends(db
         except ValidationError as e:
             first = e.errors()[0]
             raise ApiError(422, "validation", f"{'.'.join(str(x) for x in first['loc'])}: {first['msg']}")
+    if "handle" in data:
+        data["handle"] = _handle(data["handle"])
+    if "display_name" in data:
+        data["display_name"] = data["display_name"].strip()
     for k, v in data.items():
         setattr(d, k, v)
     s.flush()

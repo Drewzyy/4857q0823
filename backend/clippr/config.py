@@ -13,8 +13,10 @@ def default_data_dir() -> Path:
     if override:
         return Path(override).expanduser()
     if platform.system() == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "AI Clipper"
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "ai-clipper"
+        return Path.home() / "Library" / "Application Support" / "Vyral"
+    if platform.system() == "Windows":
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "Vyral"
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "vyral"
 
 
 @dataclass
@@ -46,5 +48,6 @@ class Config:
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.data_dir, 0o700)
+        if os.name != "nt":
+            os.chmod(self.data_dir, 0o700)
         self.media_dir.mkdir(exist_ok=True)

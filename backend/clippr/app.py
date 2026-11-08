@@ -15,7 +15,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api import accounts, connections as connections_api, funnel, system
+from .api import accounts, clips, connections as connections_api, funnel, system
+from .api.system import load_settings
+from .fetch import YtDlpFetcher
 from .api.deps import ApiError
 from .config import Config
 from .connections import CALLBACK_PAGE, ConnectionService
@@ -40,6 +42,8 @@ class AppContext:
     jobs: JobQueue
     bundled_apps: dict[str, Any] = field(default_factory=dict)
     connections: ConnectionService = None  # type: ignore[assignment]
+    fetcher: Any = None
+    pipeline: Any = None
 
 
 def _load_bundled_apps(config: Config) -> dict[str, Any]:
@@ -54,7 +58,7 @@ def _load_bundled_apps(config: Config) -> dict[str, Any]:
     return {}
 
 
-def build_context(config: Config, secrets: SecretStore | None = None, http_factory=None) -> AppContext:
+def build_context(config: Config, secrets: SecretStore | None = None, http_factory=None, fetcher=None) -> AppContext:
     config.ensure_dirs()
     setup_logging(config.data_dir / "logs")
     database = Database(f"sqlite:///{config.db_path}")
@@ -64,6 +68,16 @@ def build_context(config: Config, secrets: SecretStore | None = None, http_facto
     ctx.connections = ConnectionService(ctx, http_factory)
     ctx.jobs.register("connections.refresh_due", lambda jc, p: ctx.connections.refresh_due())
     ctx.jobs.every("connections.refresh_due", 600)
+    ctx.fetcher = fetcher or YtDlpFetcher()
+    from .pipeline import register
+
+    register(ctx)
+
+    def heavy_limit() -> int:
+        with database.session() as s:
+            return load_settings(s).processing.max_concurrent_jobs
+
+    ctx.jobs.heavy_limit = heavy_limit
     return ctx
 
 
@@ -73,11 +87,11 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if cfg.run_worker:
-            ctx.jobs.start(workers=1)
+            ctx.jobs.start(workers=3)
         yield
         ctx.jobs.stop()
 
-    app = FastAPI(title="AI Clipper", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app = FastAPI(title="Vyral", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.ctx = ctx
     allowed_hosts = {f"127.0.0.1:{cfg.port}", f"localhost:{cfg.port}", "127.0.0.1", "localhost", "testserver"}
 
@@ -89,6 +103,8 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         path = request.url.path
         if path.startswith("/api/") and path != "/api/health":
             token = request.headers.get("x-clippr-token", "")
+            if not token and path.startswith("/api/media/") and request.method == "GET":
+                token = request.query_params.get("t", "")
             if not hmac.compare_digest(token.encode(), cfg.api_token.encode()):
                 return JSONResponse({"error": {"code": "unauthorized", "message": "Missing or invalid app token"}}, status_code=401)
         if request.method in ("POST", "PUT", "PATCH", "DELETE"):
@@ -122,7 +138,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         log.exception("unhandled error")
         return JSONResponse({"error": {"code": "internal", "message": "Something went wrong. Details are in the app log."}}, status_code=500)
 
-    for r in (accounts.router, funnel.router, system.router, connections_api.router):
+    for r in (accounts.router, funnel.router, system.router, connections_api.router, clips.router):
         app.include_router(r, prefix="/api")
 
     def oauth_callback(platform: str, request: Request):
@@ -137,7 +153,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         page = CALLBACK_PAGE.format(
             color="#16a34a33" if ok else "#dc262633", icon="✓" if ok else "!",
             title="Connected" if ok else "Couldn't connect",
-            message=html.escape(msg + (" You can close this tab and go back to AI Clipper." if ok else "")),
+            message=html.escape(msg + (" You can close this tab and go back to Vyral." if ok else "")),
         )
         return HTMLResponse(page, headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"})
 
