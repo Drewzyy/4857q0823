@@ -27,7 +27,7 @@ from .media.overlay import Word
 from .media.transcribe import TranscribeError
 from .media.render import OutputFormat, render
 from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, ReferenceVideo, SourceAccount, VodAsset
-from .routing import resolve_destinations
+from .routing import resolve_destinations, source_creator_ids
 from .schemas import OverlaySettings
 
 log = logging.getLogger("clippr.pipeline")
@@ -129,7 +129,9 @@ class Pipeline:
         return {"posts_seen": len(posts), "new": len(new_refs), "baseline": first}
 
     def _new_ref(self, s, src: SourceAccount | None, p: RemotePost, status: str, platform: str | None = None) -> ReferenceVideo:
-        ref = ReferenceVideo(source_id=src.id if src else None, creator_id=src.creator_id if src else None,
+        # Single-streamer accounts are attributed now; multi-streamer accounts once the moment is found.
+        only = source_creator_ids(src) if src else []
+        ref = ReferenceVideo(source_id=src.id if src else None, creator_id=only[0] if len(only) == 1 else None,
                              platform=platform or (src.platform if src else "tiktok"), external_id=p.id, url=p.url, title=p.title,
                              thumbnail_url=p.thumbnail, posted_at=p.posted_at, duration=p.duration, views=p.views, likes=p.likes,
                              comments=p.comments, shares=p.shares, status=status,
@@ -198,24 +200,29 @@ class Pipeline:
                 return {"skipped": True}
             src = ref.source
             account = src.username if src else None
-            creator = s.get(Creator, ref.creator_id) if ref.creator_id else (src.creator if src else None)
             cfg = load_settings(s)
-            if not creator:
+            # A clipping account can cover several streamers: search each one's streams until the moment is found.
+            ids = [ref.creator_id] if ref.creator_id else (source_creator_ids(src) if src else [])
+            creators = [c for c in (s.get(Creator, i) for i in ids) if c]
+            if not creators:
                 return self._stop(rid, "needs_setup", "Assign this source account to a creator so Vyral knows whose streams to search.", account, ref.url)
-            if not creator.clip_permission:
-                return self._stop(rid, "needs_setup", f"Confirm you have permission to clip {creator.name} (Creators > Edit).", account, ref.url)
-            channels = [vod_override] if vod_override else list(creator.vod_channels or [])
-            if not channels:
-                return self._stop(rid, "needs_setup", f"Add {creator.name}'s Twitch or YouTube channel so Vyral can find the full stream.", account, ref.url)
+            usable = [c for c in creators if c.clip_permission and (vod_override or c.vod_channels)]
+            if not usable:
+                c = creators[0]
+                why = (f"Confirm you have permission to clip {c.name} (Creators > Edit)." if not c.clip_permission
+                       else f"Add {c.name}'s Twitch, YouTube or Kick channel so Vyral can find the full stream.")
+                return self._stop(rid, "needs_setup", why, account, ref.url)
+            candidates = [(c.id, c.name, [vod_override] if vod_override else list(c.vod_channels or [])) for c in usable]
             if src:
                 dests = [r.destination for r in resolve_destinations(s, src.id)]
             else:
-                dests = list(s.scalars(select(DestinationAccount).where(DestinationAccount.creator_id == creator.id, DestinationAccount.enabled.is_(True))).unique())
+                dests = list(s.scalars(select(DestinationAccount).where(DestinationAccount.creator_id.in_([c.id for c in usable]),
+                                                                        DestinationAccount.enabled.is_(True))).unique())
             if not dests:
-                where = f"@{account}" if account else creator.name
+                where = f"@{account}" if account else usable[0].name
                 return self._stop(rid, "needs_setup", f"Route {where} to at least one destination in the Account Funnel.", account, ref.url)
-            dest_info = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {})) for d in dests]
-            creator_name, ref_url, ref_title = creator.name, ref.url, ref.title
+            all_dests = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {}), d.creator_id) for d in dests]
+            ref_url, ref_title = ref.url, ref.title
         self._set(rid, "processing", "Listening to the post")
         work = self._dir("tmp") / f"build-{rid}-{random.randrange(1 << 30)}"
         try:
@@ -224,21 +231,32 @@ class Pipeline:
 
             found = None
             searched = 0
-            for ch in channels:
-                vods = self.ctx.fetcher.recent_vods(ch, cfg.monitoring.streams_to_search)
-                for v in vods:
-                    searched += 1
-                    self._set(rid, "processing", f"Searching {creator_name}'s stream {searched}: {v.title or v.url}"[:300])
-                    m = match.find_in_stream(ref_feats, self._vod_features(v.url, v.title))
-                    if m:
-                        found = (v, m)
+            for cid, cname, channels in candidates:
+                for ch in channels:
+                    vods = self.ctx.fetcher.recent_vods(ch, cfg.monitoring.streams_to_search)
+                    for v in vods:
+                        searched += 1
+                        self._set(rid, "processing", f"Searching {cname}'s stream {searched}: {v.title or v.url}"[:300])
+                        m = match.find_in_stream(ref_feats, self._vod_features(v.url, v.title))
+                        if m:
+                            found = (v, m, cid, cname)
+                            break
+                    if found:
                         break
                 if found:
                     break
+            names = " / ".join(n for _, n, _ in candidates)
             if not found:
-                return self._stop(rid, "no_match", f"Couldn't find this moment in {creator_name}'s last {searched} stream(s). "
+                return self._stop(rid, "no_match", f"Couldn't find this moment in {names}'s last {searched} stream(s). "
                                   "If it's from an older stream, paste that stream's link with Retry.", account, ref_url)
-            vod, m = found
+            vod, m, matched_id, creator_name = found
+            # Only this streamer's pages (and pages not tied to any streamer) get the clip.
+            dest_info = [d[:5] for d in all_dests if d[5] in (None, matched_id)]
+            if not dest_info:
+                return self._stop(rid, "needs_setup", f"This is a {creator_name} clip, but @{account} isn't routed to any {creator_name} page "
+                                  "in the Account Funnel.", account, ref_url)
+            with self.ctx.db.session() as s:
+                s.get(ReferenceVideo, rid).creator_id = matched_id
             if m.end - m.start > cfg.monitoring.max_clip_seconds:
                 m.end = m.start + cfg.monitoring.max_clip_seconds
             self._set(rid, "processing", f"Found it at {_hms(m.start)} in \"{vod.title or 'stream'}\". Downloading full quality",
@@ -273,7 +291,7 @@ class Pipeline:
                 planned.append((did, platform, st, fmt_raw, ov, renders[key]))
 
             with self.ctx.db.session() as s:
-                clip = Clip(reference_id=rid, creator_id=ref.creator_id or (src.creator_id if src else None), title=clean,
+                clip = Clip(reference_id=rid, creator_id=matched_id, title=clean,
                             vod_url=vod.url, vod_start=m.start, vod_end=m.end, stream_date=stream_date, status="ready",
                             files_dir=str(clip_dir), source_path=str(source), source_start=start, source_duration=dur,
                             words=[w.to_dict() for w in words], captions_note=captions_note,

@@ -274,3 +274,32 @@ def test_captions_skipped_gracefully_without_speech_model(env):
     clip = c.get("/api/clips").json()[0]
     assert clip["has_captions"] is False and "Captions skipped" in clip["captions_note"]
     assert c.get("/api/references").json()[0]["status"] == "ready"
+
+
+def test_one_clipping_account_covering_several_streamers(env):
+    """@a.clips clips Streamer A and Streamer B. A post is found in B's stream, so only B's pages get it."""
+    ctx, c, fake = env
+    a = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    b = c.post("/api/creators", json={"name": "Streamer B", "clip_permission": True, "vod_channels": ["https://kick.com/streamerb"]}).json()["id"]
+    src = c.post("/api/sources", json={"input": "@general.clips", "creator_ids": [a, b]}).json()
+    assert [x["name"] for x in src["creators"]] == ["Streamer A", "Streamer B"]
+    da = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": a}).json()["id"]
+    db_ = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "B page", "creator_id": b}).json()["id"]
+    assert c.post("/api/funnel/auto-route", json={}).json()["created"] == 2  # one account feeds both streamers' pages
+    assert len(c.get("/api/sources", params={"creator_id": b}).json()) == 1
+    # Streamer A's channel listing has no match; Streamer B's (Kick) does.
+    orig = fake.recent_vods
+    fake.recent_vods = lambda ch, limit: [] if "twitch" in ch else orig(ch, limit)
+    fake.posts = []
+    ctx.pipeline.check_source(src["id"])
+    fake.posts = [RemotePost("m1", "https://www.tiktok.com/@general.clips/video/m1", "wild moment #fyp")]
+    ctx.pipeline.check_source(src["id"])
+    drain(ctx)
+    ref = c.get("/api/references").json()[0]
+    assert ref["status"] == "ready" and ref["creator"]["name"] == "Streamer B", ref["status_detail"]
+    outs = c.get("/api/clips").json()[0]["outputs"]
+    assert [o["destination"]["display_name"] for o in outs] == ["B page"]
+    assert "Streamer: Streamer B" in outs[0]["description"]
+    # Removing one streamer keeps the other.
+    r = c.patch(f"/api/sources/{src['id']}", json={"creator_ids": [b]}).json()
+    assert [x["name"] for x in r["creators"]] == ["Streamer B"]

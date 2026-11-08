@@ -88,7 +88,8 @@ class SourceAccount(Base):
     display_name: Mapped[str] = mapped_column(String(200), default="")
     profile_url: Mapped[str] = mapped_column(Text)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)
+    creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)  # first of creator_ids
+    creator_ids: Mapped[list[Any]] = mapped_column(default=list)  # every streamer this account clips
     folder_id: Mapped[int | None] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
     connection_id: Mapped[int | None] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"), nullable=True)
     monitoring: Mapped[str] = mapped_column(String(10), default="active")  # active | paused

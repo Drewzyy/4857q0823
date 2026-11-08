@@ -62,9 +62,11 @@ def _clean_channels(links: list[str]) -> list[str]:
 
 def _creator_counts(s: Session) -> dict[int, dict[str, int]]:
     out: dict[int, dict[str, int]] = {}
-    for cid, n in s.execute(select(SourceAccount.creator_id, func.count()).group_by(SourceAccount.creator_id)):
-        if cid:
-            out.setdefault(cid, {"sources": 0, "destinations": 0})["sources"] = n
+    from ..routing import source_creator_ids
+
+    for src in s.scalars(select(SourceAccount)).unique():
+        for cid in source_creator_ids(src):
+            out.setdefault(cid, {"sources": 0, "destinations": 0})["sources"] += 1
     for cid, n in s.execute(select(DestinationAccount.creator_id, func.count()).group_by(DestinationAccount.creator_id)):
         if cid:
             out.setdefault(cid, {"sources": 0, "destinations": 0})["destinations"] = n
@@ -167,12 +169,14 @@ class SourceIn(BaseModel):
     input: str = Field(min_length=1, max_length=300, description="username, @username or profile URL")
     platform: Literal["tiktok", "youtube", "twitch", "instagram"] = "tiktok"
     creator_id: int | None = None
+    creator_ids: list[int] | None = Field(None, max_length=50)
     folder_id: int | None = None
     notes: str = Field("", max_length=2000)
 
 
 class SourcePatch(BaseModel):
     creator_id: int | None = None
+    creator_ids: list[int] | None = Field(None, max_length=50)
     folder_id: int | None = None
     monitoring: Literal["active", "paused"] | None = None
     display_name: str | None = Field(None, max_length=200)
@@ -187,8 +191,7 @@ def list_sources(q: str = "", creator_id: int | None = None, folder_id: int | No
     if q:
         like = f"%{q.strip().lower()}%"
         stmt = stmt.where(or_(func.lower(SourceAccount.username).like(like), func.lower(SourceAccount.display_name).like(like)))
-    if creator_id is not None:
-        stmt = stmt.where(SourceAccount.creator_id == (creator_id or None)) if creator_id else stmt.where(SourceAccount.creator_id.is_(None))
+    want_creator = creator_id
     if folder_id is not None:
         stmt = stmt.where(SourceAccount.folder_id == folder_id) if folder_id else stmt.where(SourceAccount.folder_id.is_(None))
     if monitoring:
@@ -198,13 +201,30 @@ def list_sources(q: str = "", creator_id: int | None = None, folder_id: int | No
     counts = _route_counts(s, FunnelRoute.source_id)
     seen = dict(s.execute(select(ReferenceVideo.source_id, func.count()).group_by(ReferenceVideo.source_id)).all())
     clipped = dict(s.execute(select(ReferenceVideo.source_id, func.count()).where(ReferenceVideo.status == "ready").group_by(ReferenceVideo.source_id)).all())
+    from ..routing import source_creator_ids
+
+    by_id = {c.id: c for c in s.scalars(select(Creator))}
     out = []
     for x in s.scalars(stmt).unique():
-        d = ser.source(x, counts.get(x.id, 0))
+        ids = source_creator_ids(x)
+        if want_creator is not None and ((want_creator and want_creator not in ids) or (not want_creator and ids)):
+            continue
+        d = ser.source(x, counts.get(x.id, 0), by_id)
         if x.baseline_done:
             d["videos_discovered"], d["videos_analyzed"] = seen.get(x.id, 0), clipped.get(x.id, 0)
         out.append(d)
     return out
+
+
+def _set_creators(src: SourceAccount, ids: list[int] | None) -> None:
+    ids = list(dict.fromkeys(int(i) for i in (ids or [])))
+    src.creator_ids, src.creator_id = ids, (ids[0] if ids else None)
+
+
+def _check_creators(s: Session, ids: list[int] | None) -> None:
+    for i in ids or []:
+        if not s.get(Creator, i):
+            raise ApiError(422, "validation", "Creator not found")
 
 
 def _check_refs(s: Session, creator_id: int | None, folder_id: int | None) -> None:
@@ -223,13 +243,16 @@ def add_source(body: SourceIn, s: Session = Depends(db)):
     _check_refs(s, body.creator_id, body.folder_id)
     if s.scalar(select(SourceAccount).where(SourceAccount.platform == parsed.platform, SourceAccount.username == parsed.username)):
         raise ApiError(409, "duplicate", f"@{parsed.username} on {parsed.platform} is already in your sources")
+    ids = body.creator_ids if body.creator_ids is not None else ([body.creator_id] if body.creator_id else [])
+    _check_creators(s, ids)
     src = SourceAccount(platform=parsed.platform, username=parsed.username, profile_url=parsed.profile_url,
-                        creator_id=body.creator_id, folder_id=body.folder_id, notes=body.notes)
+                        folder_id=body.folder_id, notes=body.notes)
+    _set_creators(src, ids)
     s.add(src)
     s.flush()
     s.refresh(src)
     audit(s, "source.added", "source", src.id, {"platform": src.platform, "username": src.username})
-    return ser.source(src)
+    return ser.source(src, 0, {c.id: c for c in s.scalars(select(Creator))})
 
 
 @router.post("/sources/import")
@@ -289,7 +312,8 @@ def _import_rows(s: Session, content: str, default_platform: str = "tiktok", cre
             skipped += 1
             continue
         seen.add((p.platform, p.username))
-        cid = _get_or_create_creator(s, r["creator"]).id if r.get("creator") else creator_id
+        # "Streamer A|Streamer B" in the creator column = an account that clips both.
+        cids = [_get_or_create_creator(s, n.strip()).id for n in r["creator"].split("|") if n.strip()] if r.get("creator") else ([creator_id] if creator_id else [])
         fid = folder_id
         if r.get("folder"):
             f = s.scalar(select(Folder).where(func.lower(Folder.name) == r["folder"].lower()))
@@ -298,7 +322,8 @@ def _import_rows(s: Session, content: str, default_platform: str = "tiktok", cre
                 s.add(f)
                 s.flush()
             fid = f.id
-        src = SourceAccount(platform=p.platform, username=p.username, profile_url=p.profile_url, creator_id=cid, folder_id=fid)
+        src = SourceAccount(platform=p.platform, username=p.username, profile_url=p.profile_url, folder_id=fid)
+        _set_creators(src, cids)
         s.add(src)
         added.append(p.username)
     s.flush()
@@ -311,13 +336,20 @@ def update_source(sid: int, body: SourcePatch, s: Session = Depends(db)):
     src = get_or_404(s, SourceAccount, sid, "Source account")
     data = body.model_dump(exclude_unset=True)
     _check_refs(s, data.get("creator_id"), data.get("folder_id"))
+    if "creator_ids" in data or "creator_id" in data:
+        ids = data.pop("creator_ids", None)
+        one = data.pop("creator_id", None)
+        if ids is None:
+            ids = [one] if one else []
+        _check_creators(s, ids)
+        _set_creators(src, ids)
     for k, v in data.items():
         setattr(src, k, v)
     s.flush()
     s.refresh(src)
     if "monitoring" in data:
         audit(s, f"source.{'resumed' if src.monitoring == 'active' else 'paused'}", "source", sid)
-    return ser.source(src, _route_counts(s, FunnelRoute.source_id).get(sid, 0))
+    return ser.source(src, _route_counts(s, FunnelRoute.source_id).get(sid, 0), {c.id: c for c in s.scalars(select(Creator))})
 
 
 class BulkSource(BaseModel):
@@ -338,7 +370,8 @@ def bulk_sources(body: BulkSource, s: Session = Depends(db)):
         elif body.action in ("pause", "resume"):
             src.monitoring = "paused" if body.action == "pause" else "active"
         else:
-            src.creator_id, src.folder_id = body.creator_id, body.folder_id
+            _set_creators(src, [body.creator_id] if body.creator_id else [])
+            src.folder_id = body.folder_id
     audit(s, f"source.bulk_{body.action}", "source", "", {"count": n})
     return {"updated": n}
 

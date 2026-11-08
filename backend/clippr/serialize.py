@@ -32,8 +32,14 @@ def connection(c: Connection | None) -> dict[str, Any] | None:
     }
 
 
-def source(s: SourceAccount, route_count: int = 0) -> dict[str, Any]:
+def source(s: SourceAccount, route_count: int = 0, creators_by_id: dict | None = None) -> dict[str, Any]:
+    from .routing import source_creator_ids
+
+    ids = source_creator_ids(s)
+    all_creators = [creator(creators_by_id[i]) for i in ids if creators_by_id and i in creators_by_id] if creators_by_id is not None \
+        else ([creator(s.creator)] if s.creator else [])
     return {
+        "creators": all_creators,
         "id": s.id, "platform": s.platform, "username": s.username, "display_name": s.display_name,
         "profile_url": s.profile_url, "avatar_url": s.avatar_url, "monitoring": s.monitoring, "notes": s.notes,
         "creator": creator(s.creator), "folder": folder(s.folder),

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .. import serialize as ser
 from ..audit import audit
-from ..models import DestinationAccount, FunnelRoute, Setting, SourceAccount
+from ..models import Creator, DestinationAccount, FunnelRoute, Setting, SourceAccount
 from ..routing import RouteError, auto_route_by_creator, create_route, creators_conflict, resolve_destinations
 from .deps import ApiError, db, get_or_404
 
@@ -27,7 +27,7 @@ def _route(r: FunnelRoute, s: Session) -> dict:
 def get_funnel(s: Session = Depends(db)):
     layout = s.get(Setting, LAYOUT_KEY)
     return {
-        "sources": [ser.source(x) for x in s.scalars(select(SourceAccount).order_by(SourceAccount.username)).unique()],
+        "sources": [ser.source(x, 0, {c.id: c for c in s.scalars(select(Creator))}) for x in s.scalars(select(SourceAccount).order_by(SourceAccount.username)).unique()],
         "destinations": [ser.destination(x) for x in s.scalars(select(DestinationAccount).order_by(DestinationAccount.display_name)).unique()],
         "routes": [_route(r, s) for r in s.scalars(select(FunnelRoute).order_by(FunnelRoute.id))],
         "layout": layout.value if layout else {},

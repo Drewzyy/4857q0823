@@ -20,8 +20,17 @@ class RouteError(Exception):
         self.code = code
 
 
+def source_creator_ids(src: SourceAccount) -> list[int]:
+    """All streamers a clipping account covers (most cover one; general accounts cover several)."""
+    ids = [int(i) for i in (src.creator_ids or [])]
+    if not ids and src.creator_id:
+        ids = [src.creator_id]
+    return ids
+
+
 def creators_conflict(src: SourceAccount, dest: DestinationAccount) -> bool:
-    return src.creator_id is not None and dest.creator_id is not None and src.creator_id != dest.creator_id
+    ids = source_creator_ids(src)
+    return bool(ids) and dest.creator_id is not None and dest.creator_id not in ids
 
 
 def create_route(s: Session, source_id: int, destination_id: int, allow_cross_creator: bool = False) -> FunnelRoute:
@@ -32,7 +41,7 @@ def create_route(s: Session, source_id: int, destination_id: int, allow_cross_cr
         raise RouteError(f"{src.username} already feeds {dest.display_name}", "duplicate")
     if creators_conflict(src, dest) and not allow_cross_creator:
         raise RouteError(
-            f"{src.username} belongs to {src.creator.name}, but {dest.display_name} belongs to {dest.creator.name}. Confirm to mix creators.",
+            f"{src.username} doesn't clip {dest.creator.name}, but {dest.display_name} belongs to {dest.creator.name}. Confirm to mix creators.",
             "cross_creator",
         )
     route = FunnelRoute(source_id=source_id, destination_id=destination_id, allow_cross_creator=creators_conflict(src, dest))
@@ -44,12 +53,14 @@ def create_route(s: Session, source_id: int, destination_id: int, allow_cross_cr
 
 def auto_route_by_creator(s: Session, creator_id: int | None = None) -> int:
     """IF creator = X THEN route every X source to every X destination. Returns routes created."""
-    q = select(SourceAccount).where(SourceAccount.creator_id.is_not(None))
-    if creator_id:
-        q = q.where(SourceAccount.creator_id == creator_id)
     created = 0
-    for src in s.scalars(q):
-        for dest in s.scalars(select(DestinationAccount).where(DestinationAccount.creator_id == src.creator_id)):
+    for src in s.scalars(select(SourceAccount)).unique():
+        ids = source_creator_ids(src)
+        if creator_id:
+            ids = [i for i in ids if i == creator_id]
+        if not ids:
+            continue
+        for dest in s.scalars(select(DestinationAccount).where(DestinationAccount.creator_id.in_(ids))).unique():
             exists = s.scalar(select(FunnelRoute).where(FunnelRoute.source_id == src.id, FunnelRoute.destination_id == dest.id))
             if not exists:
                 s.add(FunnelRoute(source_id=src.id, destination_id=dest.id))
