@@ -9,15 +9,17 @@ const port = 8799;
 
 export default defineConfig({
   testDir: "e2e",
-  timeout: 30_000,
+  timeout: 45_000,
   fullyParallel: false,
   workers: 1,
   use: { baseURL: `http://127.0.0.1:${port}`, viewport: { width: 1440, height: 900 }, trace: "off" },
   webServer: {
-    command: `python3 -m clippr --port ${port} --data-dir ${dataDir} --frontend ../frontend/dist`,
+    // Seeds one real clip through the real pipeline (local files stand in for TikTok/Twitch).
+    command: `python3 tests/e2e_server.py ${port} ${dataDir} ../frontend/dist`,
     cwd: "../backend",
     url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,
-    env: { CLIPPR_SECRET_BACKEND: "file" },
+    timeout: 240_000,
+    env: { CLIPPR_DOWNLOADS_DIR: join(dataDir, "Downloads") },
   },
 });

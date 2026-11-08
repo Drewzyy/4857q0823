@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Scissors } from "lucide-react";
+import { Zap } from "lucide-react";
 import { api } from "./lib/api";
 import { MODULES } from "./lib/modules";
 import Dashboard from "./pages/Dashboard";
@@ -10,14 +10,19 @@ import Destinations from "./pages/Destinations";
 import FunnelPage from "./pages/Funnel";
 import SettingsPage from "./pages/Settings";
 import Planned from "./pages/Planned";
+import Ready from "./pages/Ready";
+import ActivityPage from "./pages/Activity";
 
 const PAGES: Record<string, JSX.Element> = {
-  "/": <Dashboard />, "/sources": <Sources />, "/destinations": <Destinations />, "/funnel": <FunnelPage />, "/settings": <SettingsPage />,
+  "/": <Dashboard />, "/ready": <Ready />, "/activity": <ActivityPage />, "/sources": <Sources />, "/destinations": <Destinations />,
+  "/funnel": <FunnelPage />, "/settings": <SettingsPage />,
 };
 
 export default function App() {
   const nav = useNavigate();
   const { data: health, isError } = useQuery({ queryKey: ["health"], queryFn: api.health, staleTime: Infinity, retry: 3 });
+  const { data: dash } = useQuery({ queryKey: ["dashboard"], queryFn: api.dashboard, refetchInterval: 15_000 });
+  const readyCount = dash?.pipeline.ready_to_upload ?? 0;
 
   // ⌘1…⌘9 jump between sections, ⌘, opens Settings.
   useEffect(() => {
@@ -35,7 +40,7 @@ export default function App() {
   return (
     <div className="shell">
       <aside className="sidebar" aria-label="Main navigation">
-        <div className="brand"><span className="brand-mark"><Scissors size={16} /></span>AI Clipper</div>
+        <div className="brand"><span className="brand-mark"><Zap size={16} /></span>Vyral</div>
         <nav>
           {MODULES.map((m, i) => {
             const header = m.group && m.group !== lastGroup ? <div className="nav-group">{m.group}</div> : m.group === "" && lastGroup !== "" ? <div style={{ height: 14 }} /> : null;
@@ -46,14 +51,15 @@ export default function App() {
                 {header}
                 <NavLink to={m.path} end={m.path === "/"} className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
                   title={i < 9 ? `⌘${i + 1}` : m.path === "/settings" ? "⌘," : undefined}>
-                  <Icon size={16} />{m.label}{m.status === "planned" && <span className="soon">M{m.milestone}</span>}
+                  <Icon size={16} />{m.label}{m.status === "planned" && <span className="soon">Soon</span>}
+                  {m.path === "/ready" && readyCount > 0 && <span className="pill accent nodot" style={{ marginLeft: "auto" }}>{readyCount}</span>}
                 </NavLink>
               </div>
             );
           })}
         </nav>
         <div className="sidebar-foot">
-          <span className={`pill ${isError ? "err" : health ? "ok" : ""}`}>{isError ? "Service offline" : health ? "Running locally" : "Starting…"}</span>
+          <span className={`pill ${isError ? "err" : health ? "ok" : ""}`}>{isError ? "Service offline" : health ? (dash?.monitoring.enabled ? "Watching" : "Paused") : "Starting…"}</span>
           {health && <span>v{health.version}</span>}
         </div>
       </aside>

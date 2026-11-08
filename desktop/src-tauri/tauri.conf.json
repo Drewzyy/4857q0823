@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AI Clipper",
-  "version": "0.1.0",
-  "identifier": "app.aiclipper.desktop",
+  "productName": "Vyral",
+  "version": "0.2.0",
+  "identifier": "app.vyral.desktop",
   "build": {
     "frontendDist": "../splash"
   },
@@ -15,11 +15,36 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": "all",
     "category": "Video",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.png"],
-    "externalBin": ["binaries/clippr-backend"],
-    "resources": { "../../frontend/dist/": "ui/" },
-    "macOS": { "minimumSystemVersion": "12.0" }
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/clippr-backend"
+    ],
+    "resources": {
+      "../../frontend/dist/": "ui/"
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-"
+    },
+    "shortDescription": "Vyral",
+    "longDescription": "Watches clipping accounts and turns new posts into ready-to-upload clips from the original stream.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
   }
 }

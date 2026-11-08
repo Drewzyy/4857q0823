@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .. import __version__
 from .. import serialize as ser
 from ..audit import audit
-from ..models import AuditLog, Connection, Creator, DestinationAccount, FunnelRoute, Job, Setting, SourceAccount
+from ..models import AuditLog, Clip, ClipOutput, Connection, Creator, DestinationAccount, FunnelRoute, Job, ReferenceVideo, Setting, SourceAccount
 from ..schemas import AppSettings
 from .deps import ApiError, ctx, db
 
@@ -35,18 +35,30 @@ def _dir_size(path: Path, limit: int = 200_000) -> int:
     return total
 
 
+def _has_ffmpeg() -> bool:
+    from ..media.ffmpeg import FFmpegError, ffmpeg_exe
+
+    try:
+        return bool(ffmpeg_exe())
+    except FFmpegError:
+        return False
+
+
 @router.get("/health")
 def health(c=Depends(ctx), s: Session = Depends(db)):
     s.execute(select(1))
     return {"ok": True, "version": __version__, "secret_backend": c.secrets.name,
-            "worker_running": c.config.run_worker, "desktop_mode": c.config.desktop_mode, "ffmpeg": shutil.which("ffmpeg") is not None}
+            "worker_running": c.config.run_worker, "desktop_mode": c.config.desktop_mode, "ffmpeg": _has_ffmpeg()}
 
 
 @router.get("/dashboard")
 def dashboard(c=Depends(ctx), s: Session = Depends(db)):
     count = lambda stmt: s.scalar(stmt) or 0  # noqa: E731
-    jobs_by_status = dict(s.execute(select(Job.status, func.count()).group_by(Job.status)).all())
+    jobs_by_status = dict(s.execute(select(Job.status, func.count()).where(Job.kind != "monitor.tick").group_by(Job.status)).all())
     disk = shutil.disk_usage(c.config.data_dir)
+    from datetime import datetime, timedelta, timezone
+
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
     real_dests = select(func.count()).select_from(DestinationAccount).where(~DestinationAccount.external_id.like("draft:%"))
     return {
         "accounts": {
@@ -60,14 +72,26 @@ def dashboard(c=Depends(ctx), s: Session = Depends(db)):
         },
         "connections": [ser.connection(x) for x in s.scalars(select(Connection).order_by(Connection.platform))],
         "platforms": [{"key": p["key"], "label": p["label"], "configured": p["configured"]} for p in c.connections.platform_status()],
-        # Pipeline counters come online with their milestones. null = not tracked yet (never shown as 0).
         "pipeline": {
-            "videos_collected": None, "clips_generated": None, "clips_awaiting_approval": None, "clips_published": None,
-            "tracked_from": {"videos_collected": "Milestone 2", "clips_generated": "Milestone 4",
-                             "clips_awaiting_approval": "Milestone 6", "clips_published": "Milestone 6"},
+            "posts_detected": count(select(func.count()).select_from(ReferenceVideo).where(ReferenceVideo.status != "baseline")),
+            "in_progress": count(select(func.count()).select_from(ReferenceVideo).where(ReferenceVideo.status.in_(("new", "processing")))),
+            "needs_attention": count(select(func.count()).select_from(ReferenceVideo).where(
+                ReferenceVideo.status.in_(("needs_setup", "no_match", "failed")), ReferenceVideo.updated_at >= week_ago)),
+            "ready_to_upload": count(select(func.count()).select_from(ClipOutput).where(ClipOutput.status == "ready")),
+            "uploaded": count(select(func.count()).select_from(ClipOutput).where(ClipOutput.status == "uploaded")),
+            "clips_made": count(select(func.count()).select_from(Clip)),
+        },
+        "monitoring": {
+            "enabled": load_settings(s).monitoring.enabled,
+            "interval_minutes": load_settings(s).monitoring.interval_minutes,
+            "watching": count(select(func.count()).select_from(SourceAccount).where(
+                SourceAccount.monitoring == "active", SourceAccount.platform.in_(("tiktok", "youtube")))),
+            "last_check": max((x for x in s.scalars(select(SourceAccount.last_synced_at)) if x), default=None),
+            "errors": count(select(func.count()).select_from(SourceAccount).where(SourceAccount.last_error.is_not(None))),
+            "retention_days": load_settings(s).storage.retention_days,
         },
         "jobs": {"by_status": jobs_by_status,
-                 "recent": [ser.job(j) for j in s.scalars(select(Job).order_by(Job.created_at.desc()).limit(6))]},
+                 "recent": [ser.job(j) for j in s.scalars(select(Job).where(Job.kind != "monitor.tick").order_by(Job.created_at.desc()).limit(6))]},
         "storage": {"data_dir": str(c.config.data_dir), "used_bytes": _dir_size(c.config.data_dir),
                     "disk_free_bytes": disk.free, "disk_total_bytes": disk.total},
         "secret_backend": c.secrets.name,

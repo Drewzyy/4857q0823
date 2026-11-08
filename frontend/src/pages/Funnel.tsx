@@ -28,7 +28,7 @@ const DestNode = memo(({ data }: NodeProps<Node<DstData>>) => (
     <span className="strip" style={{ background: data.item.creator?.color ?? "var(--card-3)" }} />
     <Avatar url={data.item.avatar_url} platform={data.item.platform} />
     <div className="meta"><div className="name ellipsis">{data.item.display_name}</div>
-      <div className="sub ellipsis">{PLATFORM_LABEL[data.item.platform]} · {data.item.status === "connected" ? (data.item.creator?.name ?? "No creator") : data.item.status === "draft" ? "planned" : data.item.status}</div></div>
+      <div className="sub ellipsis">{PLATFORM_LABEL[data.item.platform]}{data.item.handle ? ` · ${data.item.handle}` : ""} · {data.item.creator?.name ?? "No creator"}</div></div>
   </div>
 ));
 

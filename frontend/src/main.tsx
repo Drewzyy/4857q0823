@@ -6,7 +6,6 @@ import "@xyflow/react/dist/style.css";
 import "./styles/app.css";
 import App from "./App";
 import { ToastProvider } from "./components/ui";
-import { ConnectProvider } from "./components/ConnectFlow";
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: true, staleTime: 5_000 } },
@@ -17,9 +16,7 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={qc}>
       <BrowserRouter>
         <ToastProvider>
-          <ConnectProvider>
-            <App />
-          </ConnectProvider>
+          <App />
         </ToastProvider>
       </BrowserRouter>
     </QueryClientProvider>

@@ -1,6 +1,7 @@
 """Ready-to-upload clips, the activity feed of source posts, and Discord notifications."""
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -104,7 +105,7 @@ def save_to_downloads(oid: int, s: Session = Depends(db), c=Depends(ctx)):
     o = get_or_404(s, ClipOutput, oid, "Clip")
     if not o.file_path or not Path(o.file_path).exists():
         raise ApiError(410, "expired", "This clip's video has expired and was deleted to save space")
-    folder = Path.home() / "Downloads" / "Vyral"
+    folder = Path(os.environ.get("CLIPPR_DOWNLOADS_DIR") or Path.home() / "Downloads") / "Vyral"
     folder.mkdir(parents=True, exist_ok=True)
     dest_name = o.destination.display_name if o.destination else o.platform
     target = folder / f"{_safe_name(dest_name)} - {_safe_name(o.title)}.mp4"

@@ -3,13 +3,14 @@
 export type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "twitch";
 export type ConnectorKey = "youtube" | "tiktok" | "meta";
 
-export interface Creator { id: number; name: string; color: string; notes: string; sources?: number; destinations?: number }
+export interface Creator { id: number; name: string; color: string; notes: string; vod_channels: string[]; clip_permission: boolean; sources?: number; destinations?: number }
 export interface Folder { id: number; name: string; sources?: number }
 
 export interface Source {
   id: number; platform: Platform; username: string; display_name: string; profile_url: string; avatar_url: string | null;
   monitoring: "active" | "paused"; notes: string; creator: Creator | null; folder: Folder | null;
-  authorized: boolean; connection_status: string | null; last_synced_at: string | null; created_at: string;
+  authorized: boolean; connection_status: string | null; last_synced_at: string | null; next_check_at: string | null;
+  last_error: string | null; watching_supported: boolean; baseline_done: boolean; created_at: string;
   route_count: number; videos_discovered: number | null; videos_analyzed: number | null;
 }
 
@@ -24,7 +25,7 @@ export interface DestinationSettings {
 export interface Destination {
   id: number; platform: Platform; external_id: string | null; handle: string; display_name: string; avatar_url: string | null;
   creator: Creator | null; settings: DestinationSettings; enabled: boolean;
-  status: "draft" | "disconnected" | "connected" | "expiring" | "expired" | "error" | "revoked";
+  status: "manual" | "draft" | "disconnected" | "connected" | "expiring" | "expired" | "error" | "revoked";
   connection_id: number | null; last_error: string | null; route_count: number; created_at: string;
 }
 export interface Route { id: number; source_id: number; destination_id: number; enabled: boolean; allow_cross_creator: boolean; blocked: boolean }
@@ -48,19 +49,40 @@ export interface Dashboard {
   accounts: { sources_total: number; sources_monitoring: number; sources_authorized: number; destinations_total: number; destinations_connected: number; creators: number; routes: number };
   connections: Connection[];
   platforms: { key: ConnectorKey; label: string; configured: boolean }[];
-  pipeline: { videos_collected: number | null; clips_generated: number | null; clips_awaiting_approval: number | null; clips_published: number | null; tracked_from: Record<string, string> };
+  pipeline: { posts_detected: number; in_progress: number; needs_attention: number; ready_to_upload: number; uploaded: number; clips_made: number };
+  monitoring: { enabled: boolean; interval_minutes: number; watching: number; last_check: string | null; errors: number; retention_days: number };
   jobs: { by_status: Record<string, number>; recent: Job[] };
   storage: { data_dir: string; used_bytes: number; disk_free_bytes: number; disk_total_bytes: number };
   secret_backend: string;
 }
 
 export interface AppSettings {
-  storage: { max_cache_gb: number; keep_original_imports: boolean };
+  monitoring: { enabled: boolean; interval_minutes: number; streams_to_search: number; max_clip_seconds: number };
+  storage: { retention_days: number; max_cache_gb: number; keep_original_imports: boolean };
   ai: { prefer_local_models: boolean; monthly_budget_usd: number; hard_stop_at_budget: boolean; warn_at_percent: number; transcription: string; text_model_tier: string };
   processing: { max_concurrent_jobs: number; quality: string };
   publishing: { require_approval: boolean; allow_auto_publish_rules: boolean };
   privacy: { allow_cloud_upload_of_footage: boolean };
 }
+export interface RefPost {
+  id: number; platform: string; url: string; title: string; thumbnail_url: string | null; posted_at: string | null;
+  status: "new" | "processing" | "ready" | "no_match" | "needs_setup" | "failed" | "baseline"; status_detail: string;
+  source: { id: number; username: string } | null; creator: { id: number; name: string; color: string } | null;
+  vod_url: string | null; vod_start: number | null; vod_end: number | null; match_confidence: number | null;
+  views: number | null; likes: number | null; created_at: string; updated_at: string;
+}
+export interface ClipOutputT {
+  id: number; platform: Platform; title: string; description: string; status: "ready" | "uploaded" | "expired";
+  destination: { id: number; display_name: string; handle: string } | null;
+  width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; uploaded_at: string | null;
+}
+export interface ClipT {
+  id: number; title: string; status: string; created_at: string; expires_at: string;
+  creator: { id: number; name: string; color: string } | null; vod_url: string | null; vod_start: number | null; vod_end: number | null;
+  reference: RefPost | null; outputs: ClipOutputT[];
+}
+export interface NotifyState { configured: boolean; webhook_hint: string | null; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }
+
 export interface Health { ok: boolean; version: string; secret_backend: string; worker_running: boolean; desktop_mode: boolean; ffmpeg: boolean }
 export interface AuditEntry { id: number; ts: string; action: string; entity: string; entity_id: string; details: Record<string, unknown> }
 
@@ -82,7 +104,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try {
     res = await fetch(`/api${path}`, { method, headers, body: payload });
   } catch {
-    throw new ApiError(0, "offline", "Can't reach the AI Clipper background service. It may be restarting.");
+    throw new ApiError(0, "offline", "Can't reach the Vyral background service. It may be restarting.");
   }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => null);
@@ -100,6 +122,7 @@ export const api = {
   dashboard: () => request<Dashboard>("GET", "/dashboard"),
   creators: () => request<Creator[]>("GET", "/creators"),
   createCreator: (b: { name: string; color?: string }) => request<Creator>("POST", "/creators", b),
+  createCreatorFull: (b: { name: string; color?: string; vod_channels: string[]; clip_permission: boolean }) => request<Creator>("POST", "/creators", b),
   updateCreator: (id: number, b: Partial<Creator>) => request<Creator>("PATCH", `/creators/${id}`, b),
   deleteCreator: (id: number) => request<void>("DELETE", `/creators/${id}`),
   folders: () => request<Folder[]>("GET", "/folders"),
@@ -118,8 +141,8 @@ export const api = {
   importSourcesText: (b: { text: string; platform: Platform; creator_id?: number | null; folder_id?: number | null }) =>
     request<ImportResult>("POST", "/sources/import-text", b),
   destinations: () => request<Destination[]>("GET", "/destinations"),
-  addDestinationDraft: (b: { platform: Platform; display_name: string; creator_id?: number | null }) => request<Destination>("POST", "/destinations", b),
-  updateDestination: (id: number, b: Partial<{ display_name: string; creator_id: number | null; enabled: boolean; settings: Partial<DestinationSettings> }>) =>
+  addDestination: (b: { platform: Platform; display_name: string; handle?: string; creator_id?: number | null }) => request<Destination>("POST", "/destinations", b),
+  updateDestination: (id: number, b: Partial<{ display_name: string; handle: string; creator_id: number | null; enabled: boolean; settings: Partial<DestinationSettings> }>) =>
     request<Destination>("PATCH", `/destinations/${id}`, b),
   deleteDestination: (id: number) => request<void>("DELETE", `/destinations/${id}`),
   funnel: () => request<Funnel>("GET", "/funnel"),
@@ -145,6 +168,19 @@ export const api = {
   cancelJob: (id: number) => request("POST", `/jobs/${id}/cancel`),
   retryJob: (id: number) => request("POST", `/jobs/${id}/retry`),
   audit: () => request<AuditEntry[]>("GET", "/audit"),
+  clips: (status: "ready" | "uploaded" | "expired" | "all") => request<ClipT[]>("GET", `/clips?status=${status}`),
+  updateOutput: (id: number, b: Partial<{ title: string; description: string; status: "ready" | "uploaded" }>) => request<ClipOutputT>("PATCH", `/outputs/${id}`, b),
+  saveOutput: (id: number) => request<{ path: string }>("POST", `/outputs/${id}/save`),
+  deleteClip: (id: number) => request<void>("DELETE", `/clips/${id}`),
+  mediaUrl: (id: number, download = false) => `/api/media/outputs/${id}?t=${encodeURIComponent(token())}${download ? "&download=true" : ""}`,
+  references: () => request<RefPost[]>("GET", "/references"),
+  addReference: (b: { url: string; creator_id?: number | null; source_id?: number | null }) => request<{ id: number }>("POST", "/references", b),
+  retryReference: (id: number, vod_url?: string) => request<RefPost>("POST", `/references/${id}/retry`, { vod_url: vod_url || null }),
+  checkSource: (id: number) => request<{ queued: boolean }>("POST", `/sources/${id}/check`),
+  notifications: () => request<NotifyState>("GET", "/notifications"),
+  saveNotifications: (b: Partial<{ webhook_url: string; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }>) => request<NotifyState>("PUT", "/notifications", b),
+  removeWebhook: () => request<void>("DELETE", "/notifications/webhook"),
+  testNotification: () => request<{ sent: boolean }>("POST", "/notifications/test"),
 };
 
 export interface ImportResult { added: number; skipped_duplicates: number; errors: { line: number; input: string; message: string }[] }

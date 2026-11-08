@@ -114,6 +114,6 @@ def test_dashboard_real_counts(client):
     d = client.get("/api/dashboard").json()
     assert d["accounts"]["sources_total"] == 3 and d["accounts"]["destinations_total"] == 4
     assert d["accounts"]["destinations_connected"] == 0
-    assert d["pipeline"]["clips_published"] is None
+    assert d["pipeline"]["ready_to_upload"] == 0 and d["monitoring"]["watching"] == 3 and d["monitoring"]["retention_days"] == 30
     assert d["storage"]["used_bytes"] > 0
     assert len(client.get("/api/audit").json()) > 0

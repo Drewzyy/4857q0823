@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from . import describe, notify
 from .api.system import load_settings
@@ -23,7 +23,7 @@ from .jobs import PermanentJobError
 from .media import match
 from .media.ffmpeg import FFmpegError, probe
 from .media.render import OutputFormat, render
-from .models import Clip, ClipOutput, Creator, DestinationAccount, ReferenceVideo, SourceAccount, VodAsset
+from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, ReferenceVideo, SourceAccount, VodAsset
 from .routing import resolve_destinations
 
 log = logging.getLogger("clippr.pipeline")
@@ -304,6 +304,8 @@ class Pipeline:
                     Path(v.features_path).unlink(missing_ok=True)
                 s.delete(v)
                 vods += 1
+            # Finished background jobs are only useful for a few days of history.
+            s.execute(delete(Job).where(Job.status.in_(("succeeded", "cancelled", "failed")), Job.finished_at <= now() - timedelta(days=7)))
         tmp = self.media / "tmp"
         if tmp.exists():
             for p in tmp.iterdir():

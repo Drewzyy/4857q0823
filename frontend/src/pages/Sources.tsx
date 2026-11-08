@@ -1,9 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, FolderPlus, Import, KeyRound, Pause, Pencil, Play, Plus, Search, Trash2, UserPlus, Users } from "lucide-react";
+import { AlertTriangle, ExternalLink, FolderPlus, Import, Pause, Pencil, Play, Plus, RefreshCw, Search, Trash2, UserPlus, Users } from "lucide-react";
 import { api, type Creator, type Folder, type ImportResult, type Platform, type Source } from "../lib/api";
-import { useConnect } from "../components/ConnectFlow";
-import { Avatar, ConfirmModal, CREATOR_COLORS, Empty, ErrorNote, Loading, Modal, relTime, StatusPill, Toggle, useToast } from "../components/ui";
+import { Avatar, ConfirmModal, CREATOR_COLORS, Empty, ErrorNote, Loading, Modal, relTime, Toggle, useToast } from "../components/ui";
 
 const SOURCE_PLATFORMS: Platform[] = ["tiktok", "youtube", "twitch", "instagram"];
 type Filter = { kind: "all" } | { kind: "creator"; id: number } | { kind: "folder"; id: number } | { kind: "nocreator" };
@@ -11,7 +10,6 @@ type Filter = { kind: "all" } | { kind: "creator"; id: number } | { kind: "folde
 export default function Sources() {
   const qc = useQueryClient();
   const toast = useToast();
-  const { connect, platforms } = useConnect();
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
   const [q, setQ] = useState("");
   const [monitoring, setMonitoring] = useState<"" | "active" | "paused">("");
@@ -37,17 +35,13 @@ export default function Sources() {
 
   const rows = sources.data ?? [];
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
-  const tiktokReady = platforms.find((p) => p.key === "tiktok");
   const ids = [...selected];
 
   return (
     <div className="page">
       <div className="page-head">
-        <div><h1>Source Accounts</h1><p>Clipping accounts and creators you learn from. Organize them by creator so each streamer's content stays in its own pipeline.</p></div>
+        <div><h1>Source Accounts</h1><p>Clipping accounts Vyral watches. When one posts, Vyral finds that moment in the creator's full stream and makes your own clip. Each account needs a creator, and each creator needs their stream channel.</p></div>
         <div className="row">
-          <button className="btn" onClick={() => connect("tiktok", { purpose: "source" })} title={tiktokReady?.configured ? "" : "Needs one-time TikTok setup"}>
-            <KeyRound size={14} />Authorize my TikTok
-          </button>
           <button className="btn" onClick={() => setModal("import")}><Import size={14} />Import</button>
           <button className="btn primary" onClick={() => setModal("add")}><Plus size={14} />Add account</button>
         </div>
@@ -112,12 +106,13 @@ export default function Sources() {
                 <thead><tr>
                   <th style={{ width: 32 }}><input type="checkbox" aria-label="Select all" checked={allSelected}
                     onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))} /></th>
-                  <th>Account</th><th>Creator</th><th>Folder</th><th>Videos</th><th>Routes</th><th>Last sync</th><th>Monitor</th><th />
+                  <th>Account</th><th>Creator</th><th>Folder</th><th title="New posts seen / clips made">Posts · clips</th><th>Routes</th><th>Last check</th><th>Watch</th><th />
                 </tr></thead>
                 <tbody>
                   {rows.map((s) => <SourceRow key={s.id} s={s} creators={creators.data ?? []} folders={folders.data ?? []}
                     selected={selected.has(s.id)} onSelect={(v) => { const n = new Set(selected); if (v) n.add(s.id); else n.delete(s.id); setSelected(n); }}
                     onUpdate={(b) => update.mutate({ id: s.id, b })}
+                    onCheck={() => api.checkSource(s.id).then(() => { toast("ok", `Checking @${s.username} now`); setTimeout(refresh, 4000); }).catch(onErr)}
                     onDelete={() => setConfirm({ title: "Remove account?", message: `@${s.username} and its funnel routes will be removed.`, run: () => api.deleteSource(s.id) })} />)}
                 </tbody>
               </table>
@@ -153,9 +148,9 @@ export default function Sources() {
   );
 }
 
-function SourceRow({ s, creators, folders, selected, onSelect, onUpdate, onDelete }: {
+function SourceRow({ s, creators, folders, selected, onSelect, onUpdate, onDelete, onCheck }: {
   s: Source; creators: Creator[]; folders: Folder[]; selected: boolean; onSelect: (v: boolean) => void;
-  onUpdate: (b: Parameters<typeof api.updateSource>[1]) => void; onDelete: () => void;
+  onUpdate: (b: Parameters<typeof api.updateSource>[1]) => void; onDelete: () => void; onCheck: () => void;
 }) {
   return (
     <tr>
@@ -165,17 +160,23 @@ function SourceRow({ s, creators, folders, selected, onSelect, onUpdate, onDelet
         <div style={{ minWidth: 0 }}>
           <div className="row" style={{ gap: 6 }}><strong className="ellipsis">@{s.username}</strong>{s.authorized && <span className="pill ok nodot" title="You authorized this account">Authorized</span>}</div>
           <div className="small faint ellipsis">{s.display_name || s.platform}</div>
+          {!s.watching_supported && <div className="small faint">Vyral can't watch {s.platform} accounts yet</div>}
+          {s.creator && (!s.creator.clip_permission || s.creator.vod_channels.length === 0) && (
+            <div className="small" style={{ color: "var(--warn)" }}><AlertTriangle size={11} /> {s.creator.vod_channels.length === 0 ? `Add ${s.creator.name}'s stream channel` : `Confirm permission for ${s.creator.name}`}</div>)}
+          {!s.creator && <div className="small" style={{ color: "var(--warn)" }}><AlertTriangle size={11} /> Pick a creator</div>}
+          {s.last_error && <div className="small" style={{ color: "#ff8a8d" }} title={s.last_error}>{s.last_error.slice(0, 70)}</div>}
         </div>
       </div></td>
-      <td><select className="select" style={{ minWidth: 130 }} aria-label="Creator" value={s.creator?.id ?? ""} onChange={(e) => onUpdate({ creator_id: e.target.value ? Number(e.target.value) : null })}>
+      <td><select className="select" style={{ minWidth: 130 }} aria-label={`Creator for @${s.username}`} value={s.creator?.id ?? ""} onChange={(e) => onUpdate({ creator_id: e.target.value ? Number(e.target.value) : null })}>
         <option value="">None</option>{creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td>
-      <td><select className="select" style={{ minWidth: 110 }} aria-label="Folder" value={s.folder?.id ?? ""} onChange={(e) => onUpdate({ folder_id: e.target.value ? Number(e.target.value) : null })}>
+      <td><select className="select" style={{ minWidth: 110 }} aria-label={`Folder for @${s.username}`} value={s.folder?.id ?? ""} onChange={(e) => onUpdate({ folder_id: e.target.value ? Number(e.target.value) : null })}>
         <option value="">None</option>{folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></td>
-      <td><span className="faint" title="Video collection starts in Milestone 5">{s.videos_discovered ?? "—"}</span></td>
+      <td title={s.baseline_done ? "" : "Not checked yet"}>{s.videos_discovered === null ? <span className="faint">—</span> : `${s.videos_discovered} · ${s.videos_analyzed}`}</td>
       <td>{s.route_count}</td>
-      <td className="small muted">{relTime(s.last_synced_at)}</td>
-      <td><div className="row"><Toggle label={`Monitor ${s.username}`} checked={s.monitoring === "active"} onChange={(v) => onUpdate({ monitoring: v ? "active" : "paused" })} /><StatusPill status={s.monitoring} /></div></td>
+      <td className="small muted" title={s.next_check_at ? `Next check ${relTime(s.next_check_at)}` : ""}>{relTime(s.last_synced_at)}</td>
+      <td><div className="row"><Toggle label={`Monitor ${s.username}`} checked={s.monitoring === "active"} onChange={(v) => onUpdate({ monitoring: v ? "active" : "paused" })} /></div></td>
       <td><div className="row" style={{ justifyContent: "flex-end" }}>
+        {s.watching_supported && <button className="btn ghost icon" aria-label={`Check @${s.username} now`} title="Check now" onClick={onCheck}><RefreshCw size={14} /></button>}
         {s.profile_url && <a className="btn ghost icon" href={s.profile_url} target="_blank" rel="noopener noreferrer" aria-label="Open profile"><ExternalLink size={14} /></a>}
         <button className="btn ghost icon" aria-label={`Remove ${s.username}`} onClick={onDelete}><Trash2 size={14} /></button>
       </div></td>
@@ -228,7 +229,7 @@ function AddSourceModal({ creators, folders, defaults, onClose, onDone }: { crea
             <select id="src-folder" className="select" value={folderId ?? ""} onChange={(e) => setFolderId(e.target.value ? Number(e.target.value) : null)}>
               <option value="">None</option>{folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div>
         </div>
-        <p className="small faint">Following or adding an account doesn't give permission to reuse its videos. AI Clipper uses these accounts as references and works from footage you're authorized to use.</p>
+        <p className="small faint">Vyral never reposts this account's videos. It uses their posts to find moments, then cuts your clip from the creator's original stream.</p>
       </form>
     </Modal>
   );
@@ -276,20 +277,31 @@ function ImportModal({ creators, onClose, onDone }: { creators: Creator[]; onClo
 function CreatorModal({ creator, onClose, onDone, onDelete }: { creator: Creator | null; onClose: () => void; onDone: () => void; onDelete?: () => void }) {
   const [name, setName] = useState(creator?.name ?? "");
   const [color, setColor] = useState(creator?.color ?? CREATOR_COLORS[Math.floor(Math.random() * CREATOR_COLORS.length)]);
+  const [channels, setChannels] = useState((creator?.vod_channels ?? []).join("\n"));
+  const [permission, setPermission] = useState(creator?.clip_permission ?? false);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
-    try { if (creator) await api.updateCreator(creator.id, { name, color }); else await api.createCreator({ name, color }); onDone(); onClose(); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    const vod_channels = channels.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+    try {
+      if (creator) await api.updateCreator(creator.id, { name, color, vod_channels, clip_permission: permission });
+      else await api.createCreatorFull({ name, color, vod_channels, clip_permission: permission });
+      onDone(); onClose();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   return (
-    <Modal open onClose={onClose} title={creator ? "Edit creator" : "New creator"} footer={<>
+    <Modal open wide onClose={onClose} title={creator ? "Edit creator" : "New creator"} footer={<>
       {onDelete && <button className="btn danger" onClick={onDelete} style={{ marginRight: "auto" }}><Trash2 size={14} />Delete</button>}
       <button className="btn ghost" onClick={onClose}>Cancel</button>
       <button className="btn primary" disabled={!name.trim()} onClick={save}>Save</button>
     </>}>
       <form onSubmit={(e) => { e.preventDefault(); if (name.trim()) void save(); }} className="stack">
         <div className="field"><label htmlFor="cr-name">Streamer / creator name</label>
-          <input id="cr-name" className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Streamer A" />{error && <span className="error">{error}</span>}</div>
+          <input id="cr-name" className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Streamer A" /></div>
+        <div className="field"><label htmlFor="cr-ch">Where their full streams are (one per line)</label>
+          <textarea id="cr-ch" className="textarea mono" rows={3} value={channels} onChange={(e) => setChannels(e.target.value)} placeholder={"https://www.twitch.tv/streamera\nhttps://www.youtube.com/@streamera"} />
+          <span className="hint">Twitch or YouTube channel links. Vyral searches the latest streams on these for each new post.</span></div>
+        <label className="check"><input type="checkbox" checked={permission} onChange={(e) => setPermission(e.target.checked)} />I have permission to clip this creator's streams (for example, I'm in their clipping program)</label>
+        {error && <span className="error small" style={{ color: "#ff8a8d" }}>{error}</span>}
         <div className="field"><span className="label-text">Color</span><div className="row">
           {CREATOR_COLORS.map((c) => <button type="button" key={c} aria-label={`Color ${c}`} onClick={() => setColor(c)}
             style={{ width: 24, height: 24, borderRadius: 7, background: c, border: color === c ? "2px solid white" : "2px solid transparent", cursor: "pointer" }} />)}

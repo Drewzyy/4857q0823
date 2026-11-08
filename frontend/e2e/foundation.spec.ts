@@ -1,151 +1,134 @@
 import { expect, test, type Page } from "@playwright/test";
 
+const nav = (page: Page, name: string) => page.getByRole("navigation").getByRole("link", { name }).click();
+
 async function dragRoute(page: Page, from: string, to: string) {
   const handle = page.locator(".react-flow__node", { hasText: from }).locator(".react-flow__handle-right");
-  const target = page.locator(".react-flow__node", { hasText: to });
+  const target = page.locator(".react-flow__node", { hasText: to }).locator(".react-flow__handle-left");
   const a = (await handle.boundingBox())!;
   const b = (await target.boundingBox())!;
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
   await page.mouse.down();
-  await page.mouse.move(b.x + 20, b.y + b.height / 2, { steps: 12 });
-  await page.mouse.move(b.x + 12, b.y + b.height / 2, { steps: 3 });
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 15 });
   await page.mouse.up();
 }
 
-test("accounts, funnel and settings work end to end and persist", async ({ page }) => {
+test("a clip made automatically is ready to upload with captions per page", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  await expect(page.getByText("Get started")).toBeVisible();
-  await expect(page.getByText("Running locally")).toBeVisible();
+  await expect(page.locator(".brand")).toHaveText("Vyral");
+  await expect(page.locator(".stat", { hasText: "Ready to upload" }).locator(".value")).toHaveText("2");
+  await expect(page.getByRole("navigation").getByRole("link", { name: /Ready to Upload/ })).toContainText("2");
 
-  // --- creators + sources
-  await page.getByRole("navigation").getByRole("link", { name: "Source Accounts" }).click();
-  for (const name of ["Streamer A", "Streamer B"]) {
-    await page.getByRole("button", { name: "New creator" }).click();
-    await page.getByLabel("Streamer / creator name").fill(name);
-    await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.locator(".filter-btn", { hasText: name })).toBeVisible();
-  }
-  await page.getByRole("button", { name: "Add account" }).first().click();
-  await page.getByLabel("Username or profile link").fill("https://www.tiktok.com/@streamera.clips");
-  await expect(page.getByText("Detected a tiktok link.")).toBeVisible();
-  await page.getByLabel("Creator", { exact: true }).selectOption({ label: "Streamer A" });
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(page.getByRole("cell", { name: /@streamera\.clips/ })).toBeVisible();
+  await nav(page, "Activity");
+  await expect(page.getByText("Clip ready", { exact: true })).toBeVisible();
+  await expect(page.getByText("@streamera.clips")).toBeVisible();
 
-  // invalid input shows a clear error
-  await page.getByRole("button", { name: "Add account" }).first().click();
-  await page.getByLabel("Username or profile link").fill("https://vm.tiktok.com/abc/");
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(page.getByText(/short links can't be read offline/i)).toBeVisible();
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await nav(page, "Ready to Upload");
+  const card = page.locator(".card", { hasText: "He did NOT just say that" }).first();
+  await expect(card.getByText(/Cut from/)).toBeVisible();
+  await expect(card.getByText(/Deletes in 30 days/)).toBeVisible();
 
-  // bulk import
-  await page.getByRole("button", { name: "Import" }).click();
-  await page.getByLabel("Paste handles or profile links, one per line").fill("@streamerb.clips\n@streamera.clips\nbad name!");
-  await page.getByLabel("Assign to creator").selectOption({ label: "Streamer B" });
-  await page.getByRole("button", { name: "Import list" }).click();
-  await expect(page.getByText("1 added")).toBeVisible();
-  await expect(page.getByText(/1 already present, 1 skipped/)).toBeVisible();
-  await page.getByRole("button", { name: "Done" }).click();
+  // The preview plays the real rendered file.
+  const video = card.locator("video");
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1 && v.duration > 10)).toBe(true);
+  expect(await video.evaluate((v: HTMLVideoElement) => v.videoHeight)).toBe(1920);
 
-  // pause monitoring, filter
-  await page.getByRole("switch", { name: "Monitor streamerb.clips" }).click();
-  await page.getByRole("button", { name: "Paused", exact: true }).click();
-  await expect(page.getByRole("cell", { name: /@streamerb\.clips/ })).toBeVisible();
-  await expect(page.getByRole("cell", { name: /@streamera\.clips/ })).toHaveCount(0);
-  await page.getByRole("button", { name: "All", exact: true }).click();
+  // TikTok tab: caption without the source's #fyp, with our hashtags.
+  await card.getByRole("tab", { name: /Streamer A TikTok/ }).click();
+  const caption = card.getByLabel("Caption");
+  await expect(caption).toHaveValue(/^He did NOT just say that/);
+  await expect(caption).toHaveValue(/#gaming #StreamerA/);
+  await expect(caption).not.toHaveValue(/#fyp/);
+  await card.getByRole("button", { name: "Save to computer" }).click();
+  await expect(page.getByText(/Saved to .*Downloads.Vyral.*Streamer A TikTok - He did NOT just say that\.mp4/)).toBeVisible();
 
-  // --- destinations (planned, since no platform logins exist in CI)
-  await page.getByRole("navigation").getByRole("link", { name: "Destination Accounts" }).click();
-  for (const [plat, name, creator] of [["TikTok", "Streamer A TikTok", "Streamer A"], ["YouTube", "Streamer A YouTube", "Streamer A"], ["TikTok", "Streamer B TikTok", "Streamer B"]]) {
-    await page.getByRole("button", { name: "Plan without logging in" }).click();
-    await page.getByLabel("Platform").selectOption({ label: plat });
-    await page.getByLabel("Name").fill(name);
-    await page.getByLabel("Creator").selectOption({ label: creator });
-    await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect(page.getByText(name, { exact: true })).toBeVisible();
-  }
-
-  // per-destination settings persist
-  await page.locator(".card", { hasText: "Streamer A YouTube" }).getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Hashtags").fill("gaming #clips");
-  await page.getByLabel("Frame rate").selectOption("60");
-  await page.getByRole("button", { name: "Add slot" }).click();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText("Settings saved")).toBeVisible();
+  // Edit the caption, it sticks.
+  await caption.fill("my own caption #gaming");
+  await caption.blur();
   await page.reload();
-  await page.locator(".card", { hasText: "Streamer A YouTube" }).getByRole("button", { name: "Settings" }).click();
-  await expect(page.getByLabel("Hashtags")).toHaveValue("#gaming #clips");
-  await expect(page.getByLabel("Frame rate")).toHaveValue("60");
-  await expect(page.getByLabel("Weekday")).toHaveCount(1);
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.locator(".card", { hasText: "He did NOT just say that" }).first().getByRole("tab", { name: /Streamer A TikTok/ }).click();
+  await expect(page.getByLabel("Caption")).toHaveValue("my own caption #gaming");
 
-  // connect without setup opens the guided one-time setup with the exact redirect to copy
-  await page.locator(".card", { hasText: "Facebook & Instagram" }).getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("heading", { name: /One-time Facebook & Instagram setup/ })).toBeVisible();
-  await expect(page.locator(".copybox code")).toHaveText("http://127.0.0.1:8799/oauth/callback/meta");
-  await expect(page.getByRole("button", { name: "Continue to Facebook & Instagram login" })).toBeDisabled();
-  await page.getByRole("button", { name: "Cancel" }).click();
+  // YouTube tab has a separate title and #shorts.
+  await page.getByRole("tab", { name: /Streamer A YouTube/ }).click();
+  await expect(page.getByLabel("Title")).toHaveValue("He did NOT just say that");
+  await expect(page.getByLabel("Description")).toHaveValue(/#shorts/);
 
-  // --- funnel
-  await page.getByRole("navigation").getByRole("link", { name: "Account Funnel" }).click();
-  await expect(page.locator(".react-flow__node")).toHaveCount(5);
-  await dragRoute(page, "@streamera.clips", "Streamer A TikTok");
-  await expect(page.locator(".react-flow__edge")).toHaveCount(1);
+  // Mark TikTok uploaded -> it moves to the Uploaded tab, YouTube stays Ready.
+  await page.getByRole("tab", { name: /Streamer A TikTok/ }).click();
+  await page.getByRole("button", { name: "Mark uploaded" }).click();
+  await expect(page.getByText("Marked as uploaded")).toBeVisible();
+  await expect(page.getByRole("tab", { name: /Streamer A TikTok/ })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Uploaded" }).click();
+  await expect(page.getByRole("tab", { name: /Streamer A TikTok/ })).toBeVisible();
+});
 
-  // cross-creator link asks for confirmation
+test("destinations are just names and handles you can edit", async ({ page }) => {
+  await page.goto("/destinations");
+  const card = page.locator(".card", { hasText: "Streamer A TikTok" });
+  await expect(card.getByText("@streamera.tt")).toBeVisible();
+  await card.getByRole("button", { name: "Rename Streamer A TikTok" }).click();
+  await page.getByLabel("Destination name").fill("Main TikTok");
+  await page.getByLabel("Destination handle").fill("https://www.tiktok.com/@main.page");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Main TikTok")).toBeVisible();
+  await expect(page.getByText("@main.page")).toBeVisible();
+
+  await page.getByRole("button", { name: "Add destination" }).first().click();
+  await page.getByLabel("Platform").selectOption({ label: "Instagram" });
+  await page.getByLabel("Name", { exact: true }).fill("Streamer B Insta");
+  await page.getByLabel("Handle", { exact: true }).fill("@b.insta");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.reload();
+  await expect(page.getByText("Streamer B Insta")).toBeVisible();
+  await expect(page.getByText("Main TikTok")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Connect/ })).toHaveCount(0);
+});
+
+test("creators carry their stream channels and permission, sources show watch status", async ({ page }) => {
+  await page.goto("/sources");
+  await expect(page.getByRole("button", { name: "Check @streamera.clips now" })).toBeVisible();
+  await page.getByRole("button", { name: "New creator" }).click();
+  await page.getByLabel("Streamer / creator name").fill("Streamer B");
+  await page.getByLabel(/Where their full streams are/).fill("https://evil.example/x");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText(/evil.example/)).toBeVisible();
+  await page.getByLabel(/Where their full streams are/).fill("twitch.tv/streamerb");
+  await page.getByLabel(/I have permission to clip/).check();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.locator(".filter-btn", { hasText: "Streamer B" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Add account" }).first().click();
+  await page.getByLabel("Username or profile link").fill("@streamerb.clips");
+  await page.getByLabel("Creator", { exact: true }).selectOption({ label: "Streamer B" });
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Check @streamerb.clips now" })).toBeVisible();
+
+  // Funnel: dragging B's source onto A's page asks first.
+  await nav(page, "Account Funnel");
   await dragRoute(page, "@streamerb.clips", "Streamer A YouTube");
   await expect(page.getByRole("heading", { name: "Mix creators?" })).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.locator(".react-flow__edge")).toHaveCount(1);
+});
 
-  await page.getByRole("button", { name: "Auto-route by creator" }).click();
-  await expect(page.getByText(/Created 2 route/)).toBeVisible();
-  await expect(page.locator(".react-flow__edge")).toHaveCount(3);
-
-  // routing preview for a source
-  await page.locator(".react-flow__node", { hasText: "@streamera.clips" }).click();
-  const preview = page.locator(".card", { hasText: "Clips from @streamera.clips go to" });
-  await expect(preview.getByText("Streamer A TikTok")).toBeVisible();
-  await expect(preview.getByText("Streamer A YouTube")).toBeVisible();
-  await expect(preview.getByText("Streamer B TikTok")).toHaveCount(0);
-
-  // disable one route from the side panel
-  await page.locator(".funnel-side .filter-btn", { hasText: "@streamera.clips → Streamer A YouTube" }).click();
-  await page.getByRole("switch", { name: "Route enabled" }).click();
-  await expect(page.locator(".funnel-side .filter-btn", { hasText: "Streamer A YouTube" }).getByText("off")).toBeVisible();
-
+test("discord and storage settings", async ({ page }) => {
+  await page.goto("/settings?tab=notifications");
+  await page.getByLabel("Discord webhook URL").fill("https://example.com/not-a-webhook");
+  await page.getByRole("button", { name: "Save & test" }).click();
+  await expect(page.getByText(/isn't a Discord webhook link/)).toBeVisible();
+  await page.getByRole("switch", { name: "A source account posts a new video" }).click();
   await page.reload();
-  await expect(page.locator(".react-flow__edge")).toHaveCount(3);
+  await expect(page.getByRole("switch", { name: "A source account posts a new video" })).not.toBeChecked();
 
-  // --- settings persist
-  await page.getByRole("navigation").getByRole("link", { name: "Settings" }).click();
-  await page.getByRole("tab", { name: "AI, costs & processing" }).click();
-  await page.getByLabel("Monthly budget (USD)").fill("42");
+  await page.getByRole("tab", { name: "Monitoring & storage" }).click();
+  await page.getByLabel(/Delete clips after/).fill("14");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText("Settings saved")).toBeVisible();
   await page.reload();
-  await page.getByRole("tab", { name: "AI, costs & processing" }).click();
-  await expect(page.getByLabel("Monthly budget (USD)")).toHaveValue("42");
-  await page.getByRole("tab", { name: "Security & data" }).click();
-  await expect(page.getByText("route.auto_created")).toBeVisible();
-
-  // --- dashboard reflects real data
-  await page.keyboard.press("Control+1");
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  const routes = page.locator(".stat", { hasText: "Active routes" });
-  await expect(routes.locator(".value")).toHaveText("2");
-  await expect(page.locator(".stat", { hasText: "Published clips" }).locator(".value")).toHaveText("—");
-});
-
-test("unbuilt modules say so instead of faking it", async ({ page }) => {
-  await page.goto("/editor");
-  await expect(page.getByText("Not started · Milestone 3")).toBeVisible();
-  await expect(page.locator(".main button")).toHaveCount(0);
+  await expect(page.getByLabel(/Delete clips after 14 days/)).toBeVisible();
 });
 
 test("the API refuses requests without the window token", async ({ request }) => {
-  const r = await request.get("/api/sources");
-  expect(r.status()).toBe(401);
+  expect((await request.get("/api/sources")).status()).toBe(401);
+  expect((await request.get("/api/media/outputs/1")).status()).toBe(401);
 });

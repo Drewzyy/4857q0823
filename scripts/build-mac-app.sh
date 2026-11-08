@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Full macOS build: UI -> sidecar -> .app/.dmg. Requires Xcode CLT, Rust, Node 20+, Python 3.11+.
+# Local macOS build (the GitHub workflow does the same for Mac and Windows). Output: .dmg
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 (cd "$ROOT/frontend" && npm ci && npm run build)
-"$ROOT/scripts/build-backend.sh"
-(cd "$ROOT/desktop" && npm ci && npx tauri build)
-echo "Built: $ROOT/desktop/src-tauri/target/release/bundle/"
+(cd "$ROOT/backend" && python3 -m pip install -e . pyinstaller)
+python3 "$ROOT/scripts/build_backend.py"
+(cd "$ROOT/desktop" && npm ci && npx tauri build --bundles dmg)
