@@ -26,7 +26,7 @@ from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
 from .media.transcribe import TranscribeError
 from .media.render import OutputFormat, render
-from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, ReferenceVideo, SourceAccount, VodAsset
+from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import resolve_destinations, source_creator_ids
 from .schemas import OverlaySettings
 
@@ -396,6 +396,29 @@ class Pipeline:
                 shutil.rmtree(work, ignore_errors=True)
         return {"rendered": done}
 
+    # ---------- analytics ----------
+    def fetch_metrics(self, output_id: int) -> dict:
+        """Read an uploaded post's public numbers (TikTok, YouTube) and store a snapshot."""
+        with self.ctx.db.session() as s:
+            o = s.get(ClipOutput, output_id)
+            if not o or not o.post_url:
+                return {"skipped": True}
+            url = o.post_url
+        post = self.ctx.fetcher.post_details(url)
+        with self.ctx.db.session() as s:
+            s.add(MetricSnapshot(output_id=output_id, views=post.views, likes=post.likes, comments=post.comments, shares=post.shares))
+        return {"views": post.views}
+
+    def refresh_metrics(self) -> dict:
+        """Every few hours: refresh numbers for posts uploaded in the last 60 days."""
+        since = now() - timedelta(days=60)
+        with self.ctx.db.session() as s:
+            ids = [o.id for o in s.scalars(select(ClipOutput).where(ClipOutput.post_url.is_not(None), ClipOutput.platform.in_(("tiktok", "youtube")),
+                                                                        ClipOutput.uploaded_at >= since)).unique()]
+        for i, oid in enumerate(ids):
+            self.ctx.jobs.enqueue("metrics.fetch", {"output_id": oid}, max_attempts=2, delay=i * random.uniform(3, 8))
+        return {"queued": len(ids)}
+
     # ---------- storage ----------
     def cleanup(self) -> dict:
         """Delete clips and cached media older than the retention period."""
@@ -443,6 +466,9 @@ def register(ctx: Any) -> Pipeline:
     q.register("notify.discord", lambda jc, pl: p.send_discord(pl))
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())
     q.register("clip.rerender", lambda jc, pl: p.rerender(pl["output_ids"]))
+    q.register("metrics.fetch", lambda jc, pl: p.fetch_metrics(pl["output_id"]))
+    q.register("metrics.refresh", lambda jc, pl: p.refresh_metrics())
+    q.every("metrics.refresh", 3 * 3600)
     q.every("monitor.tick", 60)
     q.every("storage.cleanup", 6 * 3600)
     q.heavy = {"clip.build", "clip.rerender"}

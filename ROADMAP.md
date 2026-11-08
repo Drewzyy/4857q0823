@@ -1,5 +1,12 @@
 # Roadmap
 
+## In progress (Nov 2026)
+
+1. **Analytics** (building now): after uploading, paste the post link on the clip (Ready to Upload). Vyral reads public views/likes/comments/shares for TikTok and YouTube every few hours (yt-dlp, no login) and stores snapshots; Instagram/Facebook numbers can be typed in. Analytics page: totals, by platform/streamer/page, by clip length, top clips, views over time. Unavailable shown as unavailable, never 0.
+2. **Video editor** (next): per-clip editor opened from Ready to Upload: trim start/end within the downloaded cut, zoom + pan, speed, extra text overlays with timing, live 9:16 preview (blurred background, title, captions), undo/redo, then re-render. Edit state stored on the clip; words re-timed from the trim.
+
+Done this round: real platform logos, Kick stream channels, one clipping account covering several streamers, auto-updates via Drewzyy/vyral-releases (latest.json).
+
 ## 0.2.0: Vyral (done)
 
 | Feature | Status |

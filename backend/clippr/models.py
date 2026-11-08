@@ -270,7 +270,22 @@ class ClipOutput(Base):
     format: Mapped[dict[str, Any]] = mapped_column(default=dict)
     render_state: Mapped[str] = mapped_column(String(16), default="ready")  # ready | rendering | failed
     render_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    post_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # where you uploaded it (for analytics)
     uploaded_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     destination: Mapped[DestinationAccount | None] = relationship(lazy="joined")
+
+
+class MetricSnapshot(Base):
+    """Public numbers for an uploaded clip at a point in time."""
+
+    __tablename__ = "metric_snapshots"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    output_id: Mapped[int] = mapped_column(ForeignKey("clip_outputs.id", ondelete="CASCADE"), index=True)
+    ts: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    views: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    likes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    shares: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(10), default="auto")  # auto | manual

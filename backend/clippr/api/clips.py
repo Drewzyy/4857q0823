@@ -39,7 +39,7 @@ def _output(o: ClipOutput) -> dict:
             "width": o.width, "height": o.height, "fps": o.fps, "size_bytes": o.size_bytes,
             "available": bool(o.file_path and Path(o.file_path).exists()), "uploaded_at": _dt(o.uploaded_at),
             "video_title": o.video_title, "overlay": OverlaySettings.model_validate(o.overlay or {}).model_dump(),
-            "render_state": o.render_state, "render_error": o.render_error,
+            "render_state": o.render_state, "render_error": o.render_error, "post_url": o.post_url,
             # Changes whenever the file is re-rendered, so the preview reloads.
             "version": Path(o.file_path).name if o.file_path else None}
 

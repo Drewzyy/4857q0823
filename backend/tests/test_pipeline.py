@@ -303,3 +303,37 @@ def test_one_clipping_account_covering_several_streamers(env):
     # Removing one streamer keeps the other.
     r = c.patch(f"/api/sources/{src['id']}", json={"creator_ids": [b]}).json()
     assert [x["name"] for x in r["creators"]] == ["Streamer B"]
+
+
+def test_analytics_from_post_links(env):
+    ctx, c, fake = env
+    cid, sid, tt, yt = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("an1", "https://www.tiktok.com/@a.clips/video/an1", "big moment")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    outs = {o["platform"]: o for o in c.get("/api/clips").json()[0]["outputs"]}
+    # Nothing uploaded yet: numbers are unavailable, not zero.
+    a = c.get("/api/analytics").json()
+    assert a["uploaded"] == 0 and a["totals"]["views"] is None and a["clips_made"] == 1
+    assert c.put(f"/api/outputs/{outs['tiktok']['id']}/post", json={"post_url": "https://www.youtube.com/shorts/x"}).status_code == 422
+    fake.post_details = lambda url: RemotePost("p", url, "t", views=12000, likes=900, comments=40, shares=60)
+    r = c.put(f"/api/outputs/{outs['tiktok']['id']}/post", json={"post_url": "https://www.tiktok.com/@streamera.tt/video/999"})
+    assert r.json()["auto"] is True
+    drain(ctx)  # reads the post's public numbers
+    c.put(f"/api/outputs/{outs['youtube']['id']}/post", json={"post_url": "https://youtube.com/shorts/abc"})
+    fake.post_details = lambda url: RemotePost("p", url, "t", views=3000, likes=100)
+    drain(ctx)
+    a = c.get("/api/analytics").json()
+    assert a["uploaded"] == 2 and a["tracked"] == 2
+    assert a["totals"]["views"] == 15000 and a["totals"]["likes"] == 1000
+    assert a["by_platform"][0]["key"] == "tiktok" and a["by_platform"][0]["views"] == 12000
+    assert a["by_creator"][0]["label"] == "Streamer A" and a["top"][0]["views"] == 12000
+    assert a["by_length"][0]["label"] == "20 to 40 s"
+    assert c.get("/api/analytics", params={"platform": "youtube"}).json()["totals"]["views"] == 3000
+    # Manual numbers for a platform Vyral can't read.
+    assert c.post(f"/api/outputs/{outs['tiktok']['id']}/metrics", json={}).status_code == 422
+    c.post(f"/api/outputs/{outs['tiktok']['id']}/metrics", json={"views": 20000})
+    assert c.get("/api/analytics").json()["totals"]["views"] == 23000
+    assert ctx.pipeline.refresh_metrics()["queued"] == 2
