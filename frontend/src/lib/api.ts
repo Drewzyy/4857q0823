@@ -62,7 +62,7 @@ export interface Dashboard {
 
 export interface AppSettings {
   captions: { accuracy: "fast" | "accurate" | "best"; language: string };
-  monitoring: { enabled: boolean; interval_minutes: number; streams_to_search: number; max_clip_seconds: number };
+  monitoring: { enabled: boolean; interval_minutes: number; streams_to_search: number; max_clip_seconds: number; twitch_min_views: number; twitch_clips_per_check: number };
   storage: { retention_days: number; max_cache_gb: number; keep_original_imports: boolean };
   ai: { prefer_local_models: boolean; monthly_budget_usd: number; hard_stop_at_budget: boolean; warn_at_percent: number; transcription: string; text_model_tier: string };
   processing: { max_concurrent_jobs: number; quality: string };
@@ -71,7 +71,7 @@ export interface AppSettings {
 }
 export interface RefPost {
   id: number; platform: string; url: string; title: string; thumbnail_url: string | null; posted_at: string | null;
-  status: "new" | "processing" | "ready" | "no_match" | "needs_setup" | "failed" | "baseline"; status_detail: string;
+  status: "new" | "processing" | "ready" | "no_match" | "needs_setup" | "failed" | "baseline" | "duplicate"; status_detail: string;
   source: { id: number; username: string } | null; creator: { id: number; name: string; color: string } | null;
   vod_url: string | null; vod_start: number | null; vod_end: number | null; match_confidence: number | null;
   views: number | null; likes: number | null; created_at: string; updated_at: string;

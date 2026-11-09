@@ -24,8 +24,8 @@ from .jobs import PermanentJobError
 from .media import match, overlay
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
-from .media.transcribe import TranscribeError
 from .media.render import OutputFormat, render
+from .media.transcribe import TranscribeError
 from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import resolve_destinations, source_creator_ids
 from .schemas import OverlaySettings
@@ -97,7 +97,8 @@ class Pipeline:
             if not src or src.monitoring != "active":
                 return {"skipped": True}
             platform, username, profile = src.platform, src.username, src.profile_url
-            interval = load_settings(s).monitoring.interval_minutes
+            mon = load_settings(s).monitoring
+            interval = mon.interval_minutes
         try:
             posts = self.ctx.fetcher.recent_posts(platform, username, profile, POSTS_PER_CHECK)
         except FetchError as e:
@@ -114,9 +115,14 @@ class Pipeline:
             first = not src.baseline_done
             known = set(s.scalars(select(ReferenceVideo.external_id).where(ReferenceVideo.platform == platform,
                                                                             ReferenceVideo.external_id.in_([p.id for p in posts]))))
-            for p in reversed(posts):  # oldest first
-                if p.id in known:
-                    continue
+            fresh = [p for p in posts if p.id not in known]
+            if platform == "twitch":
+                # Viewers clip the best moments; take the most-watched few. Clips below the bar aren't stored,
+                # so they're looked at again on the next check once more people have seen them.
+                fresh = [p for p in fresh if (p.views or 0) >= mon.twitch_min_views][:mon.twitch_clips_per_check]
+            else:
+                fresh.reverse()  # oldest first
+            for p in fresh:  # Twitch: most-watched first, so the best clip of a moment is the one that's made
                 # The first successful check only skips what was posted before the account was added,
                 # so posts made while earlier checks were failing still get clipped.
                 is_new = not first or bool(p.posted_at and p.posted_at > src.created_at)
@@ -219,7 +225,8 @@ class Pipeline:
                 return self._stop(rid, "needs_setup", why, account, ref.url)
             # Streamers named in the caption, hashtags or @mentions are searched first.
             candidates = identify.rank_candidates(
-                [(c.id, c.name, [vod_override] if vod_override else list(c.vod_channels or [])) for c in usable], ref.title or "")
+                [(c.id, c.name, [vod_override] if vod_override else list(c.vod_channels or [])) for c in usable],
+                f"{ref.title or ''} {account or ''}")  # a Twitch clip's own channel, or a page named after a streamer, counts too
             if src:
                 dests = [r.destination for r in resolve_destinations(s, src.id)]
             else:  # a pasted link goes to the matched streamer's pages and to pages not tied to any streamer
@@ -230,6 +237,7 @@ class Pipeline:
                 where = f"@{account}" if account else usable[0].name
                 return self._stop(rid, "needs_setup", f"Route {where} to at least one destination in the Account Funnel.", account, ref.url)
             all_dests = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {}), d.creator_id) for d in dests]
+            from_twitch = ref.platform == "twitch"
             ref_url, ref_title = ref.url, ref.title
         self._set(rid, "processing", "Listening to the post")
         work = self._dir("tmp") / f"build-{rid}-{random.randrange(1 << 30)}"
@@ -258,6 +266,13 @@ class Pipeline:
                 return self._stop(rid, "no_match", f"Couldn't find this moment in {names}'s last {searched} stream(s). "
                                   "If it's from an older stream, paste that stream's link with Retry.", account, ref_url)
             vod, m, matched_id, creator_name = found
+            # Many viewers clip the same Twitch moment: make it once.
+            with self.ctx.db.session() as s:
+                for c in s.scalars(select(Clip).where(Clip.vod_url == vod.url, Clip.vod_start.is_not(None))) if from_twitch else []:
+                    overlap = min(c.vod_end, m.end) - max(c.vod_start, m.start)
+                    if overlap > 0.5 * min(c.vod_end - c.vod_start, m.end - m.start):
+                        self._set(rid, "duplicate", f"Same moment as \"{c.title}\", which Vyral already made")
+                        return {"status": "duplicate", "clip_id": c.id}
             # Only this streamer's pages (and pages not tied to any streamer) get the clip.
             dest_info = [d[:5] for d in all_dests if d[5] in (None, matched_id)]
             if not dest_info:
@@ -376,6 +391,11 @@ class Pipeline:
             overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts))
         return render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan, speed=speed)
 
+    @staticmethod
+    def _render_inputs(o: ClipOutput, clip: Clip) -> str:
+        """Everything a re-render depends on, to tell whether a finished render is still the latest wanted."""
+        return json.dumps([o.format, o.overlay, o.video_title, clip.words, clip.edit], sort_keys=True, default=str)
+
     def rerender(self, output_ids: list[int]) -> dict:
         """Re-render outputs after their text or style was edited. Each gets its own new file."""
         done = 0
@@ -389,8 +409,8 @@ class Pipeline:
                     continue
                 job = (Path(clip.source_path), Path(clip.files_dir), dict(o.format or {}), dict(o.overlay or {}), o.video_title,
                        [Word.from_dict(w) for w in clip.words or []], clip.source_start or 0.0, clip.source_duration or 0.0, o.file_path,
-                       dict(clip.edit) if clip.edit else None)
-            source, cdir, fmt_raw, ov, vtitle, words, start, dur, old, edit = job
+                       dict(clip.edit) if clip.edit else None, self._render_inputs(o, clip))
+            source, cdir, fmt_raw, ov, vtitle, words, start, dur, old, edit, inputs = job
             ov = OverlaySettings.model_validate(ov or {}).model_dump()
             out = cdir / f"output-{oid}-{int(now().timestamp() * 1000)}.mp4"
             work = self._dir("tmp") / f"rerender-{oid}-{random.randrange(1 << 30)}"
@@ -399,6 +419,10 @@ class Pipeline:
                 info = probe(out)
                 with self.ctx.db.session() as s:
                     o = s.get(ClipOutput, oid)
+                    if self._render_inputs(o, s.get(Clip, o.clip_id)) != inputs:
+                        # Edited again while this was rendering: a newer job renders the latest, so drop this one.
+                        out.unlink(missing_ok=True)
+                        continue
                     o.file_path, o.width, o.height, o.fps, o.size_bytes = str(out), info.width, info.height, info.fps, out.stat().st_size
                     o.render_state, o.render_error = "ready", None
                     still_used = s.scalar(select(func.count()).select_from(ClipOutput).where(ClipOutput.file_path == old)) if old else 0

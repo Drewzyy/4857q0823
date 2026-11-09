@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .fetch import MONITORABLE
 from .models import Connection, Creator, DestinationAccount, Folder, Job, SourceAccount
 
 
@@ -45,7 +46,7 @@ def source(s: SourceAccount, route_count: int = 0, creators_by_id: dict | None =
         "creator": creator(s.creator), "folder": folder(s.folder),
         "authorized": s.connection is not None, "connection_status": s.connection.status if s.connection else None,
         "last_synced_at": _dt(s.last_synced_at), "next_check_at": _dt(s.next_check_at), "last_error": s.last_error,
-        "watching_supported": s.platform in ("tiktok", "youtube"), "baseline_done": s.baseline_done,
+        "watching_supported": s.platform in MONITORABLE, "baseline_done": s.baseline_done,
         "created_at": _dt(s.created_at), "route_count": route_count,
         # Filled in by the accounts list endpoint; None means not counted, not zero.
         "videos_discovered": None, "videos_analyzed": None,

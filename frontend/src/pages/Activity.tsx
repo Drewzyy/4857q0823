@@ -7,7 +7,7 @@ import { Empty, ErrorNote, Loading, Modal, PlatformBadge, relTime, useToast } fr
 import { hms } from "./Ready";
 
 const STATUS: Record<RefPost["status"], [string, string]> = {
-  new: ["", "Queued"], processing: ["accent", "Working"], ready: ["ok", "Clip ready"], no_match: ["warn", "Moment not found"],
+  new: ["", "Queued"], processing: ["accent", "Working"], ready: ["ok", "Clip ready"], no_match: ["warn", "Moment not found"], duplicate: ["", "Already clipped"],
   needs_setup: ["warn", "Needs setup"], failed: ["err", "Failed"], baseline: ["", "Existing post"],
 };
 

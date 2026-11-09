@@ -53,7 +53,7 @@ class Fetcher(Protocol):
     def download_section(self, url: str, start: float, end: float, dest_dir: Path) -> Path: ...
 
 
-MONITORABLE = ("tiktok", "youtube")
+MONITORABLE = ("tiktok", "youtube", "twitch")
 
 _SINGLE_VOD = re.compile(r"(twitch\.tv/videos/\d+|youtube\.com/watch\?|youtu\.be/|youtube\.com/live/|kick\.com/video/[\w-]+|kick\.com/[\w-]+/videos/[\w-]+)", re.I)
 
@@ -151,6 +151,8 @@ class YtDlpFetcher:
             url = f"https://www.tiktok.com/@{username}"
         elif platform == "youtube":
             url = profile_url.rstrip("/") + "/shorts"
+        elif platform == "twitch":
+            url = f"https://www.twitch.tv/{username}/clips?filter=clips&range=24hr"  # the day's most-viewed clips first
         else:
             raise FetchError(f"Watching {platform} accounts isn't supported")
         info = self._extract(url, extract_flat="in_playlist", playlistend=limit)

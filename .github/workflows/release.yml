@@ -193,6 +193,19 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pytest -q
 
+      - name: "Live check: read a real Twitch channel's top clips"
+        if: matrix.label == 'mac'
+        continue-on-error: true  # reports on Twitch itself; a change on their side shouldn't block a release
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          from clippr.fetch import YtDlpFetcher
+          posts = YtDlpFetcher().recent_posts("twitch", "jasontheween", "", 5)
+          for p in posts:
+              print(p.views, p.posted_at, p.url, p.title[:60])
+          assert posts and all(p.url and p.views is not None for p in posts), "no clips read"
+          PY
+
   release:
     needs: build
     # Only publish when both installers passed every check: a release missing one platform would

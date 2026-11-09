@@ -228,7 +228,7 @@ def test_problems_are_explained_and_pinged(env):
 def test_monitoring_backoff_and_scheduling(env):
     ctx, c, fake = env
     _, sid, *_ = setup_accounts(c)
-    c.post("/api/sources", json={"input": "https://www.twitch.tv/somestreamer"})  # not watchable, must be skipped
+    assert c.post("/api/sources", json={"input": "https://www.instagram.com/somepage"}).status_code == 201  # not watchable, must be skipped
     assert ctx.pipeline.tick()["queued"] == 1
     assert ctx.pipeline.tick()["queued"] == 0  # not due again yet
     fake.fail_listing = True
@@ -237,8 +237,8 @@ def test_monitoring_backoff_and_scheduling(env):
     assert "Couldn't check" in src["last_error"]
     assert datetime.fromisoformat(src["next_check_at"]) > datetime.now(timezone.utc) + timedelta(minutes=15)
     assert c.post(f"/api/sources/{sid}/check").status_code == 200
-    twitch = next(x for x in c.get("/api/sources").json() if x["platform"] == "twitch")
-    assert c.post(f"/api/sources/{twitch['id']}/check").status_code == 422
+    insta = next(x for x in c.get("/api/sources").json() if x["platform"] == "instagram")
+    assert c.post(f"/api/sources/{insta['id']}/check").status_code == 422
     c.put("/api/settings", json={"monitoring": {"enabled": False}})
     assert ctx.pipeline.tick() == {"monitoring": "off"}
 
@@ -406,3 +406,53 @@ def test_pasted_link_finds_the_streamer_it_names(env):
     assert ref["status"] == "ready" and ref["creator"]["name"] == "Streamer B", ref["status_detail"]
     assert [o["destination"]["display_name"] for o in c.get("/api/clips").json()[0]["outputs"]] == ["B page"]
     assert ("vods", "https://kick.com/streamerb") in fake.calls and ("vods", "https://www.twitch.tv/streamera") not in fake.calls
+
+
+def test_twitch_channel_clips_become_videos(env):
+    """A streamer's Twitch channel as a source: its most-watched new clips are matched to the VOD and rendered;
+    clips few people watched wait, and a second clip of the same moment isn't made twice."""
+    ctx, c, fake = env
+    cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    src = c.post("/api/sources", json={"input": "twitch.tv/streamera", "platform": "twitch", "creator_ids": [cid]})
+    assert src.status_code == 201, src.text
+    sid = src.json()["id"]
+    assert src.json()["watching_supported"] is True
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": cid})
+    c.post("/api/funnel/auto-route", json={})
+    soon = datetime.now(timezone.utc) + timedelta(seconds=5)
+    clip = lambda i, views: RemotePost(i, f"https://www.twitch.tv/streamera/clip/{i}", f"clip {i}", posted_at=soon, views=views)
+    fake.posts = [clip("Top1", 900), clip("Top2", 400), clip("Quiet", 3)]  # most-viewed first, like Twitch's list
+    res = ctx.pipeline.check_source(sid)
+    assert res["new"] == 2  # the quiet clip isn't taken yet
+    drain(ctx)
+    refs = {r["url"].rsplit("/", 1)[-1]: r["status"] for r in c.get("/api/references").json()}
+    assert refs == {"Top1": "ready", "Top2": "duplicate"}  # both clips are the same moment in the stream
+    assert len(c.get("/api/clips").json()) == 1
+    # Once enough people watch the quiet clip, it's picked up on a later check.
+    fake.posts = [clip("Quiet", 120)]
+    assert ctx.pipeline.check_source(sid)["new"] == 1
+
+
+def test_a_render_overtaken_by_a_newer_edit_is_dropped(env):
+    """Two re-renders of one video can overlap; the one started before the latest edit must not win."""
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("r1", "https://www.tiktok.com/@a.clips/video/r1", "race")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    oid = c.get("/api/clips").json()[0]["outputs"][0]["id"]
+    real_render = ctx.pipeline._render
+
+    def render_then_edit(*a, **k):  # the user saves a new title while this render is still running
+        out = real_render(*a, **k)
+        with ctx.db.session() as s:
+            s.get(ClipOutput, oid).video_title = "NEWER TITLE"
+        return out
+
+    ctx.pipeline._render = render_then_edit
+    before = c.get("/api/clips").json()[0]["outputs"][0]["version"]
+    assert ctx.pipeline.rerender([oid]) == {"rendered": 0}
+    out = c.get("/api/clips").json()[0]["outputs"][0]
+    assert out["version"] == before  # the stale render was thrown away, not saved over the video
