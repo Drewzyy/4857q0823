@@ -149,7 +149,7 @@ class Pipeline:
         s.flush()
         return ref
 
-    def intake_link(self, url: str) -> dict:
+    def intake_link(self, url: str, creator_id: int | None = None) -> dict:
         """A link the user copied or pasted in a batch: clip it unless Vyral already has (or is making) it."""
         post = self.ctx.fetcher.post_details(url)
         with self.ctx.db.session() as s:
@@ -157,7 +157,7 @@ class Pipeline:
                                                                ReferenceVideo.external_id == post.id))
         if have and have not in ("failed", "no_match", "needs_setup"):
             return {"skipped": f"already {have}"}
-        return {"reference_id": self.add_manual(url, None, None, post)}
+        return {"reference_id": self.add_manual(url, None, creator_id, post)}
 
     def add_manual(self, url: str, source_id: int | None, creator_id: int | None, post: RemotePost | None = None) -> int:
         """User pasted a post link: build a clip from it right away."""
@@ -518,7 +518,7 @@ def register(ctx: Any) -> Pipeline:
     q.register("monitor.tick", lambda jc, pl: p.tick())
     q.register("source.check", lambda jc, pl: p.check_source(pl["source_id"]))
     q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url")))
-    q.register("intake.link", lambda jc, pl: p.intake_link(pl["url"]))
+    q.register("intake.link", lambda jc, pl: p.intake_link(pl["url"], pl.get("creator_id")))
     q.register("notify.discord", lambda jc, pl: p.send_discord(pl))
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())
     q.register("clip.rerender", lambda jc, pl: p.rerender(pl["output_ids"]))

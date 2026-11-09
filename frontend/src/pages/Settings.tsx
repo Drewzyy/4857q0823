@@ -19,7 +19,7 @@ export default function SettingsPage() {
         ))}
       </div>
       {tab === "general" && <General />}
-      {tab === "notifications" && <Notifications />}
+      {tab === "notifications" && <><Notifications /><PhoneInbox /></>}
       {tab === "security" && <Security />}
       {tab === "shortcuts" && <Shortcuts />}
     </div>
@@ -133,6 +133,61 @@ function Updates() {
             : <button className="btn" disabled={busy} onClick={() => api.checkForUpdates().then((r) => qc.setQueryData(["app-update"], { ...r, available: true })).catch((e) => toast("err", String(e)))}>
                 {busy && <span className="spinner" />}Check for updates</button>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Post TikTok links in a Discord channel from your phone; Vyral reads the channel through a bot. */
+function PhoneInbox() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { data } = useQuery({ queryKey: ["discord-inbox"], queryFn: api.discordInbox, refetchInterval: 15_000 });
+  const channels = useQuery({ queryKey: ["discord-inbox-channels"], queryFn: api.discordInboxChannels, enabled: !!data?.configured, retry: false });
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async (b: { token?: string; channel_id?: string }) => {
+    setBusy(true);
+    try {
+      qc.setQueryData(["discord-inbox"], await api.setDiscordInbox(b));
+      if (b.token) { setToken(""); qc.invalidateQueries({ queryKey: ["discord-inbox-channels"] }); }
+      toast("ok", b.token ? "Bot connected. Now pick the channel." : "Inbox channel set");
+    } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  if (!data) return null;
+  return (
+    <div className="card stack" style={{ maxWidth: 820, marginTop: 16 }}>
+      <h2>Phone inbox (Discord)</h2>
+      <p className="small muted">Post a TikTok or YouTube Shorts link in a Discord channel from your phone, with the streamer's name if you like
+        ("https://www.tiktok.com/@clips/video/123 jasontheween"). Vyral reads the channel while it's running, reacts ✅, and makes the clip.</p>
+      {!data.configured ? (
+        <>
+          <ol className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+            <li>Open <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer">discord.com/developers/applications</a>, click <strong>New Application</strong>, name it Vyral.</li>
+            <li>In <strong>Bot</strong>: click <strong>Reset Token</strong> and copy it, then turn on <strong>Message Content Intent</strong> and save.</li>
+            <li>In <strong>OAuth2 &gt; URL Generator</strong>: tick <strong>bot</strong>, then <strong>View Channels</strong>, <strong>Read Message History</strong> and <strong>Add Reactions</strong>. Open the link at the bottom and add the bot to your server.</li>
+            <li>Paste the token here.</li>
+          </ol>
+          <div className="row">
+            <input className="input" type="password" autoComplete="off" aria-label="Discord bot token" placeholder="Bot token" value={token} onChange={(e) => setToken(e.target.value)} />
+            <button className="btn primary" disabled={token.trim().length < 20 || busy} onClick={() => save({ token: token.trim() })}>{busy && <span className="spinner" />}Connect</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="row wrap small">
+            <span className="pill ok">Bot: {data.bot ?? "connected"}</span>
+            {data.channel_name ? <span>Reading <strong>#{data.channel_name}</strong> in {data.server}</span> : <span className="faint">Pick the channel you'll post links in:</span>}
+            <span className="spacer" />
+            <button className="btn ghost sm" onClick={async () => { await api.removeDiscordInbox(); qc.invalidateQueries({ queryKey: ["discord-inbox"] }); }}>Disconnect</button>
+          </div>
+          <select className="select" aria-label="Inbox channel" value={data.channel_id ?? ""} disabled={busy} onChange={(e) => e.target.value && save({ channel_id: e.target.value })}>
+            <option value="">{channels.isLoading ? "Loading channels…" : "Choose a channel"}</option>
+            {(channels.data ?? []).map((ch) => <option key={ch.id} value={ch.id}>#{ch.name} ({ch.server})</option>)}
+          </select>
+          {channels.error && <p className="small" style={{ color: "#ff8a8d" }}>{String(channels.error instanceof Error ? channels.error.message : channels.error)}</p>}
+          {data.last_error && <p className="small" style={{ color: "#ff8a8d" }}>{data.last_error}</p>}
+        </>
       )}
     </div>
   );

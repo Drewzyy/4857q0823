@@ -15,7 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api import accounts, analytics, clips, connections as connections_api, funnel, system, updates
+from .api import accounts, analytics, clips, connections as connections_api, funnel, inbox, system, updates
 from .api.system import load_settings
 from .fetch import YtDlpFetcher
 from .media.transcribe import WhisperTranscriber
@@ -46,6 +46,7 @@ class AppContext:
     fetcher: Any = None
     transcriber: Any = None
     pipeline: Any = None
+    inbox: Any = None
 
 
 def _load_bundled_apps(config: Config) -> dict[str, Any]:
@@ -80,6 +81,9 @@ def build_context(config: Config, secrets: SecretStore | None = None, http_facto
     from .pipeline import register
 
     register(ctx)
+    from .discord_inbox import DiscordInbox
+
+    ctx.inbox = DiscordInbox(ctx)
 
     def heavy_limit() -> int:
         with database.session() as s:
@@ -96,7 +100,9 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
     async def lifespan(_: FastAPI):
         if cfg.run_worker:
             ctx.jobs.start(workers=3)
+            ctx.inbox.start()
         yield
+        ctx.inbox.stop()
         ctx.jobs.stop()
 
     app = FastAPI(title="Vyral", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -147,7 +153,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         log.exception("unhandled error")
         return JSONResponse({"error": {"code": "internal", "message": "Something went wrong. Details are in the app log."}}, status_code=500)
 
-    for r in (accounts.router, funnel.router, system.router, connections_api.router, clips.router, updates.router, analytics.router):
+    for r in (accounts.router, funnel.router, system.router, connections_api.router, clips.router, updates.router, analytics.router, inbox.router):
         app.include_router(r, prefix="/api")
 
     def oauth_callback(platform: str, request: Request):

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from .. import notify
 from ..audit import audit
-from ..fetch import FetchError
+from ..fetch import VIDEO_LINK, FetchError
 from ..media.ffmpeg import probe
 from ..media.overlay import Word, apply_text_edit
 from ..models import Clip, ClipOutput, Creator, ReferenceVideo, Setting, SourceAccount
@@ -292,10 +292,6 @@ def add_reference(body: ManualIn, c=Depends(ctx), s: Session = Depends(db)):
     except FetchError as e:
         raise ApiError(502, "fetch_failed", f"Couldn't open that video: {e}")
     return {"id": rid}
-
-
-# Single TikTok videos (including vm./vt. share links) and YouTube Shorts.
-VIDEO_LINK = re.compile(r"^https://(?:(?:www\.|m\.)?tiktok\.com/@[\w.-]+/video/\d+|(?:vm|vt)\.tiktok\.com/\w+|(?:www\.|m\.)?youtube\.com/shorts/[\w-]+)/?(?:\?\S*)?$")
 
 
 class IntakeIn(BaseModel):

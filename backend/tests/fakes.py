@@ -72,3 +72,10 @@ class FakeTranscriber:
         text = "no way he actually did that right now".split()
         # Times are relative to the audio Vyral hands over, which starts 0.8 s before the clip.
         return [Word(1.2 + i * 0.45, 1.6 + i * 0.45, t) for i, t in enumerate(text)]
+
+
+def drain(ctx):
+    n = 0
+    while ctx.jobs.run_one():
+        n += 1
+    return n

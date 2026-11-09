@@ -95,6 +95,7 @@ export interface EditorData {
   id: number; title: string; section_duration: number; original_start: number; original_duration: number;
   edit: ClipEditT; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
 }
+export interface DiscordInbox { configured: boolean; channel_id: string | null; channel_name: string | null; server: string | null; bot: string | null; last_error: string | null; last_checked: number | null }
 export interface NotifyState { configured: boolean; webhook_hint: string | null; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }
 
 export interface AppUpdate {
@@ -224,6 +225,10 @@ export const api = {
   checkSource: (id: number) => request<{ queued: boolean }>("POST", `/sources/${id}/check`),
   notifications: () => request<NotifyState>("GET", "/notifications"),
   saveNotifications: (b: Partial<{ webhook_url: string; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }>) => request<NotifyState>("PUT", "/notifications", b),
+  discordInbox: () => request<DiscordInbox>("GET", "/discord-inbox"),
+  discordInboxChannels: () => request<{ id: string; name: string; server: string }[]>("GET", "/discord-inbox/channels"),
+  setDiscordInbox: (b: { token?: string; channel_id?: string }) => request<DiscordInbox>("PUT", "/discord-inbox", b),
+  removeDiscordInbox: () => request<void>("DELETE", "/discord-inbox"),
   removeWebhook: () => request<void>("DELETE", "/notifications/webhook"),
   testNotification: () => request<{ sent: boolean }>("POST", "/notifications/test"),
 };

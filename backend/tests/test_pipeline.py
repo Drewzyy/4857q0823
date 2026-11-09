@@ -5,41 +5,14 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
-from fastapi.testclient import TestClient
 
-from clippr.app import build_context, create_app
-from clippr.config import Config
 from clippr.fetch import RemotePost
-from clippr.media.ffmpeg import probe, run
+from clippr.media.ffmpeg import probe
 from clippr.models import Clip, ClipOutput
-from clippr.secrets_store import MemoryStore
-from fakes import FakeFetcher, FakeTranscriber
-from media_fixtures import make_stream_and_clip, speechlike, write_wav
+from fakes import FakeTranscriber, drain
 
 HOOK = "https://discord.com/api/webhooks/123456789/abcdefghijklmnopqrstuvwxyz_123"
 TOKEN = "test-token"
-
-
-@pytest.fixture(scope="session")
-def media(tmp_path_factory):
-    d = tmp_path_factory.mktemp("media")
-    stream, clip = make_stream_and_clip(d, stream_s=240, at=131.0, clip_s=20, video=True)
-    write_wav(d / "other.wav", speechlike(240, 42))
-    other = d / "other.mp4"
-    run(["-f", "lavfi", "-i", "color=c=gray:size=640x360:rate=30:duration=240", "-i", str(d / "other.wav"), "-shortest",
-         "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(other)])
-    return {"stream": stream, "clip": clip, "other": other}
-
-
-@pytest.fixture
-def env(tmp_path, media, monkeypatch):
-    monkeypatch.setenv("CLIPPR_RENDER_PRESET", "ultrafast")
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
-    fake = FakeFetcher(media)
-    cfg = Config(data_dir=tmp_path / "data", port=8765, api_token=TOKEN, run_worker=False, secret_backend="memory")
-    ctx = build_context(cfg, secrets=MemoryStore(), fetcher=fake, transcriber=FakeTranscriber())
-    with TestClient(create_app(ctx=ctx), base_url="http://127.0.0.1:8765", headers={"X-Clippr-Token": TOKEN}) as c:
-        yield ctx, c, fake
 
 
 def _frame(path, t):
@@ -64,13 +37,6 @@ def white_pixels(path, t):
     f = _frame(path, t)
     region = f[: int(f.shape[0] * 0.25)]
     return int(((region > 240).all(axis=2)).sum())
-
-
-def drain(ctx):
-    n = 0
-    while ctx.jobs.run_one():
-        n += 1
-    return n
 
 
 def setup_accounts(c, *, permission=True, channels=("https://www.twitch.tv/streamera",)):
