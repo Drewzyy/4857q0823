@@ -441,3 +441,20 @@ def test_copied_and_batch_pasted_links_become_clips_once(env):
     c.put("/api/settings", json={"intake": {"clipboard": False}})
     assert c.post("/api/intake", json={"urls": [link], "from_clipboard": True}).json()["queued"] == 0
     assert c.post("/api/intake", json={"urls": ["https://vm.tiktok.com/ZMabc123/", "https://www.youtube.com/shorts/xyz_1"]}).json()["queued"] == 2
+
+
+def test_group_page_gets_clips_from_each_members_account(env):
+    """Each member is their own streamer, and every member's account is routed to one group page tied to the group:
+    the routes are respected (this used to stop with "isn't routed to any page")."""
+    ctx, c, fake = env
+    core = c.post("/api/creators", json={"name": "The Core", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/silky"]}).json()["id"]
+    silky = c.post("/api/creators", json={"name": "Silky", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/silky"]}).json()["id"]
+    page = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "vyralc0re", "creator_id": core}).json()["id"]
+    sid = c.post("/api/sources", json={"input": "twitch.tv/silky", "platform": "twitch", "creator_ids": [silky]}).json()["id"]
+    assert c.post("/api/funnel/routes", json={"source_id": sid, "destination_id": page, "allow_cross_creator": True}).status_code in (200, 201)
+    fake.posts = [RemotePost("S1", "https://www.twitch.tv/silky/clip/S1", "silky moment", posted_at=datetime.now(timezone.utc) + timedelta(seconds=5), views=500)]
+    assert ctx.pipeline.check_source(sid)["new"] == 1
+    drain(ctx)
+    ref = c.get("/api/references").json()[0]
+    assert ref["status"] == "ready", ref["status_detail"]
+    assert [o["destination"]["display_name"] for o in c.get("/api/clips").json()[0]["outputs"]] == ["vyralc0re"]

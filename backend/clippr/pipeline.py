@@ -283,10 +283,15 @@ class Pipeline:
                     if overlap > 0.5 * min(c.vod_end - c.vod_start, m.end - m.start):
                         self._set(rid, "duplicate", f"Same moment as \"{c.title}\", which Vyral already made")
                         return {"status": "duplicate", "clip_id": c.id}
-            # Only this streamer's pages (and pages not tied to any streamer) get the clip.
-            dest_info = [d[:5] for d in all_dests if d[5] in (None, matched_id)]
+            # A page tied to another streamer this account also covers doesn't get the clip (B's moment
+            # isn't A's content). Every other routed page does: pages tied to this streamer or to nobody,
+            # and pages the user routed this account to on purpose, like a group page for its members.
+            covered = {cid for cid, _, _ in candidates} if src else set()
+            dest_info = [d[:5] for d in all_dests if d[5] in (None, matched_id) or (src and d[5] not in covered)]
             if not dest_info:
-                where = f"@{account} isn't routed to any {creator_name} page in the Account Funnel" if account else f"there's no {creator_name} page under Destinations"
+                others = ", ".join(d[2] for d in all_dests)
+                where = (f"@{account}'s pages ({others}) are each set to another streamer it covers. Under Destinations, set one to "
+                         f"{creator_name} or to Any streamer" if account else f"there's no {creator_name} page under Destinations")
                 return self._stop(rid, "needs_setup", f"This is a {creator_name} clip, but {where}.", account, ref_url)
             with self.ctx.db.session() as s:
                 s.get(ReferenceVideo, rid).creator_id = matched_id
