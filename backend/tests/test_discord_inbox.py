@@ -14,6 +14,8 @@ def test_parse_links_and_streamer_names():
     assert parse("https://www.tiktok.com/@clips/video/123 jason", CORE) == [("https://www.tiktok.com/@clips/video/123", None)]  # "jason" alone is too vague
     assert parse("<https://www.tiktok.com/@clips/video/123> jasontheween", CORE) == [("https://www.tiktok.com/@clips/video/123", 1)]
     assert parse("kaicenat https://vm.tiktok.com/ZMabc/", CORE) == [("https://vm.tiktok.com/ZMabc/", 2)]
+    # What TikTok's Share > Copy link gives on a phone, with its tracking query.
+    assert parse("https://www.tiktok.com/t/ZT8abc123/?_t=ZT-8x&_r=1 jasontheween", CORE) == [("https://www.tiktok.com/t/ZT8abc123/?_t=ZT-8x&_r=1", 1)]
     assert parse("lol look at this https://www.tiktok.com/@clips", CORE) == []  # a profile, not a video
 
 

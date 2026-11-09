@@ -16,7 +16,8 @@ router = APIRouter(prefix="/discord-inbox")
 def _view(c, s) -> dict:
     st = c.inbox.state(s)
     return {"configured": bool(c.inbox.token()), "channel_id": st.get("channel_id"), "channel_name": st.get("channel_name"),
-            "server": st.get("server"), "bot": st.get("bot"), "last_error": st.get("last_error"), "last_checked": st.get("last_checked")}
+            "server": st.get("server"), "bot": st.get("bot"), "last_error": st.get("last_error"), "last_checked": st.get("last_checked"),
+            "last_unrecognized": st.get("last_unrecognized")}
 
 
 def _channels(token: str) -> dict:

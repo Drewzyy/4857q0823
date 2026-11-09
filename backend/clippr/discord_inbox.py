@@ -113,7 +113,7 @@ class DiscordInbox:
                     return {"started": True}
                 messages = sorted(_call(http, token, "GET", f"/channels/{channel}/messages?after={after}&limit=50") or [],
                                   key=lambda m: int(m["id"]))
-                queued, error = 0, None
+                queued, error, unrecognized = 0, None, st.get("last_unrecognized")
                 for m in messages:
                     after = m["id"]
                     if m.get("author", {}).get("bot") or m.get("webhook_id"):
@@ -126,6 +126,8 @@ class DiscordInbox:
                     for link, creator_id in found:
                         self.ctx.jobs.enqueue("intake.link", {"url": link, "creator_id": creator_id}, max_attempts=3)
                     queued += len(found)
+                    if not found:  # shown in Settings so it's clear what the bot saw
+                        unrecognized = content[:200]
                     emoji = quote("✅" if found else "❓")
                     try:
                         _call(http, token, "PUT", f"/channels/{channel}/messages/{m['id']}/reactions/{emoji}/@me")
@@ -136,7 +138,7 @@ class DiscordInbox:
                 self.save_state(s, last_error=str(e) if isinstance(e, InboxError) else "Couldn't reach Discord")
             return {"error": str(e)}
         with self.ctx.db.session() as s:
-            self.save_state(s, last_message_id=after, last_error=error, last_checked=time.time())
+            self.save_state(s, last_message_id=after, last_error=error, last_checked=time.time(), last_unrecognized=unrecognized)
         return {"queued": queued}
 
     def start(self) -> None:

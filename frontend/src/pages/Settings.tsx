@@ -187,6 +187,7 @@ function PhoneInbox() {
           </select>
           {channels.error && <p className="small" style={{ color: "#ff8a8d" }}>{String(channels.error instanceof Error ? channels.error.message : channels.error)}</p>}
           {data.last_error && <p className="small" style={{ color: "#ff8a8d" }}>{data.last_error}</p>}
+          {data.last_unrecognized && <p className="small faint">Last message without a video link Vyral recognizes (❓): <code>{data.last_unrecognized}</code></p>}
         </>
       )}
     </div>

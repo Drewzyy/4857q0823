@@ -55,8 +55,9 @@ class Fetcher(Protocol):
 
 MONITORABLE = ("tiktok", "youtube", "twitch")
 
-# Single TikTok videos (including vm./vt. share links) and YouTube Shorts.
-VIDEO_LINK = re.compile(r"^https://(?:(?:www\.|m\.)?tiktok\.com/@[\w.-]+/video/\d+|(?:vm|vt)\.tiktok\.com/\w+"
+# Single TikTok videos (full links and the short share links the app copies: vm./vt.tiktok.com/x and
+# tiktok.com/t/x) and YouTube Shorts.
+VIDEO_LINK = re.compile(r"^https://(?:(?:www\.|m\.)?tiktok\.com/(?:@[\w.-]+/video/\d+|t/\w+)|(?:vm|vt)\.tiktok\.com/\w+"
                         r"|(?:www\.|m\.)?youtube\.com/shorts/[\w-]+)/?(?:\?\S*)?$")
 
 _SINGLE_VOD = re.compile(r"(twitch\.tv/videos/\d+|youtube\.com/watch\?|youtu\.be/|youtube\.com/live/|kick\.com/video/[\w-]+|kick\.com/[\w-]+/videos/[\w-]+)", re.I)

@@ -20,7 +20,9 @@ fn video_link(text: &str) -> Option<&str> {
     }
     let rest = t.strip_prefix("https://")?;
     let host = rest.split('/').next().unwrap_or("");
-    let tiktok = matches!(host, "www.tiktok.com" | "tiktok.com" | "m.tiktok.com") && rest.contains("/video/");
+    let path = &rest[host.len()..];
+    let tiktok = matches!(host, "www.tiktok.com" | "tiktok.com" | "m.tiktok.com")
+        && (path.contains("/video/") || (path.starts_with("/t/") && path.len() > 3));
     let tiktok_short = matches!(host, "vm.tiktok.com" | "vt.tiktok.com") && rest.len() > host.len() + 1;
     let short = matches!(host, "www.youtube.com" | "youtube.com" | "m.youtube.com") && rest.contains("/shorts/");
     (tiktok || tiktok_short || short).then_some(t)
@@ -52,6 +54,7 @@ mod tests {
     fn only_single_video_links_count() {
         assert!(video_link("https://www.tiktok.com/@clips/video/7351234567890").is_some());
         assert!(video_link(" https://vm.tiktok.com/ZMabc123/ ").is_some());
+        assert!(video_link("https://www.tiktok.com/t/ZT8abc123/").is_some()); // what the TikTok app's Copy link gives
         assert!(video_link("https://www.youtube.com/shorts/abc123").is_some());
         assert!(video_link("https://www.tiktok.com/@clips").is_none()); // a profile, not a video
         assert!(video_link("https://www.youtube.com/watch?v=abc").is_none()); // regular videos are left alone
