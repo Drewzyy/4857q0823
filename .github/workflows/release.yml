@@ -120,8 +120,13 @@ jobs:
             echo "No update-signing key yet: building without auto-update files."
             ARGS+=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
           fi
-          # The bundler downloads its installer tools; one retry rides out GitHub hiccups (e.g. a 504).
-          npx tauri build "${ARGS[@]}" || { echo "Build failed; retrying once in 30 s"; sleep 30; npx tauri build "${ARGS[@]}"; }
+          # The bundler downloads its installer tools from GitHub, which sometimes answers 504 for minutes at a time.
+          # Retrying is cheap (the compiled app is reused), so wait longer each time.
+          for wait in 30 60 120 0; do
+            npx tauri build "${ARGS[@]}" && break
+            [ "$wait" = 0 ] && exit 1
+            echo "Build failed; retrying in $wait s"; sleep "$wait"
+          done
 
       - name: Install the app like a person would (Mac)
         if: runner.os == 'macOS'
