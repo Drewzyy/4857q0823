@@ -334,3 +334,32 @@ jobs:
           curl -sf -X POST -H "X-Clippr-Token: $TOKEN" http://127.0.0.1:8765/api/app-update/install >/dev/null
           wait_for 300 "\"version\":\"$NEW\".*\"ui_served\":true" || { echo "The app didn't come back running $NEW"; exit 1; }
           echo "Updated $OLD -> $NEW and the app restarted on its own."
+
+  cleanup:
+    # Keep only the newest version, and only once it has passed the real update test.
+    needs: update-test
+    if: ${{ needs.update-test.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      NEW: v0.4.${{ github.run_number }}
+    steps:
+      - name: Remove older versions from vyral-releases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          REPO: Drewzyy/vyral-releases
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "No RELEASES_TOKEN; nothing to clean."; exit 0; }
+          gh release view "$NEW" --repo "$REPO" >/dev/null || { echo "$NEW isn't published; keeping everything."; exit 0; }
+          for t in $(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName'); do
+            if [ "$t" != "$NEW" ]; then gh release delete "$t" --repo "$REPO" --yes --cleanup-tag && echo "Deleted $t"; fi
+          done
+
+      - name: Remove the old build from this repo's Releases page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag && echo "Deleted the old 'latest' build"
+          else
+            echo "Nothing to remove"
+          fi
