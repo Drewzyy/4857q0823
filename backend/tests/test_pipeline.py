@@ -388,3 +388,21 @@ def test_posts_made_while_checks_failed_are_still_clipped(env):
     drain(ctx)
     refs = {r["url"].rsplit("/", 1)[-1]: r["status"] for r in c.get("/api/references").json()}
     assert refs == {"post": "ready"}  # the older post is skipped (skipped posts aren't listed)
+
+
+def test_pasted_link_finds_the_streamer_it_names(env):
+    """A pasted link has no source account: Vyral searches every streamer, the one the caption names first,
+    and the clip goes only to that streamer's pages."""
+    ctx, c, fake = env
+    a = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    b = c.post("/api/creators", json={"name": "Streamer B", "clip_permission": True, "vod_channels": ["https://kick.com/streamerb"]}).json()["id"]
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": a})
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "B page", "creator_id": b})
+    # Both streamers were in the same moment (both streams have it), so the caption decides whose cut it is.
+    fake.post_details = lambda url: RemotePost("p9", url, "streamer b did NOT just say that #streamerb #fyp")
+    assert c.post("/api/references", json={"url": "https://www.tiktok.com/@someone/video/p9"}).status_code in (200, 201)
+    drain(ctx)
+    ref = c.get("/api/references").json()[0]
+    assert ref["status"] == "ready" and ref["creator"]["name"] == "Streamer B", ref["status_detail"]
+    assert [o["destination"]["display_name"] for o in c.get("/api/clips").json()[0]["outputs"]] == ["B page"]
+    assert ("vods", "https://kick.com/streamerb") in fake.calls and ("vods", "https://www.twitch.tv/streamera") not in fake.calls

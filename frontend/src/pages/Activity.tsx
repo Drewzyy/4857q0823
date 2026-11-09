@@ -38,9 +38,9 @@ export default function ActivityPage() {
         <Wand2 size={16} color="var(--accent-hi)" />
         <input className="input" style={{ flex: 1, minWidth: 260 }} aria-label="Video link" placeholder="Paste a TikTok or YouTube Shorts link to make a clip from it now"
           value={url} onChange={(e) => setUrl(e.target.value)} />
-        <select className="select" style={{ width: 180 }} aria-label="Creator for pasted link" value={creatorId ?? ""} onChange={(e) => setCreatorId(e.target.value ? Number(e.target.value) : null)}>
-          <option value="">Whose stream?</option>{(creators.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-        <button className="btn primary" disabled={!url.trim() || !creatorId || busy}>{busy && <span className="spinner" />}Make clip</button>
+        <select className="select" style={{ width: 230 }} aria-label="Creator for pasted link" value={creatorId ?? ""} onChange={(e) => setCreatorId(e.target.value ? Number(e.target.value) : null)}>
+          <option value="">Any streamer (from the caption)</option>{(creators.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <button className="btn primary" disabled={!url.trim() || busy}>{busy && <span className="spinner" />}Make clip</button>
       </form>
 
       {refs.error && <ErrorNote error={refs.error} />}

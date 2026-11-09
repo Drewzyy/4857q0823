@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 
-from . import describe, notify
+from . import describe, identify, notify
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost
@@ -205,22 +205,27 @@ class Pipeline:
             account = src.username if src else None
             cfg = load_settings(s)
             # A clipping account can cover several streamers: search each one's streams until the moment is found.
+            # With no streamer known (a pasted link, or an account with none assigned), every streamer is a candidate.
             ids = [ref.creator_id] if ref.creator_id else (source_creator_ids(src) if src else [])
-            creators = [c for c in (s.get(Creator, i) for i in ids) if c]
+            creators = [c for c in (s.get(Creator, i) for i in ids) if c] if ids else list(s.scalars(select(Creator).order_by(Creator.id)))
             if not creators:
-                return self._stop(rid, "needs_setup", "Assign this source account to a creator so Vyral knows whose streams to search.", account, ref.url)
+                return self._stop(rid, "needs_setup", "Add the streamer under Source Accounts > Creators, with their Twitch, YouTube "
+                                  "or Kick channel, so Vyral knows whose streams to search.", account, ref.url)
             usable = [c for c in creators if c.clip_permission and (vod_override or c.vod_channels)]
             if not usable:
                 c = creators[0]
                 why = (f"Confirm you have permission to clip {c.name} (Creators > Edit)." if not c.clip_permission
                        else f"Add {c.name}'s Twitch, YouTube or Kick channel so Vyral can find the full stream.")
                 return self._stop(rid, "needs_setup", why, account, ref.url)
-            candidates = [(c.id, c.name, [vod_override] if vod_override else list(c.vod_channels or [])) for c in usable]
+            # Streamers named in the caption, hashtags or @mentions are searched first.
+            candidates = identify.rank_candidates(
+                [(c.id, c.name, [vod_override] if vod_override else list(c.vod_channels or [])) for c in usable], ref.title or "")
             if src:
                 dests = [r.destination for r in resolve_destinations(s, src.id)]
-            else:
-                dests = list(s.scalars(select(DestinationAccount).where(DestinationAccount.creator_id.in_([c.id for c in usable]),
-                                                                        DestinationAccount.enabled.is_(True))).unique())
+            else:  # a pasted link goes to the matched streamer's pages and to pages not tied to any streamer
+                dests = list(s.scalars(select(DestinationAccount).where(
+                    DestinationAccount.enabled.is_(True),
+                    or_(DestinationAccount.creator_id.in_([c.id for c in usable]), DestinationAccount.creator_id.is_(None)))).unique())
             if not dests:
                 where = f"@{account}" if account else usable[0].name
                 return self._stop(rid, "needs_setup", f"Route {where} to at least one destination in the Account Funnel.", account, ref.url)
@@ -256,8 +261,8 @@ class Pipeline:
             # Only this streamer's pages (and pages not tied to any streamer) get the clip.
             dest_info = [d[:5] for d in all_dests if d[5] in (None, matched_id)]
             if not dest_info:
-                return self._stop(rid, "needs_setup", f"This is a {creator_name} clip, but @{account} isn't routed to any {creator_name} page "
-                                  "in the Account Funnel.", account, ref_url)
+                where = f"@{account} isn't routed to any {creator_name} page in the Account Funnel" if account else f"there's no {creator_name} page under Destinations"
+                return self._stop(rid, "needs_setup", f"This is a {creator_name} clip, but {where}.", account, ref_url)
             with self.ctx.db.session() as s:
                 s.get(ReferenceVideo, rid).creator_id = matched_id
             if m.end - m.start > cfg.monitoring.max_clip_seconds:
