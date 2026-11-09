@@ -99,7 +99,7 @@ export interface NotifyState { configured: boolean; webhook_hint: string | null;
 export interface AppUpdate {
   available: boolean; state: "idle" | "checking" | "none" | "downloading" | "ready" | "installing" | "error";
   current: string; version: string | null; notes: string; error: string | null; progress: number | null; checked_at: string | null;
-  check_requested: boolean; install_requested: boolean;
+  check_requested: boolean; install_requested: boolean; busy: boolean;
 }
 
 export interface Totals { views: number | null; likes: number | null; comments: number | null; shares: number | null; engagement_rate: number | null; avg_views: number | null }

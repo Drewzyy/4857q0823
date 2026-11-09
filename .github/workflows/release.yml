@@ -331,8 +331,8 @@ jobs:
           done
           echo "$S" | grep -q '"state":"ready"' && echo "$S" | grep -q "\"version\":\"$NEW\"" || { echo "Not ready with $NEW: $S"; exit 1; }
 
-          echo "Pressing Restart to update."
-          curl -sf -X POST -H "X-Clippr-Token: $TOKEN" http://127.0.0.1:8765/api/app-update/install >/dev/null
+          echo "Pressing Restart to update (newer versions may already be installing by themselves)."
+          curl -s -X POST -H "X-Clippr-Token: $TOKEN" http://127.0.0.1:8765/api/app-update/install >/dev/null || true
           wait_for 300 "\"version\":\"$NEW\".*\"ui_served\":true" || { echo "The app didn't come back running $NEW"; exit 1; }
           echo "Updated $OLD -> $NEW and the app restarted on its own."
 

@@ -1,6 +1,7 @@
 """Engine/session setup and schema migrations (Alembic, run automatically on startup)."""
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -10,6 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+log = logging.getLogger("clippr.db")
 
 
 def make_engine(db_url: str) -> Engine:
@@ -31,10 +33,19 @@ def make_engine(db_url: str) -> Engine:
 def run_migrations(engine: Engine) -> None:
     from alembic import command
     from alembic.config import Config as AlembicConfig
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
 
     cfg = AlembicConfig()
     cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
     with engine.begin() as conn:
+        current = MigrationContext.configure(conn).get_current_revision()
+        known = {sc.revision for sc in ScriptDirectory.from_config(cfg).walk_revisions()}
+        if current and current not in known:
+            # A newer Vyral already upgraded this data (e.g. an older copy was reopened). Every
+            # migration only adds tables and columns, so this version runs fine on it as it is.
+            log.warning("data is from a newer Vyral (schema %s); leaving it as is", current)
+            return
         cfg.attributes["connection"] = conn
         command.upgrade(cfg, "head")
 

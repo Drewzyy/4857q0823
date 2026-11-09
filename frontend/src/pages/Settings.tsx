@@ -113,12 +113,12 @@ function Updates() {
     : u.state === "installing" ? "Installing and restarting…"
     : u.state === "none" ? `You're on the latest version.${u.checked_at ? ` Checked ${relTime(u.checked_at)}.` : ""}`
     : u.state === "error" ? (u.error ?? "Couldn't check for updates.")
-    : "Vyral checks for updates automatically a minute after it starts and every few hours.";
+    : "Vyral checks for updates a minute after it starts and every hour.";
   return (
     <div className="card stack">
       <div className="row"><h2>Updates</h2><span className="spacer" /><span className="pill nodot">Version {u.current}</span></div>
       <p className={`small ${u.state === "error" ? "" : "muted"}`} style={u.state === "error" ? { color: "#ff8a8d" } : undefined}>{line}</p>
-      <p className="small faint">New versions download in the background and install when you click Restart to update, or when you quit Vyral from the menu bar / tray. Each update is checked against Vyral's signature before it's installed.</p>
+      <p className="small faint">New versions download in the background and install themselves when you're not using the Vyral window and no clip is rendering, then Vyral reopens on its own. Restart to update installs right away. Each update is checked against Vyral's signature before it's installed.</p>
       {u.available && (
         <div className="row">
           {u.state === "ready"

@@ -8,6 +8,7 @@
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,8 +16,12 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-const CHECK_EVERY: Duration = Duration::from_secs(4 * 3600);
+const CHECK_EVERY: Duration = Duration::from_secs(3600);
 const FIRST_CHECK_AFTER: Duration = Duration::from_secs(45);
+/// Names the version whose automatic install failed; that version then waits for the user's click.
+const AUTO_FAILED: &str = ".auto-update-failed";
+/// Tells the next launch to stay in the background, so an app that updated while hidden stays hidden.
+pub const START_HIDDEN: &str = ".start-hidden";
 
 /// A downloaded, signature-checked update waiting to be installed.
 pub struct Pending(pub Mutex<Option<(Update, Vec<u8>)>>);
@@ -35,6 +40,24 @@ pub fn api(port: u16, token: &str, method: &str, path: &str, body: Option<&Value
     let _ = s.read_to_string(&mut buf);
     let body = buf.split_once("\r\n\r\n")?.1;
     serde_json::from_str(body).ok()
+}
+
+fn data_file(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join(name))
+}
+
+/// The user is looking at Vyral right now, so it shouldn't restart under them.
+fn in_use(app: &AppHandle) -> bool {
+    app.get_webview_window("main")
+        .is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
+}
+
+fn window_hidden(app: &AppHandle) -> bool {
+    app.get_webview_window("main").is_some_and(|w| !w.is_visible().unwrap_or(true))
+}
+
+fn auto_failed(app: &AppHandle, version: &str) -> bool {
+    data_file(app, AUTO_FAILED).and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|v| v.trim() == version)
 }
 
 /// Appends a line to logs/updater.log, so a failed update leaves a trace even after a restart.
@@ -112,6 +135,9 @@ pub fn install_pending(app: &AppHandle) -> Result<bool, String> {
     if let Err(e) = update.install(bytes) {
         let msg = format!("Couldn't install {}: {e}", update.version);
         log(app, &msg);
+        if let Some(p) = data_file(app, AUTO_FAILED) {
+            let _ = std::fs::write(p, &update.version);
+        }
         return Err(msg);
     }
     crate::stop_service(app);
@@ -126,24 +152,41 @@ pub fn run(app: AppHandle, port: u16, token: String) {
         loop {
             std::thread::sleep(Duration::from_secs(3));
             let Some(st) = api(port, &token, "GET", "/api/app-update", None) else { continue };
-            if st["install_requested"].as_bool() == Some(true) {
+            let waiting = app.state::<Pending>().0.lock().unwrap().as_ref().map(|(u, _)| u.version.clone());
+            let asked = st["install_requested"].as_bool() == Some(true);
+            // Installs by itself once nobody is using the window and no clip is rendering, unless
+            // installing this version already failed once (then it waits for the user's click).
+            let auto = waiting.as_deref().is_some_and(|v| st["busy"].as_bool() == Some(false) && !in_use(&app) && !auto_failed(&app, v));
+            if asked || auto {
+                log(&app, if asked { "install requested" } else { "installing automatically" });
                 report(port, &token, json!({"state": "installing"}));
+                let hidden_marker = data_file(&app, START_HIDDEN).filter(|_| window_hidden(&app));
+                if let Some(p) = &hidden_marker {
+                    let _ = std::fs::write(p, b"1");
+                }
                 match install_pending(&app) {
                     Ok(true) => app.restart(),
                     // On Windows the service is already stopped; restarting brings it back.
                     Err(_) if cfg!(windows) => app.restart(),
-                    Err(e) => fail(&app, port, &token, format!("{e}. Your current version keeps running.")),
-                    Ok(false) => fail(&app, port, &token, "The downloaded update was lost. Checking again.".into()),
+                    Err(e) => {
+                        if let Some(p) = &hidden_marker {
+                            let _ = std::fs::remove_file(p);
+                        }
+                        fail(&app, port, &token, format!("{e}. Your current version keeps running."));
+                        last_check = Some(Instant::now());
+                    }
+                    Ok(false) => {
+                        fail(&app, port, &token, "The downloaded update was lost. Checking again.".into());
+                        last_check = None;
+                    }
                 }
-                last_check = None;
                 continue;
             }
             let due = match last_check {
                 None => started.elapsed() >= FIRST_CHECK_AFTER,
                 Some(t) => t.elapsed() >= CHECK_EVERY,
             };
-            let ready = app.state::<Pending>().0.lock().unwrap().is_some();
-            if (st["check_requested"].as_bool() == Some(true) || (due && !ready)) && st["state"] != "downloading" {
+            if (st["check_requested"].as_bool() == Some(true) || (due && waiting.is_none())) && st["state"] != "downloading" {
                 last_check = Some(Instant::now());
                 check_and_download(&app, port, &token);
             }

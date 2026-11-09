@@ -8,8 +8,10 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 
 from .. import __version__
+from ..models import Job
 from .deps import ApiError, ctx
 
 router = APIRouter(prefix="/app-update")
@@ -28,7 +30,9 @@ def _state(request: Request) -> dict:
 @router.get("")
 def get_update(request: Request, c=Depends(ctx)):
     st = _state(request)
-    return {**st, "available": c.config.desktop_mode}
+    with c.db.session() as s:  # the desktop app won't restart itself in the middle of a render
+        busy = bool(s.scalar(select(func.count()).select_from(Job).where(Job.status == "running", Job.kind.in_(c.jobs.heavy))))
+    return {**st, "available": c.config.desktop_mode, "busy": busy}
 
 
 class Report(BaseModel):

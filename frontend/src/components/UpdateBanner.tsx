@@ -15,7 +15,7 @@ export default function UpdateBanner() {
   return (
     <div className="update-banner" role="status">
       <ArrowUpCircle size={18} />
-      <span><strong>Vyral {u.version}</strong> is ready.{u.state === "installing" ? " Installing and restarting…" : " Restart to update. Monitoring resumes right after."}</span>
+      <span><strong>Vyral {u.version}</strong> is ready.{u.state === "installing" ? " Installing and restarting…" : " It installs by itself when you're not using Vyral, or restart now."}</span>
       <span className="spacer" />
       {u.state === "ready" && (
         <button className="btn primary sm" onClick={async () => {

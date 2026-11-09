@@ -102,7 +102,10 @@ fn main() {
         .manage(Backend(Mutex::new(None)))
         .manage(updates::Pending(Mutex::new(None)))
         .setup(|app| {
-            let started_hidden = std::env::args().any(|a| a == HIDDEN_ARG);
+            let data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(data_dir.join("logs"))?;
+            // Launched at login, or relaunched by an update that installed while the window was hidden.
+            let started_hidden = std::env::args().any(|a| a == HIDDEN_ARG) || std::fs::remove_file(data_dir.join(updates::START_HIDDEN)).is_ok();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Vyral")
                 .inner_size(1440.0, 900.0)
@@ -110,8 +113,6 @@ fn main() {
                 .visible(!started_hidden)
                 .build()?;
 
-            let data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(data_dir.join("logs"))?;
             let marker = data_dir.join(".autostart-initialized");
             if !marker.exists() {
                 let _ = app.autolaunch().enable();

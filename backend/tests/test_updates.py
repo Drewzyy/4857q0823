@@ -9,6 +9,7 @@ def test_update_handshake_between_ui_and_desktop_shell(ctx):
     ctx.config.desktop_mode = True
     with TestClient(create_app(ctx=ctx), base_url="http://127.0.0.1:8765", headers=H) as c:
         s = c.get("/api/app-update").json()
+        assert s["busy"] is False
         assert s["available"] and s["state"] == "idle" and s["current"]
         assert c.post("/api/app-update/install").status_code == 409  # nothing downloaded yet
         assert c.post("/api/app-update/check").json()["check_requested"] is True  # UI asks
