@@ -49,6 +49,11 @@ def _self_test(audio: Path, data_dir: Path) -> int:
     from clippr.media.transcribe import WhisperTranscriber
     from clippr.schemas import OverlaySettings
 
+    import yt_dlp
+
+    with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+        impersonate = bool(ydl._get_available_impersonate_targets())
+    print(json.dumps({"impersonate": impersonate}))
     words = WhisperTranscriber(data_dir / "models").words(audio)
     print(json.dumps({"words": [w.text for w in words]}))
     with tempfile.TemporaryDirectory() as td:
@@ -61,7 +66,7 @@ def _self_test(audio: Path, data_dir: Path) -> int:
         out = render(d / "src.mp4", d / "out.mp4", OutputFormat(), duration=3, overlay_dir=d / "ov")
         info = probe(out)
         print(json.dumps({"render": [info.width, info.height]}))
-    return 0 if words and info.height == 1920 else 1
+    return 0 if impersonate and words and info.height == 1920 else 1
 
 
 def main() -> None:

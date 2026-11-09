@@ -371,3 +371,20 @@ def test_video_editor_trim_zoom_speed_and_text(env):
     g = ((f[..., 1] > 170) & (f[..., 0] < 90) & (f[..., 2] < 120)).sum()
     assert g > 1500
     assert c.get(f"/api/clips/{clip['id']}/editor").json()["edit"]["zoom"] == 1.5
+
+
+def test_posts_made_while_checks_failed_are_still_clipped(env):
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.fail_listing = True
+    assert "error" in ctx.pipeline.check_source(sid)
+    fake.fail_listing = False
+    before = RemotePost("pre", "https://www.tiktok.com/@a.clips/video/pre", "older", posted_at=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    after = RemotePost("post", "https://www.tiktok.com/@a.clips/video/post", "posted after watching started",
+                       posted_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    fake.posts = [after, before]
+    res = ctx.pipeline.check_source(sid)
+    assert res["baseline"] is True and res["new"] == 1
+    drain(ctx)
+    refs = {r["url"].rsplit("/", 1)[-1]: r["status"] for r in c.get("/api/references").json()}
+    assert refs == {"post": "ready"}  # the older post is skipped (skipped posts aren't listed)

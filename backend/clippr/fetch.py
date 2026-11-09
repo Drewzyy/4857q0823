@@ -114,6 +114,23 @@ def _post(e: dict, fallback_url: str = "") -> RemotePost:
     )
 
 
+# yt-dlp's messages for the usual account problems, reworded so a person knows what to do.
+_FRIENDLY = [
+    (re.compile(r"secondary user ID|universal data for rehydration", re.I),
+     "TikTok didn't return this account's videos. Vyral tries again on the next check; if it keeps happening, make sure the account is public."),
+    (re.compile(r"account is (likely )?(either )?private|videos are private", re.I), "This account or its videos are private, so Vyral can't see its posts."),
+    (re.compile(r"does not have any videos", re.I), "This account hasn't posted any videos yet."),
+]
+
+
+def _friendly(message: str) -> str:
+    msg = re.sub(r"\x1b\[[0-9;]*m", "", message).replace("ERROR: ", "")
+    for pattern, text in _FRIENDLY:
+        if pattern.search(msg):
+            return text
+    return re.sub(r"^\[[\w:]+\] [^:]+: ", "", msg)[:300]  # drop yt-dlp's "[tiktok:user] name: " prefix
+
+
 class YtDlpFetcher:
     def _opts(self, **extra) -> dict:
         return {"quiet": True, "no_warnings": True, "noprogress": True, "socket_timeout": 30, "retries": 3,
@@ -127,8 +144,7 @@ class YtDlpFetcher:
                 info = ydl.extract_info(url, download=download)
                 return ydl.sanitize_info(info) if not download else info
         except yt_dlp.utils.DownloadError as e:
-            msg = re.sub(r"\x1b\[[0-9;]*m", "", str(e)).replace("ERROR: ", "")
-            raise FetchError(msg[:300])
+            raise FetchError(_friendly(str(e)))
 
     def recent_posts(self, platform: str, username: str, profile_url: str, limit: int) -> list[RemotePost]:
         if platform == "tiktok":

@@ -117,8 +117,11 @@ class Pipeline:
             for p in reversed(posts):  # oldest first
                 if p.id in known:
                     continue
-                ref = self._new_ref(s, src, p, "baseline" if first else "new")
-                if not first:
+                # The first successful check only skips what was posted before the account was added,
+                # so posts made while earlier checks were failing still get clipped.
+                is_new = not first or bool(p.posted_at and p.posted_at > src.created_at)
+                ref = self._new_ref(s, src, p, "new" if is_new else "baseline")
+                if is_new:
                     new_refs.append(ref.id)
             src.baseline_done, src.last_synced_at, src.last_error, src.error_count = True, now(), None, 0
         for rid in new_refs:
