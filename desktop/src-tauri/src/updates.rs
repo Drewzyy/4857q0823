@@ -5,13 +5,14 @@
 //! this shell, so progress and requests ("check now", "restart to update") travel through the
 //! service's /api/app-update endpoints, which this loop polls.
 
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, Url};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 const CHECK_EVERY: Duration = Duration::from_secs(4 * 3600);
@@ -36,33 +37,33 @@ pub fn api(port: u16, token: &str, method: &str, path: &str, body: Option<&Value
     serde_json::from_str(body).ok()
 }
 
+/// Appends a line to logs/updater.log, so a failed update leaves a trace even after a restart.
+fn log(app: &AppHandle, msg: &str) {
+    let Ok(dir) = app.path().app_data_dir() else { return };
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(dir.join("logs").join("updater.log")) {
+        let _ = writeln!(f, "[{secs}] {msg}");
+    }
+}
+
 fn report(port: u16, token: &str, v: Value) {
     let _ = api(port, token, "POST", "/api/app-update/report", Some(&v));
 }
 
-fn updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
-    let mut b = app.updater_builder();
-    // Lets tests point the app at a local update server.
-    if let Ok(u) = std::env::var("VYRAL_UPDATE_URL") {
-        let url = Url::parse(&u).map_err(|e| e.to_string())?;
-        b = b.endpoints(vec![url]).map_err(|e| e.to_string())?;
-    }
-    b.build().map_err(|e| e.to_string())
-}
-
 fn check_and_download(app: &AppHandle, port: u16, token: &str) {
     report(port, token, json!({"state": "checking"}));
-    let up = match updater(app) {
+    let up = match app.updater() {
         Ok(u) => u,
-        Err(e) => return report(port, token, json!({"state": "error", "error": format!("Update check unavailable: {e}")})),
+        Err(e) => return fail(app, port, token, format!("Update check unavailable: {e}")),
     };
     let found = tauri::async_runtime::block_on(up.check());
     let update = match found {
         Ok(Some(u)) => u,
         Ok(None) => return report(port, token, json!({"state": "none"})),
-        Err(e) => return report(port, token, json!({"state": "error", "error": format!("Couldn't check for updates: {e}")})),
+        Err(e) => return fail(app, port, token, format!("Couldn't check for updates: {e}")),
     };
     let version = update.version.clone();
+    log(app, &format!("downloading {version}"));
     let notes = update.body.clone().unwrap_or_default();
     report(port, token, json!({"state": "downloading", "version": version, "notes": notes, "progress": 0.0}));
     let mut got: u64 = 0;
@@ -82,22 +83,40 @@ fn check_and_download(app: &AppHandle, port: u16, token: &str) {
     match result {
         Ok(bytes) => {
             *app.state::<Pending>().0.lock().unwrap() = Some((update, bytes));
+            log(app, &format!("{version} downloaded and verified"));
             report(port, token, json!({"state": "ready", "version": version, "notes": notes}));
         }
-        Err(e) => report(port, token, json!({"state": "error", "version": version, "error": format!("Download failed: {e}")})),
+        Err(e) => fail(app, port, token, format!("Download of {version} failed: {e}")),
     }
 }
 
-/// Installs a downloaded update. Stops the background service first so its files can be replaced.
-/// Returns false if there was nothing to install.
-pub fn install_pending(app: &AppHandle) -> bool {
+fn fail(app: &AppHandle, port: u16, token: &str, error: String) {
+    log(app, &error);
+    report(port, token, json!({"state": "error", "error": error}));
+}
+
+/// Installs a downloaded update. Ok(false) means nothing was waiting to be installed.
+///
+/// Windows' installer replaces files the background service has open, so the service stops first
+/// (and on success the installer takes over and this process exits inside `install`). On macOS the
+/// app bundle is swapped in one step while everything keeps running, so a failed install leaves
+/// the app fully working and able to show the error; the service only stops once the swap worked.
+pub fn install_pending(app: &AppHandle) -> Result<bool, String> {
     let pending = app.state::<Pending>().0.lock().unwrap().take();
-    let Some((update, bytes)) = pending else { return false };
+    let Some((update, bytes)) = pending else { return Ok(false) };
+    log(app, &format!("installing {}", update.version));
+    if cfg!(windows) {
+        crate::stop_service(app);
+        std::thread::sleep(Duration::from_millis(1500));
+    }
+    if let Err(e) = update.install(bytes) {
+        let msg = format!("Couldn't install {}: {e}", update.version);
+        log(app, &msg);
+        return Err(msg);
+    }
     crate::stop_service(app);
-    std::thread::sleep(Duration::from_millis(1500));
-    // On Windows this hands over to the installer, which closes and reopens Vyral.
-    let _ = update.install(bytes);
-    true
+    log(app, "installed, restarting");
+    Ok(true)
 }
 
 pub fn run(app: AppHandle, port: u16, token: String) {
@@ -109,10 +128,13 @@ pub fn run(app: AppHandle, port: u16, token: String) {
             let Some(st) = api(port, &token, "GET", "/api/app-update", None) else { continue };
             if st["install_requested"].as_bool() == Some(true) {
                 report(port, &token, json!({"state": "installing"}));
-                if install_pending(&app) {
-                    app.restart();
+                match install_pending(&app) {
+                    Ok(true) => app.restart(),
+                    // On Windows the service is already stopped; restarting brings it back.
+                    Err(_) if cfg!(windows) => app.restart(),
+                    Err(e) => fail(&app, port, &token, format!("{e}. Your current version keeps running.")),
+                    Ok(false) => fail(&app, port, &token, "The downloaded update was lost. Checking again.".into()),
                 }
-                report(port, &token, json!({"state": "error", "error": "The downloaded update was lost. Checking again."}));
                 last_check = None;
                 continue;
             }

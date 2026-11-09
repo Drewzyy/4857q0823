@@ -233,7 +233,7 @@ fn main() {
                     }
                     "quit" => {
                         // A downloaded update installs on the way out, so the next launch is the new version.
-                        updates::install_pending(app);
+                        let _ = updates::install_pending(app); // failures are logged; quitting goes ahead either way
                         app.exit(0)
                     }
                     _ => {}
