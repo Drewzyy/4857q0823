@@ -136,6 +136,15 @@ def _friendly(message: str) -> str:
     return re.sub(r"^\[[\w:]+\] [^:]+: ", "", msg)[:300]  # drop yt-dlp's "[tiktok:user] name: " prefix
 
 
+def use_bundled_ffmpeg() -> None:
+    """yt-dlp decides whether it can download part of a video (a stream section) without looking at the
+    ffmpeg_location option; its own command line sets this instead. Without it, a computer with no system
+    FFmpeg gets "ffmpeg is not installed" although Vyral ships one. Per thread, so call it before each use."""
+    from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
+
+    FFmpegPostProcessor._ffmpeg_location.set(ffmpeg_exe())
+
+
 class YtDlpFetcher:
     def _opts(self, **extra) -> dict:
         return {"quiet": True, "no_warnings": True, "noprogress": True, "socket_timeout": 30, "retries": 3,
@@ -143,6 +152,8 @@ class YtDlpFetcher:
 
     def _extract(self, url: str, download: bool = False, **opts) -> dict:
         import yt_dlp
+
+        use_bundled_ffmpeg()
 
         try:
             with yt_dlp.YoutubeDL(self._opts(**opts)) as ydl:
