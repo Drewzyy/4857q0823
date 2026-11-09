@@ -68,6 +68,7 @@ export interface AppSettings {
   processing: { max_concurrent_jobs: number; quality: string };
   publishing: { require_approval: boolean; allow_auto_publish_rules: boolean };
   privacy: { allow_cloud_upload_of_footage: boolean };
+  intake: { clipboard: boolean };
 }
 export interface RefPost {
   id: number; platform: string; url: string; title: string; thumbnail_url: string | null; posted_at: string | null;
@@ -210,6 +211,7 @@ export const api = {
   saveEdit: (clipId: number, e: ClipEditT) => request<{ rendering: number }>("PUT", `/clips/${clipId}/edit`, e),
   sourceUrl: (clipId: number) => `/api/media/clips/${clipId}/source?t=${encodeURIComponent(token())}`,
   references: () => request<RefPost[]>("GET", "/references"),
+  intake: (urls: string[]) => request<{ queued: number; ignored: number }>("POST", "/intake", { urls }),
   addReference: (b: { url: string; creator_id?: number | null; source_id?: number | null }) => request<{ id: number }>("POST", "/references", b),
   retryReference: (id: number, vod_url?: string) => request<RefPost>("POST", `/references/${id}/retry`, { vod_url: vod_url || null }),
   analytics: (f: { days: number; platform?: string; creator_id?: number | null }) => request<Analytics>("GET", "/analytics" + qs(f)),

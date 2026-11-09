@@ -124,6 +124,10 @@ class PrivacySettings(Strict):
     allow_cloud_upload_of_footage: bool = False
 
 
+class IntakeSettings(Strict):
+    clipboard: bool = True  # a copied TikTok / YouTube Shorts video link is made into a clip
+
+
 class AppSettings(Strict):
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
     captions: CaptionEngineSettings = Field(default_factory=CaptionEngineSettings)
@@ -132,6 +136,7 @@ class AppSettings(Strict):
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
     publishing: PublishingSettings = Field(default_factory=PublishingSettings)
     privacy: PrivacySettings = Field(default_factory=PrivacySettings)
+    intake: IntakeSettings = Field(default_factory=IntakeSettings)
 
 
 class TextOverlay(Strict):

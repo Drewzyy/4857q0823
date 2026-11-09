@@ -23,6 +23,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+mod clipboard;
 mod updates;
 
 struct Backend(Mutex<Option<CommandChild>>);
@@ -99,6 +100,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![HIDDEN_ARG])))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Backend(Mutex::new(None)))
         .manage(updates::Pending(Mutex::new(None)))
         .setup(|app| {
@@ -195,6 +197,7 @@ fn main() {
                         if let Ok(url) = Url::parse(&format!("http://127.0.0.1:{port}/")) {
                             let _ = win.navigate(url);
                         }
+                        clipboard::run(handle.clone(), port, token.clone());
                         updates::run(handle, port, token);
                         return;
                     }

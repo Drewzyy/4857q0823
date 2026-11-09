@@ -24,7 +24,17 @@ export default function ActivityPage() {
 
   const submit = async () => {
     setBusy(true);
-    try { await api.addReference({ url: url.trim(), creator_id: creatorId }); setUrl(""); toast("ok", "Working on it. It'll show up below."); refresh(); }
+    const links = url.split(/\s+/).filter(Boolean);
+    try {
+      if (links.length > 1) {  // a batch: each video link is queued; Vyral works out each one's streamer
+        const r = await api.intake(links);
+        toast(r.queued ? "ok" : "err", r.queued ? `Queued ${r.queued} link${r.queued === 1 ? "" : "s"}.${r.ignored ? ` Skipped ${r.ignored} that weren't video links.` : ""}` : "None of those are TikTok or YouTube Shorts video links.");
+      } else {
+        await api.addReference({ url: links[0], creator_id: creatorId });
+        toast("ok", "Working on it. It'll show up below.");
+      }
+      setUrl(""); refresh();
+    }
     catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -36,7 +46,7 @@ export default function ActivityPage() {
 
       <form className="card row wrap" style={{ marginBottom: 16 }} onSubmit={(e) => { e.preventDefault(); if (url.trim()) void submit(); }}>
         <Wand2 size={16} color="var(--accent-hi)" />
-        <input className="input" style={{ flex: 1, minWidth: 260 }} aria-label="Video link" placeholder="Paste a TikTok or YouTube Shorts link to make a clip from it now"
+        <input className="input" style={{ flex: 1, minWidth: 260 }} aria-label="Video link" placeholder="Paste TikTok or YouTube Shorts links (one or many) to clip them now"
           value={url} onChange={(e) => setUrl(e.target.value)} />
         <select className="select" style={{ width: 230 }} aria-label="Creator for pasted link" value={creatorId ?? ""} onChange={(e) => setCreatorId(e.target.value ? Number(e.target.value) : null)}>
           <option value="">Any streamer (from the caption)</option>{(creators.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>

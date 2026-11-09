@@ -43,6 +43,8 @@ function General() {
       <div className="card stack">
         <h2>Monitoring</h2>
         <label className="row"><Toggle label="Watch source accounts" checked={s.monitoring.enabled} onChange={(v) => up("monitoring", { enabled: v })} />Watch source accounts and make clips automatically</label>
+        <label className="row"><Toggle label="Clip copied links" checked={s.intake.clipboard} onChange={(v) => up("intake", { clipboard: v })} />
+          Clip TikTok and YouTube Shorts links I copy (including from my iPhone through Universal Clipboard)</label>
         <div className="grid cols-2">
           <div className="field"><label htmlFor="int">Check each account every {s.monitoring.interval_minutes} minutes</label>
             <input id="int" type="range" min={5} max={60} step={5} value={s.monitoring.interval_minutes} onChange={(e) => up("monitoring", { interval_minutes: Number(e.target.value) })} />

@@ -456,3 +456,22 @@ def test_a_render_overtaken_by_a_newer_edit_is_dropped(env):
     assert ctx.pipeline.rerender([oid]) == {"rendered": 0}
     out = c.get("/api/clips").json()[0]["outputs"][0]
     assert out["version"] == before  # the stale render was thrown away, not saved over the video
+
+
+def test_copied_and_batch_pasted_links_become_clips_once(env):
+    ctx, c, fake = env
+    setup_accounts(c)
+    link = "https://www.tiktok.com/@someclipper/video/7351234567890"
+    fake.post_details = lambda url: RemotePost(url.rsplit("/", 1)[-1], url, "he did NOT #streamera")
+    r = c.post("/api/intake", json={"urls": [link, link, "https://www.tiktok.com/@someclipper", "my notes"], "from_clipboard": True}).json()
+    assert r == {"queued": 1, "ignored": 3}  # one video link; a profile link and other text are ignored
+    drain(ctx)
+    assert [x["status"] for x in c.get("/api/references").json()] == ["ready"]
+    # Copying it again later doesn't make it twice.
+    assert c.post("/api/intake", json={"urls": [link], "from_clipboard": True}).json()["queued"] == 1
+    drain(ctx)
+    assert len(c.get("/api/clips").json()) == 1
+    # Clipboard pickup can be switched off; batch paste still works.
+    c.put("/api/settings", json={"intake": {"clipboard": False}})
+    assert c.post("/api/intake", json={"urls": [link], "from_clipboard": True}).json()["queued"] == 0
+    assert c.post("/api/intake", json={"urls": ["https://vm.tiktok.com/ZMabc123/", "https://www.youtube.com/shorts/xyz_1"]}).json()["queued"] == 2

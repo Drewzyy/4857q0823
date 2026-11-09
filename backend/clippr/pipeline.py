@@ -149,10 +149,20 @@ class Pipeline:
         s.flush()
         return ref
 
-    def add_manual(self, url: str, source_id: int | None, creator_id: int | None) -> int:
-        """User pasted a post link: build a clip from it right away."""
+    def intake_link(self, url: str) -> dict:
+        """A link the user copied or pasted in a batch: clip it unless Vyral already has (or is making) it."""
         post = self.ctx.fetcher.post_details(url)
-        platform = "youtube" if "youtu" in url else "instagram" if "instagram.com" in url else "tiktok"
+        with self.ctx.db.session() as s:
+            have = s.scalar(select(ReferenceVideo.status).where(ReferenceVideo.platform == _link_platform(url),
+                                                               ReferenceVideo.external_id == post.id))
+        if have and have not in ("failed", "no_match", "needs_setup"):
+            return {"skipped": f"already {have}"}
+        return {"reference_id": self.add_manual(url, None, None, post)}
+
+    def add_manual(self, url: str, source_id: int | None, creator_id: int | None, post: RemotePost | None = None) -> int:
+        """User pasted a post link: build a clip from it right away."""
+        post = post or self.ctx.fetcher.post_details(url)
+        platform = _link_platform(url)
         with self.ctx.db.session() as s:
             existing = s.scalar(select(ReferenceVideo).where(ReferenceVideo.platform == platform, ReferenceVideo.external_id == post.id))
             if existing:
@@ -497,6 +507,10 @@ def _hms(sec: float) -> str:
     return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
 
 
+def _link_platform(url: str) -> str:
+    return "youtube" if "youtu" in url else "instagram" if "instagram.com" in url else "tiktok"
+
+
 def register(ctx: Any) -> Pipeline:
     p = Pipeline(ctx)
     ctx.pipeline = p
@@ -504,6 +518,7 @@ def register(ctx: Any) -> Pipeline:
     q.register("monitor.tick", lambda jc, pl: p.tick())
     q.register("source.check", lambda jc, pl: p.check_source(pl["source_id"]))
     q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url")))
+    q.register("intake.link", lambda jc, pl: p.intake_link(pl["url"]))
     q.register("notify.discord", lambda jc, pl: p.send_discord(pl))
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())
     q.register("clip.rerender", lambda jc, pl: p.rerender(pl["output_ids"]))

@@ -25,6 +25,7 @@ from ..media.overlay import Word, apply_text_edit
 from ..models import Clip, ClipOutput, Creator, ReferenceVideo, Setting, SourceAccount
 from ..schemas import ClipEdit, OverlaySettings
 from .deps import ApiError, ctx, db, get_or_404
+from .system import load_settings
 
 router = APIRouter()
 
@@ -291,6 +292,26 @@ def add_reference(body: ManualIn, c=Depends(ctx), s: Session = Depends(db)):
     except FetchError as e:
         raise ApiError(502, "fetch_failed", f"Couldn't open that video: {e}")
     return {"id": rid}
+
+
+# Single TikTok videos (including vm./vt. share links) and YouTube Shorts.
+VIDEO_LINK = re.compile(r"^https://(?:(?:www\.|m\.)?tiktok\.com/@[\w.-]+/video/\d+|(?:vm|vt)\.tiktok\.com/\w+|(?:www\.|m\.)?youtube\.com/shorts/[\w-]+)/?(?:\?\S*)?$")
+
+
+class IntakeIn(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=50)
+    from_clipboard: bool = False
+
+
+@router.post("/intake")
+def intake(body: IntakeIn, c=Depends(ctx), s: Session = Depends(db)):
+    """Video links to clip: copied (the desktop app watches the clipboard) or pasted in a batch."""
+    if body.from_clipboard and not load_settings(s).intake.clipboard:
+        return {"queued": 0, "ignored": len(body.urls)}
+    links = list(dict.fromkeys(u.strip() for u in body.urls if VIDEO_LINK.match(u.strip())))
+    for url in links:  # a link Vyral already has (or is making) is skipped when the job runs
+        c.jobs.enqueue("intake.link", {"url": url}, max_attempts=3, session=s)
+    return {"queued": len(links), "ignored": len(body.urls) - len(links)}
 
 
 class RetryIn(BaseModel):

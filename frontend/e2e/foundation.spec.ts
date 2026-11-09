@@ -248,3 +248,20 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
   await expect(page.getByLabel("Text 1", { exact: true })).toHaveValue("WAIT FOR IT");
   await expect(page.getByRole("group", { name: "Speed" }).getByRole("button", { name: "1.5x" })).toHaveClass(/on/);
 });
+
+test("paste several links at once, and switch clipboard pickup off", async ({ page }) => {
+  await page.goto("/activity");
+  await page.getByLabel("Video link").fill("https://www.tiktok.com/@clipper/video/111 https://www.youtube.com/shorts/abc_1\nnot-a-link");
+  await page.getByRole("button", { name: "Make clip" }).click();
+  await expect(page.getByText("Queued 2 links. Skipped 1 that weren't video links.")).toBeVisible();
+  await page.goto("/settings");
+  await page.getByRole("tab", { name: "Monitoring & storage" }).click();
+  const pickup = page.getByRole("switch", { name: "Clip copied links" });
+  await expect(pickup).toBeChecked();
+  await pickup.click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Settings saved")).toBeVisible();
+  await page.reload();
+  await page.getByRole("tab", { name: "Monitoring & storage" }).click();
+  await expect(page.getByRole("switch", { name: "Clip copied links" })).not.toBeChecked();
+});
