@@ -18,6 +18,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 const CHECK_EVERY: Duration = Duration::from_secs(3600);
 const FIRST_CHECK_AFTER: Duration = Duration::from_secs(45);
+const RETRY_AFTER_ERROR: Duration = Duration::from_secs(600);
 /// Names the version whose automatic install failed; that version then waits for the user's click.
 const AUTO_FAILED: &str = ".auto-update-failed";
 /// Tells the next launch to stay in the background, so an app that updated while hidden stays hidden.
@@ -73,17 +74,27 @@ fn report(port: u16, token: &str, v: Value) {
     let _ = api(port, token, "POST", "/api/app-update/report", Some(&v));
 }
 
-fn check_and_download(app: &AppHandle, port: u16, token: &str) {
+/// Returns false if the check or download failed (worth retrying sooner than the next hourly check).
+fn check_and_download(app: &AppHandle, port: u16, token: &str) -> bool {
     report(port, token, json!({"state": "checking"}));
     let up = match app.updater() {
         Ok(u) => u,
-        Err(e) => return fail(app, port, token, format!("Update check unavailable: {e}")),
+        Err(e) => {
+            fail(app, port, token, format!("Update check unavailable: {e}"));
+            return false;
+        }
     };
     let found = tauri::async_runtime::block_on(up.check());
     let update = match found {
         Ok(Some(u)) => u,
-        Ok(None) => return report(port, token, json!({"state": "none"})),
-        Err(e) => return fail(app, port, token, format!("Couldn't check for updates: {e}")),
+        Ok(None) => {
+            report(port, token, json!({"state": "none"}));
+            return true;
+        }
+        Err(e) => {
+            fail(app, port, token, format!("Couldn't check for updates: {e}"));
+            return false;
+        }
     };
     let version = update.version.clone();
     log(app, &format!("downloading {version}"));
@@ -108,8 +119,12 @@ fn check_and_download(app: &AppHandle, port: u16, token: &str) {
             *app.state::<Pending>().0.lock().unwrap() = Some((update, bytes));
             log(app, &format!("{version} downloaded and verified"));
             report(port, token, json!({"state": "ready", "version": version, "notes": notes}));
+            true
         }
-        Err(e) => fail(app, port, token, format!("Download of {version} failed: {e}")),
+        Err(e) => {
+            fail(app, port, token, format!("Download of {version} failed: {e}"));
+            false
+        }
     }
 }
 
@@ -187,8 +202,10 @@ pub fn run(app: AppHandle, port: u16, token: String) {
                 Some(t) => t.elapsed() >= CHECK_EVERY,
             };
             if (st["check_requested"].as_bool() == Some(true) || (due && waiting.is_none())) && st["state"] != "downloading" {
-                last_check = Some(Instant::now());
-                check_and_download(&app, port, &token);
+                let ok = check_and_download(&app, port, &token);
+                // After a failure, check again in 10 minutes rather than an hour.
+                let now = Instant::now();
+                last_check = Some(if ok { now } else { now.checked_sub(CHECK_EVERY - RETRY_AFTER_ERROR).unwrap_or(now) });
             }
         }
     });

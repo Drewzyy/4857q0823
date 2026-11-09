@@ -115,12 +115,13 @@ jobs:
         run: |
           npm ci
           BUNDLES="${{ matrix.bundles }}"
+          ARGS=(--bundles "$BUNDLES")
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "No update-signing key yet: building without auto-update files."
-            npx tauri build --bundles "$BUNDLES" --config '{"bundle":{"createUpdaterArtifacts":false}}'
-          else
-            npx tauri build --bundles "$BUNDLES"
+            ARGS+=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
           fi
+          # The bundler downloads its installer tools; one retry rides out GitHub hiccups (e.g. a 504).
+          npx tauri build "${ARGS[@]}" || { echo "Build failed; retrying once in 30 s"; sleep 30; npx tauri build "${ARGS[@]}"; }
 
       - name: Install the app like a person would (Mac)
         if: runner.os == 'macOS'
@@ -194,7 +195,8 @@ jobs:
 
   release:
     needs: build
-    if: ${{ !cancelled() }}  # publish whichever installers passed every check
+    # Only publish when both installers passed every check: a release missing one platform would
+    # leave that platform's users without the download and without updates.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -246,7 +248,9 @@ jobs:
               GH_TOKEN="$RELEASES_TOKEN" gh api -X PUT "repos/$REPO/contents/README.md" -f message="Add README" -f content="$(base64 -w0 readme.md)" >/dev/null
               echo "Initialized $REPO with a README"
             fi
-            GH_TOKEN="$RELEASES_TOKEN" gh release create "v$VERSION" dist/* --repo "$REPO" --title "Vyral $VERSION" --notes-file notes.md --latest
+            # Upload as a draft, then publish in one step, so the app never sees a release without its files.
+            GH_TOKEN="$RELEASES_TOKEN" gh release create "v$VERSION" dist/* --repo "$REPO" --title "Vyral $VERSION" --notes-file notes.md --draft
+            GH_TOKEN="$RELEASES_TOKEN" gh release edit "v$VERSION" --repo "$REPO" --draft=false --latest
             echo "Published to https://github.com/$REPO/releases/latest"
           else
             echo "No RELEASES_TOKEN secret yet: publishing to this private repo only (no auto-updates)."
@@ -323,11 +327,15 @@ jobs:
           [ -n "$TOKEN" ] || { echo "No app token in the page"; exit 1; }
           echo "Running $OLD. Asking it to check for updates."
 
-          curl -sf -X POST -H "X-Clippr-Token: $TOKEN" http://127.0.0.1:8765/api/app-update/check >/dev/null
-          for i in $(seq 1 100); do
-            S=$(state); echo "$S" | grep -q '"state":"ready"' && break
-            echo "$S" | grep -q '"state":"error"' && { echo "Update failed before installing: $S"; exit 1; }
-            sleep 3
+          # GitHub can take a minute to serve a just-published release everywhere, so a failed check is retried.
+          for try in 1 2 3 4 5; do
+            curl -sf -X POST -H "X-Clippr-Token: $TOKEN" http://127.0.0.1:8765/api/app-update/check >/dev/null
+            for i in $(seq 1 100); do
+              S=$(state); echo "$S" | grep -q '"state":"\(ready\|error\)"' && break
+              sleep 3
+            done
+            echo "$S" | grep -q '"state":"ready"' && break
+            echo "Check $try failed: $S"; sleep 20
           done
           echo "$S" | grep -q '"state":"ready"' && echo "$S" | grep -q "\"version\":\"$NEW\"" || { echo "Not ready with $NEW: $S"; exit 1; }
 
