@@ -31,6 +31,7 @@ from .schemas import ClipEdit, OverlaySettings, lenient
 log = logging.getLogger("clippr.pipeline")
 POSTS_PER_CHECK = 12
 LIVE_RETRY_SECONDS = 1800
+MAX_STREAMS_SEARCHED = 20  # past this many streams, give up instead of searching on for hours
 LIVE_WAITS = 24  # a still-live stream is looked at again every 30 minutes, for up to 12 hours
 
 
@@ -209,6 +210,14 @@ class Pipeline:
             s.add(asset)
         return feats
 
+    def _spoken(self, audio: Path, names: list[str]) -> str:
+        """What's said in the clip, to hear which streamer it is. Empty if speech recognition isn't available."""
+        try:
+            return " ".join(w.text for w in self.ctx.transcriber.words(audio, names))
+        except Exception:
+            log.exception("listening for a name failed")
+            return ""
+
     def _twitch_origin(self, url: str, ref_feats, candidates: list, account: str | None, live: list) -> tuple | None:
         """A Twitch clip says which saved stream it's from and where: use that instead of searching by sound.
         A quick sound check around that spot confirms it (and fine-tunes the start)."""
@@ -299,17 +308,32 @@ class Pipeline:
             ref_audio = self.ctx.fetcher.download_audio(ref_url, work / "ref")
             ref_feats = match.extract_features(ref_audio)
 
+            # Only the streamers the post points to are searched: a Lacy clip isn't in Speed's streams. Clues are the
+            # caption, hashtags and posting account; if those name nobody, the names said out loud in the clip.
+            clue = f"{ref_title or ''} {account or ''}"
+            pointed = identify.named(candidates, clue)
+            if not pointed and len(candidates) > 1:
+                self._set(rid, "processing", "Listening for the streamer's name")
+                spoken = self._spoken(ref_audio, [n for _, n, _ in candidates])
+                pointed = identify.named(candidates, spoken)
+                clue = f"{clue} {spoken}"
+            covering = candidates  # every streamer the account covers, for picking pages below
+            if pointed:
+                candidates = identify.rank_candidates(pointed, clue)
+
             found, searched, live = None, 0, []
             if from_twitch and not vod_override:
                 found = self._twitch_origin(ref_url, ref_feats, candidates, account, live)
             if not found and not live:
                 self._set(rid, "processing", "Finding the most likely streams")
-            for v, cid, cname in ([] if found or live else self._search_order(candidates, f"{ref_title or ''} {account or ''}", posted_at, cfg.monitoring.streams_to_search)):
+            for v, cid, cname in ([] if found or live else self._search_order(candidates, clue, posted_at, cfg.monitoring.streams_to_search)):
                 if stop_requested():  # the user pressed Stop; the job is already marked cancelled
                     return {"status": "stopped"}
                 if v.is_live:
                     live.append(cname)  # downloading a stream that's still going would never finish
                     continue
+                if searched >= MAX_STREAMS_SEARCHED:
+                    break  # well past where a recent clip's moment would be
                 searched += 1
                 self._set(rid, "processing", f"Searching {cname}'s stream {searched}: {v.title or v.url}"[:300])
                 m = match.find_in_stream(ref_feats, self._vod_features(v.url, v.title))
@@ -338,9 +362,9 @@ class Pipeline:
             # A page tied to another streamer this account also covers doesn't get the clip (B's moment
             # isn't A's content). Every other routed page does: pages tied to this streamer or to nobody,
             # and pages the user routed this account to on purpose, like a group page for its members.
-            covered = {cid for cid, _, _ in candidates} if src else set()
+            covered = {cid for cid, _, _ in covering} if src else set()
             # A group's page (e.g. The Core) also takes clips of its members: their channels overlap.
-            chans = {cid: {identify.channel_handle(c).lower() for c in chs} - {""} for cid, _, chs in candidates}
+            chans = {cid: {identify.channel_handle(c).lower() for c in chs} - {""} for cid, _, chs in covering}
             group = {cid for cid, ch in chans.items() if ch & chans.get(matched_id, set())}
             # A page set to several streamers takes a clip of any of them; a page set to none takes everyone's.
             dest_info = [d[:5] for d in all_dests if not d[5] or matched_id in d[5] or d[5] & group or (src and not d[5] & covered)]

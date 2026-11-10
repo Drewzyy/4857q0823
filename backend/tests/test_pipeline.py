@@ -683,3 +683,30 @@ def test_one_name_covers_a_whole_paste(env):
     from clippr.models import Job
     with ctx.db.session() as s:
         assert {j.payload["creator_id"] for j in s.query(Job).filter(Job.kind == "intake.link")} == {jason}
+
+
+def test_a_named_streamer_is_the_only_one_searched(env):
+    """A Lacy clip isn't looked for in Speed's streams."""
+    ctx, c, fake = env
+    c.post("/api/creators", json={"name": "Lacy", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/lacy"]})
+    c.post("/api/creators", json={"name": "Speed", "clip_permission": True, "vod_channels": ["https://www.youtube.com/@IShowSpeed"]})
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "any page"})
+    fake.post_details = lambda url: RemotePost("L1", url, "lacy is crazy #lacy #fyp")
+    c.post("/api/references", json={"url": "https://www.tiktok.com/@clips/video/1"})
+    drain(ctx)
+    searched = [x[1] for x in fake.calls if x[0] == "vods"]
+    assert searched and all("lacy" in u for u in searched)
+
+
+def test_search_gives_up_after_twenty_streams(env, monkeypatch):
+    from clippr import pipeline
+    ctx, c, fake = env
+    monkeypatch.setattr(pipeline, "MAX_STREAMS_SEARCHED", 1)
+    c.post("/api/creators", json={"name": "Lacy", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/lacy"]})
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "any page"})
+    fake.post_details = lambda url: RemotePost("L2", url, "lacy")
+    monkeypatch.setattr(ctx.pipeline, "_vod_features", lambda url, title: __import__("numpy").zeros((10, 1)))
+    c.post("/api/references", json={"url": "https://www.tiktok.com/@clips/video/2"})
+    drain(ctx)
+    ref = c.get("/api/references").json()[0]
+    assert ref["status"] == "no_match" and "last 1 stream" in ref["status_detail"]

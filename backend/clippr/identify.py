@@ -45,3 +45,8 @@ def rank_candidates(candidates: list[Candidate], text: str) -> list[Candidate]:
         best_channel = scored[0][0] if scored else 0
         ranked.append((mention_score(name, text) + best_channel, (cid, name, [ch for _, _, ch in scored])))
     return [c for _, c in sorted(ranked, key=lambda t: -t[0])]
+
+
+def named(candidates: list[Candidate], text: str) -> list[Candidate]:
+    """The streamers the text names (name, channel handle, hashtag or @mention), or [] if it names none."""
+    return [c for c in candidates if mention_score(c[1], text) or any(mention_score(channel_handle(ch), text) for ch in c[2])]
