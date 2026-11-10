@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { Bell, ExternalLink, Send, ShieldCheck, Trash2 } from "lucide-react";
-import { api, type AppSettings } from "../lib/api";
+import { api, type AppSettings, type NotifyCategory, type NotifyState } from "../lib/api";
 import { ErrorNote, Loading, relTime, Toggle, useToast } from "../components/ui";
 
 type Tab = "general" | "notifications" | "security" | "shortcuts";
@@ -229,16 +229,76 @@ function Notifications() {
         )}
       </div>
       <div className="card stack">
-        <h2>Ping me when</h2>
-        {([["on_new_post", "A source account posts a new video", "Says which account posted, with a link."],
-          ["on_clip_ready", "A clip is ready to upload", "Says which pages and platforms it's for."],
-          ["on_problem", "Vyral couldn't make a clip", "For example the moment wasn't in the recent streams, or setup is missing."]] as const).map(([k, l, h]) => (
-          <label key={k} className="row" style={{ alignItems: "flex-start" }}>
-            <Toggle label={l} checked={data[k]} onChange={(v) => run(k, async () => set(await api.saveNotifications({ [k]: v })))} />
-            <span><span>{l}</span><br /><span className="small faint">{h}</span></span>
-          </label>
-        ))}
+        <h2>What to send</h2>
+        <p className="small faint">Each kind of update can go to its own Discord channel: paste that channel's webhook next to it. Kinds without one use the channel above.</p>
+        {data.categories.map((cat) => <ChannelRow key={cat.key} cat={cat} busy={busy} run={run} set={set} />)}
+        <div className="grid cols-2">
+          <div className="field"><label htmlFor="minp">Only send</label>
+            <select id="minp" className="select" value={data.min_priority} onChange={(e) => run("minp", async () => set(await api.saveNotifications({ min_priority: e.target.value as NotifyState["min_priority"] })))}>
+              <option value="low">Everything</option><option value="normal">Skip minor updates (like each new post found)</option>
+              <option value="high">Only important things</option><option value="urgent">Only urgent things</option></select></div>
+          <div className="field"><span className="label-text">Quiet hours (this computer's time)</span>
+            <QuietHours start={data.quiet_start} end={data.quiet_end} onSave={(start, end) => run("quiet", async () => set(await api.saveNotifications({ quiet_start: start, quiet_end: end })))} />
+            <span className="hint">During quiet hours updates wait until the end. Urgent ones still come through.</span></div>
+        </div>
       </div>
+      <History />
+    </div>
+  );
+}
+
+function ChannelRow({ cat, busy, run, set }: { cat: NotifyCategory; busy: string | null; run: (k: string, fn: () => Promise<unknown>) => Promise<void>; set: (d: NotifyState) => void }) {
+  const toast = useToast();
+  const [url, setUrl] = useState("");
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="list-row" style={{ flexWrap: "wrap", alignItems: "center" }}>
+      <Toggle label={cat.label} checked={cat.enabled} onChange={(v) => run(cat.key, async () => set(await api.saveNotifications({ categories: { [cat.key]: v } })))} />
+      <span style={{ flex: 1 }}>{cat.label}</span>
+      {cat.own_webhook_hint ? <span className="pill ok nodot">Own channel {cat.own_webhook_hint}</span> : <span className="small faint">Main channel</span>}
+      <button className="btn ghost sm" onClick={() => setOpen(!open)}>{open ? "Close" : cat.own_webhook_hint ? "Change" : "Own channel"}</button>
+      {open && (
+        <form className="row" style={{ width: "100%", marginTop: 6 }} onSubmit={(e) => { e.preventDefault(); void run(`ch-${cat.key}`, async () => {
+          set(await api.saveNotifications({ category_webhooks: { [cat.key]: url } })); setUrl(""); setOpen(false);
+          if (url.trim()) { await api.testNotification(cat.key); toast("ok", `Test sent to the ${cat.label} channel`); } else toast("ok", "Back to the main channel");
+        }); }}>
+          <input className="input" type="password" autoComplete="off" aria-label={`Webhook for ${cat.label}`} placeholder="Paste this channel's webhook, or leave empty for the main channel"
+            value={url} onChange={(e) => setUrl(e.target.value)} />
+          <button className="btn primary sm" disabled={busy !== null}>Save</button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function QuietHours({ start, end, onSave }: { start: string | null; end: string | null; onSave: (start: string, end: string) => void }) {
+  const [s, setS] = useState(start ?? ""), [e, setE] = useState(end ?? "");
+  return (
+    <div className="row">
+      <input className="input" type="time" aria-label="Quiet hours start" value={s} onChange={(ev) => setS(ev.target.value)} />
+      <span className="small faint">to</span>
+      <input className="input" type="time" aria-label="Quiet hours end" value={e} onChange={(ev) => setE(ev.target.value)} />
+      <button className="btn sm" disabled={!!s !== !!e || (s === (start ?? "") && e === (end ?? ""))} onClick={() => onSave(s, e)}>Save</button>
+      {start && <button className="btn ghost sm" onClick={() => { setS(""); setE(""); onSave("", ""); }}>Off</button>}
+    </div>
+  );
+}
+
+const DELIVERY: Record<string, string> = { sent: "Sent", queued: "Sending", held: "Waiting for quiet hours to end", failed: "Failed", off: "Not sent (turned off)", none: "Not sent (no channel)" };
+
+function History() {
+  const { data } = useQuery({ queryKey: ["events"], queryFn: () => api.events(), refetchInterval: 20_000 });
+  return (
+    <div className="card">
+      <h2 style={{ marginBottom: 8 }}>Recent notifications</h2>
+      {!data ? <Loading /> : data.length === 0 ? <p className="small faint">Nothing yet.</p> : (
+        <table className="table"><thead><tr><th>When</th><th>What</th><th>Discord</th></tr></thead><tbody>
+          {data.map((ev) => (
+            <tr key={ev.id}><td className="small muted" style={{ whiteSpace: "nowrap" }}>{relTime(ev.ts)}</td>
+              <td className="small"><div className="ellipsis" style={{ maxWidth: 440 }}>{ev.title}</div></td>
+              <td className="small" title={ev.delivery_error ?? undefined} style={{ color: ev.delivery === "failed" ? "#ff8a8d" : undefined }}>{DELIVERY[ev.delivery] ?? ev.delivery}</td></tr>
+          ))}</tbody></table>
+      )}
     </div>
   );
 }

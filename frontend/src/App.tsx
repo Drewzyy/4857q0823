@@ -14,10 +14,11 @@ import ActivityPage from "./pages/Activity";
 import UpdateBanner from "./components/UpdateBanner";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import EditorPage from "./pages/Editor";
+import AgentsPage from "./pages/Agents";
 
 const PAGES: Record<string, JSX.Element> = {
   "/": <Dashboard />, "/ready": <Ready />, "/activity": <ActivityPage />, "/sources": <Sources />, "/destinations": <Destinations />,
-  "/funnel": <FunnelPage />, "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />, "/editor": <EditorPage />,
+  "/funnel": <FunnelPage />, "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />, "/editor": <EditorPage />, "/agents": <AgentsPage />,
 };
 
 export default function App() {

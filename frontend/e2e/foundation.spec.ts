@@ -120,9 +120,9 @@ test("discord and storage settings", async ({ page }) => {
   await page.getByLabel("Discord webhook URL").fill("https://example.com/not-a-webhook");
   await page.getByRole("button", { name: "Save & test" }).click();
   await expect(page.getByText(/isn't a Discord webhook link/)).toBeVisible();
-  await page.getByRole("switch", { name: "A source account posts a new video" }).click();
+  await page.getByRole("switch", { name: "Content production" }).click();
   await page.reload();
-  await expect(page.getByRole("switch", { name: "A source account posts a new video" })).not.toBeChecked();
+  await expect(page.getByRole("switch", { name: "Content production" })).not.toBeChecked();
 
   await page.getByRole("tab", { name: "Monitoring & storage" }).click();
   await page.getByLabel("Accuracy").selectOption("best");
@@ -265,4 +265,17 @@ test("paste several links at once, and switch clipboard pickup off", async ({ pa
   await page.reload();
   await page.getByRole("tab", { name: "Monitoring & storage" }).click();
   await expect(page.getByRole("switch", { name: "Clip copied links" })).not.toBeChecked();
+});
+
+test("agents page shows real agents and what needs you", async ({ page }) => {
+  await page.goto("/agents");
+  await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
+  for (const name of ["Source Monitor", "Link Intake", "Video Production", "Performance Analyst", "Notifications", "Housekeeping"]) {
+    await expect(page.getByText(name, { exact: true }).first()).toBeVisible();
+  }
+  await expect(page.getByRole("heading", { name: "Needs you" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "Video Production" }).first()).toBeVisible();  // it made the seed clip
+  await page.goto("/");
+  await page.getByRole("link", { name: "Details" }).click();  // the dashboard's agents card leads here
+  await expect(page).toHaveURL(/\/agents$/);
 });

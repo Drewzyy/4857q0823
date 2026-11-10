@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Clapperboard, Download, GitFork, LayoutDashboard, Settings, Upload, Users, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Bot, Clapperboard, Download, GitFork, LayoutDashboard, Settings, Upload, Users, type LucideIcon } from "lucide-react";
 
 export interface ModuleDef {
   path: string; label: string; icon: LucideIcon; group: "Overview" | "Accounts" | "Coming next" | "";
@@ -8,6 +8,7 @@ export interface ModuleDef {
 // Single source of truth for navigation and for what is actually built.
 export const MODULES: ModuleDef[] = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard, group: "Overview", status: "ready" },
+  { path: "/agents", label: "Agents", icon: Bot, group: "Overview", status: "ready" },
   { path: "/ready", label: "Ready to Upload", icon: Download, group: "Overview", status: "ready" },
   { path: "/editor", label: "Video Editor", icon: Clapperboard, group: "Overview", status: "ready" },
   { path: "/activity", label: "Activity", icon: Activity, group: "Overview", status: "ready" },

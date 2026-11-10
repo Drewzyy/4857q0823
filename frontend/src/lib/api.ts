@@ -29,13 +29,11 @@ export interface Destination {
 export interface Route { id: number; source_id: number; destination_id: number; enabled: boolean; allow_cross_creator: boolean; blocked: boolean }
 export interface Funnel { sources: Source[]; destinations: Destination[]; routes: Route[]; layout: Record<string, { x: number; y: number }> }
 
-export interface Job { id: number; kind: string; status: string; attempts: number; max_attempts: number; error: string | null; created_at: string; finished_at: string | null }
 
 export interface Dashboard {
   accounts: { sources_total: number; sources_monitoring: number; destinations_total: number; creators: number; routes: number };
   pipeline: { posts_detected: number; in_progress: number; needs_attention: number; ready_to_upload: number; uploaded: number; clips_made: number };
   monitoring: { enabled: boolean; interval_minutes: number; watching: number; last_check: string | null; errors: number; retention_days: number };
-  jobs: { by_status: Record<string, number>; recent: Job[] };
   storage: { data_dir: string; used_bytes: number; disk_free_bytes: number; disk_total_bytes: number };
   secret_backend: string;
 }
@@ -73,7 +71,17 @@ export interface EditorData {
   edit: ClipEditT; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
 }
 export interface DiscordInbox { configured: boolean; channel_id: string | null; channel_name: string | null; server: string | null; bot: string | null; last_error: string | null; last_checked: number | null; last_unrecognized: string | null }
-export interface NotifyState { configured: boolean; webhook_hint: string | null; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }
+export type Priority = "low" | "normal" | "high" | "urgent";
+export interface NotifyCategory { key: string; label: string; enabled: boolean; own_webhook_hint: string | null }
+export interface NotifyState {
+  configured: boolean; webhook_hint: string | null; categories: NotifyCategory[];
+  min_priority: Priority; quiet_start: string | null; quiet_end: string | null;
+}
+export interface VyralEvent { id: number; ts: string; category: string; priority: Priority; title: string; body: string; link: string | null; delivery: string; delivery_error: string | null }
+export interface AgentJob { id: number; agent: string; kind: string; status: string; detail: string; error: string | null; attempts: number; created_at: string; started_at: string | null; finished_at: string | null }
+export interface Agent { key: string; name: string; does: string; state: "working" | "waiting" | "idle"; running: AgentJob[]; queued: number; done_24h: number; failed_24h: number }
+export interface NeedsYou { kind: string; count: number; title: string; link: string }
+export interface Intelligence { agents: Agent[]; recent: AgentJob[]; needs_you: NeedsYou[] }
 
 export interface AppUpdate {
   available: boolean; state: "idle" | "checking" | "none" | "downloading" | "ready" | "installing" | "error";
@@ -187,13 +195,16 @@ export const api = {
   installUpdate: () => request<AppUpdate>("POST", "/app-update/install"),
   checkSource: (id: number) => request<{ queued: boolean }>("POST", `/sources/${id}/check`),
   notifications: () => request<NotifyState>("GET", "/notifications"),
-  saveNotifications: (b: Partial<{ webhook_url: string; on_new_post: boolean; on_clip_ready: boolean; on_problem: boolean }>) => request<NotifyState>("PUT", "/notifications", b),
+  saveNotifications: (b: Partial<{ webhook_url: string; category_webhooks: Record<string, string>; categories: Record<string, boolean>;
+    min_priority: Priority; quiet_start: string; quiet_end: string }>) => request<NotifyState>("PUT", "/notifications", b),
+  events: (category?: string) => request<VyralEvent[]>("GET", "/events" + qs({ category, limit: 60 })),
+  intelligence: () => request<Intelligence>("GET", "/intelligence"),
   discordInbox: () => request<DiscordInbox>("GET", "/discord-inbox"),
   discordInboxChannels: () => request<{ id: string; name: string; server: string }[]>("GET", "/discord-inbox/channels"),
   setDiscordInbox: (b: { token?: string; channel_id?: string }) => request<DiscordInbox>("PUT", "/discord-inbox", b),
   removeDiscordInbox: () => request<void>("DELETE", "/discord-inbox"),
   removeWebhook: () => request<void>("DELETE", "/notifications/webhook"),
-  testNotification: () => request<{ sent: boolean }>("POST", "/notifications/test"),
+  testNotification: (category?: string) => request<{ sent: boolean }>("POST", "/notifications/test", category ? { category } : {}),
 };
 
 export interface ImportResult { added: number; skipped_duplicates: number; errors: { line: number; input: string; message: string }[] }

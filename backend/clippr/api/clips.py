@@ -10,19 +10,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import notify
 from ..audit import audit
 from ..fetch import VIDEO_LINK, FetchError
 from ..media.ffmpeg import probe
 from ..media.overlay import Word, apply_text_edit
-from ..models import Clip, ClipOutput, Creator, Job, ReferenceVideo, Setting, SourceAccount
+from ..models import Clip, ClipOutput, Creator, Job, ReferenceVideo, SourceAccount
 from ..schemas import ClipEdit, OverlaySettings, deep_merge, lenient
 from .deps import ApiError, ctx, db, get_or_404
 from .system import load_settings
@@ -351,59 +349,3 @@ def check_now(sid: int, c=Depends(ctx), s: Session = Depends(db)):
 
 
 # ---------------- notifications ----------------
-class NotifyIn(BaseModel):
-    webhook_url: str | None = Field(None, max_length=300)
-    on_new_post: bool | None = None
-    on_clip_ready: bool | None = None
-    on_problem: bool | None = None
-
-
-def _notify_state(s: Session, c) -> dict:
-    hook = (c.secrets.get(notify.SECRET_KEY) or {}).get("url")
-    return {"configured": bool(hook), "webhook_hint": ("…" + hook[-6:]) if hook else None, **notify.prefs(s)}
-
-
-@router.get("/notifications")
-def get_notifications(s: Session = Depends(db), c=Depends(ctx)):
-    return _notify_state(s, c)
-
-
-@router.put("/notifications")
-def put_notifications(body: NotifyIn, s: Session = Depends(db), c=Depends(ctx)):
-    if body.webhook_url is not None:
-        url = body.webhook_url.strip()
-        if not notify.valid_webhook(url):
-            raise ApiError(422, "invalid_webhook", "That isn't a Discord webhook link. In Discord: channel settings > Integrations > Webhooks > Copy Webhook URL.")
-        c.secrets.set(notify.SECRET_KEY, {"url": url})
-        audit(s, "notifications.webhook_set", "settings")
-    prefs = {k: v for k, v in body.model_dump(exclude_none=True).items() if k != "webhook_url"}
-    if prefs:
-        row = s.get(Setting, notify.SETTINGS_KEY)
-        merged = {**notify.prefs(s), **prefs}
-        if row:
-            row.value = merged
-        else:
-            s.add(Setting(key=notify.SETTINGS_KEY, value=merged))
-        s.flush()
-    return _notify_state(s, c)
-
-
-@router.delete("/notifications/webhook", status_code=204)
-def delete_webhook(s: Session = Depends(db), c=Depends(ctx)):
-    c.secrets.delete(notify.SECRET_KEY)
-    audit(s, "notifications.webhook_removed", "settings")
-
-
-@router.post("/notifications/test")
-def test_notification(c=Depends(ctx)):
-    hook = (c.secrets.get(notify.SECRET_KEY) or {}).get("url")
-    if not hook:
-        raise ApiError(409, "not_configured", "Add a Discord webhook first")
-    try:
-        with httpx.Client(timeout=15) as http:
-            notify.send(http, hook, {"content": "👋 Vyral is connected. You'll get pings here when source accounts post and when clips are ready."})
-    except notify.NotifyError as e:
-        raise ApiError(502, "discord_error", str(e))
-    except httpx.HTTPError:
-        raise ApiError(502, "network", "Couldn't reach Discord. Check your internet connection.")
-    return {"sent": True}

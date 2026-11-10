@@ -55,7 +55,6 @@ def health(request: Request, c=Depends(ctx), s: Session = Depends(db)):
 @router.get("/dashboard")
 def dashboard(c=Depends(ctx), s: Session = Depends(db)):
     count = lambda stmt: s.scalar(stmt) or 0  # noqa: E731
-    jobs_by_status = dict(s.execute(select(Job.status, func.count()).where(Job.kind != "monitor.tick").group_by(Job.status)).all())
     disk = shutil.disk_usage(c.config.data_dir)
     from datetime import datetime, timedelta, timezone
 
@@ -86,8 +85,6 @@ def dashboard(c=Depends(ctx), s: Session = Depends(db)):
             "errors": count(select(func.count()).select_from(SourceAccount).where(SourceAccount.last_error.is_not(None))),
             "retention_days": load_settings(s).storage.retention_days,
         },
-        "jobs": {"by_status": jobs_by_status,
-                 "recent": [ser.job(j) for j in s.scalars(select(Job).where(Job.kind != "monitor.tick").order_by(Job.created_at.desc()).limit(6))]},
         "storage": {"data_dir": str(c.config.data_dir), "used_bytes": _dir_size(c.config.data_dir),
                     "disk_free_bytes": disk.free, "disk_total_bytes": disk.total},
         "secret_backend": c.secrets.name,
@@ -97,6 +94,18 @@ def dashboard(c=Depends(ctx), s: Session = Depends(db)):
 def load_settings(s: Session) -> AppSettings:
     row = s.get(Setting, SETTINGS_KEY)
     return lenient(AppSettings, row.value if row else None)
+
+
+@router.get("/intelligence")
+def intelligence_overview(c=Depends(ctx), s: Session = Depends(db)):
+    """What every agent is doing, what it finished recently, and what's waiting on the user."""
+    from .. import intelligence
+
+    needs = intelligence.needs_you(s)
+    inbox_error = c.inbox.state(s).get("last_error")
+    if inbox_error:
+        needs.append({"kind": "inbox", "count": 1, "title": f"Discord inbox: {inbox_error}", "link": "/settings?tab=notifications"})
+    return {**intelligence.activity(s), "needs_you": needs}
 
 
 @router.get("/settings")

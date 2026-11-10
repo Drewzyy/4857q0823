@@ -1,13 +1,9 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ArrowRight, Bell, Eye, HardDrive } from "lucide-react";
+import { ArrowRight, Bell, Bot, Eye, HardDrive } from "lucide-react";
 import { api } from "../lib/api";
-import { bytes, ErrorNote, Loading, relTime, StatusPill } from "../components/ui";
-
-const JOB_LABEL: Record<string, string> = {
-  "clip.build": "Making a clip", "source.check": "Checking an account for new posts", "notify.discord": "Discord ping",
-  "storage.cleanup": "Deleting expired clips",
-};
+import { bytes, ErrorNote, Loading, relTime } from "../components/ui";
+import { NeedsYouList } from "./Agents";
 
 function Stat({ label, value, sub, to, accent }: { label: string; value: number; sub?: string; to?: string; accent?: boolean }) {
   const body = (
@@ -23,6 +19,7 @@ function Stat({ label, value, sub, to, accent }: { label: string; value: number;
 export default function Dashboard() {
   const { data: d, error, isLoading } = useQuery({ queryKey: ["dashboard"], queryFn: api.dashboard, refetchInterval: 10_000 });
   const notif = useQuery({ queryKey: ["notifications"], queryFn: api.notifications });
+  const intel = useQuery({ queryKey: ["intelligence"], queryFn: api.intelligence, refetchInterval: 10_000 });
   if (isLoading) return <div className="page"><Loading /></div>;
   if (!d) return <div className="page"><ErrorNote error={error} /></div>;
   const a = d.accounts, p = d.pipeline, m = d.monitoring;
@@ -50,6 +47,10 @@ export default function Dashboard() {
         </div>
       )}
 
+      {intel.data && intel.data.needs_you.length > 0 && (
+        <div className="card" style={{ marginBottom: 14 }}><h2 style={{ marginBottom: 6 }}>Needs your attention</h2><NeedsYouList items={intel.data.needs_you} /></div>
+      )}
+
       <div className="grid cols-4">
         <Stat label="Ready to upload" value={p.ready_to_upload} sub="Clip + caption per page" to="/ready" accent />
         <Stat label="Being made now" value={p.in_progress} sub="Finding the moment and rendering" to="/activity" />
@@ -74,11 +75,12 @@ export default function Dashboard() {
 
         <div className="stack">
           <div className="card">
-            <div className="card-head"><div className="row"><Activity size={16} /><h2>Background work</h2></div></div>
-            {d.jobs.recent.length === 0 ? <p className="muted small">Nothing yet.</p> :
-              d.jobs.recent.map((j) => (
-                <div className="list-row small" key={j.id}><span>{JOB_LABEL[j.kind] ?? j.kind}</span><span className="spacer" /><span className="faint">{relTime(j.created_at)}</span><StatusPill status={j.status} /></div>
-              ))}
+            <div className="card-head"><div className="row"><Bot size={16} /><h2>Agents</h2></div><Link className="small" to="/agents">Details</Link></div>
+            {(intel.data?.agents ?? []).map((ag) => (
+              <div className="list-row small" key={ag.key}><span>{ag.name}</span><span className="spacer" />
+                <span className="faint ellipsis" style={{ maxWidth: 240 }}>{ag.running[0]?.detail ?? (ag.queued ? `${ag.queued} waiting` : "")}</span>
+                <span className={`pill ${ag.state === "working" ? "accent" : ""}`}>{ag.state === "working" ? "Working" : ag.state === "waiting" ? "Queued" : "Idle"}</span></div>
+            ))}
           </div>
           <div className="card">
             <div className="card-head"><div className="row"><HardDrive size={16} /><h2>Storage</h2></div><span className="small faint">{bytes(d.storage.used_bytes)} used by Vyral</span></div>

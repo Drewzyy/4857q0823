@@ -139,6 +139,24 @@ class Job(Base):
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
+class Event(Base):
+    """Something worth knowing happened. Shown in Vyral and, per the user's preferences, sent to Discord."""
+
+    __tablename__ = "events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ts: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    category: Mapped[str] = mapped_column(String(20))  # see events.CATEGORIES
+    priority: Mapped[str] = mapped_column(String(10), default="normal")  # low | normal | high | urgent
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text, default="")
+    link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(200), unique=True, nullable=True)
+    data: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    delivery: Mapped[str] = mapped_column(String(10), default="none")  # none | queued | held | sent | failed | off
+    delivery_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     id: Mapped[int] = mapped_column(primary_key=True)

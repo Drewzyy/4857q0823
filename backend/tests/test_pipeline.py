@@ -171,7 +171,8 @@ def test_new_post_becomes_ready_to_upload_clip(env):
 def test_problems_are_explained_and_pinged(env):
     ctx, c, fake = env
     discord = respx.post(HOOK).mock(return_value=httpx.Response(204))
-    c.put("/api/notifications", json={"webhook_url": HOOK, "on_new_post": False})
+    # New-post pings are low priority, problems high: a "normal" minimum keeps only the problems.
+    assert c.put("/api/notifications", json={"webhook_url": HOOK, "min_priority": "normal"}).status_code == 200
     cid, sid, *_ = setup_accounts(c, permission=False)
     fake.posts = []
     ctx.pipeline.check_source(sid)

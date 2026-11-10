@@ -7,12 +7,10 @@ from typing import Any
 
 import httpx
 
-from .models import Setting
 
 WEBHOOK_RE = re.compile(r"^https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/webhooks/\d{5,30}/[A-Za-z0-9_\-]{20,200}$")
 SECRET_KEY = "discord:webhook"
 SETTINGS_KEY = "notifications"
-DEFAULTS = {"on_new_post": True, "on_clip_ready": True, "on_problem": True}
 PLATFORM = {"tiktok": "TikTok", "instagram": "Instagram", "youtube": "YouTube", "facebook": "Facebook"}
 
 
@@ -22,11 +20,6 @@ class NotifyError(Exception):
 
 def valid_webhook(url: str) -> bool:
     return bool(WEBHOOK_RE.match(url.strip()))
-
-
-def prefs(s) -> dict[str, bool]:
-    row = s.get(Setting, SETTINGS_KEY)
-    return {**DEFAULTS, **(row.value if row else {})}
 
 
 def send(http: httpx.Client, url: str, payload: dict[str, Any]) -> None:

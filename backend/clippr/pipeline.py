@@ -13,14 +13,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-import httpx
 from sqlalchemy import delete, func, or_, select
 
-from . import describe, identify, notify
+from . import describe, events, identify, notify
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost
-from .jobs import PermanentJobError
 from .media import match, overlay
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
@@ -53,28 +51,6 @@ class Pipeline:
         d = self.media / name
         d.mkdir(parents=True, exist_ok=True)
         return d
-
-    # ---------- notifications ----------
-    def notify(self, kind: str, payload: dict) -> None:
-        if not self.ctx.secrets.get(notify.SECRET_KEY):
-            return
-        with self.ctx.db.session() as s:
-            if not notify.prefs(s).get(kind, True):
-                return
-        self.ctx.jobs.enqueue("notify.discord", payload, max_attempts=4)
-
-    def send_discord(self, payload: dict) -> dict:
-        hook = (self.ctx.secrets.get(notify.SECRET_KEY) or {}).get("url")
-        if not hook:
-            return {"skipped": "no webhook"}
-        try:
-            with httpx.Client(timeout=15) as http:
-                notify.send(http, hook, payload)
-        except notify.NotifyError as e:
-            if "rejected" in str(e):
-                raise PermanentJobError(str(e))
-            raise
-        return {"sent": True}
 
     # ---------- monitoring ----------
     def tick(self) -> dict:
@@ -135,7 +111,9 @@ class Pipeline:
         for rid in new_refs:
             with self.ctx.db.session() as s:
                 r = s.get(ReferenceVideo, rid)
-                self.notify("on_new_post", notify.new_post_message(username, platform, r.title, r.url, r.thumbnail_url))
+                title, url, thumb = r.title, r.url, r.thumbnail_url
+            events.emit(self.ctx, "production", f"@{username} posted a new video", body=title[:500], priority="low", link=url,
+                        dedupe_key=f"post:{rid}", discord=notify.new_post_message(username, platform, title, url, thumb))
             self.ctx.jobs.enqueue("clip.build", {"reference_id": rid}, idempotency_key=f"build:{rid}", max_attempts=3)
         return {"posts_seen": len(posts), "new": len(new_refs), "baseline": first}
 
@@ -191,7 +169,10 @@ class Pipeline:
 
     def _stop(self, rid: int, status: str, detail: str, account: str | None, url: str) -> dict:
         self._set(rid, status, detail)
-        self.notify("on_problem", notify.problem_message(account, detail, url))
+        # Once per post and outcome: a retry that hits the same problem doesn't ping again.
+        events.emit(self.ctx, "production", f"Couldn't make a clip from {'@' + account + chr(39) + 's post' if account else 'a post'}",
+                    body=detail, priority="high", link=url, dedupe_key=f"problem:{rid}:{status}:{detail[:60]}",
+                    discord=notify.problem_message(account, detail, url))
         return {"status": status, "detail": detail}
 
     def _vod_features(self, url: str, title: str = "") -> Any:
@@ -376,9 +357,11 @@ class Pipeline:
                                      video_title=clean, overlay=ov, format=fmt_raw,
                                      file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))
                 audit(s, "clip.ready", "clip", clip.id, {"reference": rid, "destinations": len(dest_info)})
-                clip_title = clip.title
+                clip_title, clip_id = clip.title, clip.id
             self._set(rid, "ready", f"Ready to upload to {len(dest_info)} destination(s)" + (f". {captions_note}" if captions_note else ""))
-            self.notify("on_clip_ready", notify.ready_message(clip_title, creator_name, [(p, n, h) for _, p, n, h, _ in dest_info]))
+            events.emit(self.ctx, "approvals", f"Clip ready to upload: {clip_title}", body=f"{creator_name}, {len(dest_info)} page(s)",
+                        dedupe_key=f"ready:{rid}:{clip_id}", data={"clip_id": clip_id},
+                        discord=notify.ready_message(clip_title, creator_name, [(p, n, h) for _, p, n, h, _ in dest_info]))
             return {"status": "ready", "outputs": len(dest_info)}
         except FetchError as e:
             self._set(rid, "failed", f"Download problem: {e}")
@@ -539,7 +522,7 @@ class Pipeline:
             for p in tmp.iterdir():
                 if datetime.fromtimestamp(p.stat().st_mtime, timezone.utc) < now() - timedelta(hours=12):
                     shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
-        return {"clips_expired": expired, "streams_forgotten": vods}
+        return {"clips_expired": expired, "streams_forgotten": vods, "events_forgotten": events.cleanup(self.ctx)}
 
 
 def _hms(sec: float) -> str:
@@ -559,7 +542,8 @@ def register(ctx: Any) -> Pipeline:
     q.register("source.check", lambda jc, pl: p.check_source(pl["source_id"]))
     q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url"), pl.get("waits", 0), jc.cancelled))
     q.register("intake.link", lambda jc, pl: p.intake_link(pl["url"], pl.get("creator_id")))
-    q.register("notify.discord", lambda jc, pl: p.send_discord(pl))
+    # Jobs queued by versions before the events log carry a raw message; they're dropped rather than resent.
+    q.register("notify.discord", lambda jc, pl: events.deliver(ctx, pl["event_id"]) if "event_id" in pl else {"skipped": "old format"})
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())
     q.register("clip.rerender", lambda jc, pl: p.rerender(pl["output_ids"]))
     q.register("metrics.fetch", lambda jc, pl: p.fetch_metrics(pl["output_id"]))
