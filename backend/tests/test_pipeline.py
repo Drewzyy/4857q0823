@@ -509,3 +509,34 @@ def test_streamer_names_are_given_to_the_speech_model(env):
     ctx.pipeline.check_source(sid)
     drain(ctx)
     assert ctx.transcriber.hints == ["Streamer A", "streamera"]
+
+
+def test_new_clips_are_zoomed_in_and_old_clips_keep_their_look(env):
+    from test_render_framing import _sharp_rows
+
+    ctx, c, fake = env
+    _, sid, tt, _ = setup_accounts(c)
+    # Text off, so only the video's detail is measured.
+    c.patch(f"/api/destinations/{tt}", json={"settings": {"overlay": {"title": {"enabled": False}, "captions": {"enabled": False}}}})
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("fr1", "https://www.tiktok.com/@a.clips/video/fr1", "framing")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    clip = c.get("/api/clips").json()[0]
+    out = next(o for o in clip["outputs"] if o["platform"] == "tiktok")
+    with ctx.db.session() as s:
+        assert s.get(Clip, clip["id"]).edit["video_height"] == 0.6  # saved with the clip
+        path = Path(s.get(ClipOutput, out["id"]).file_path)
+    assert 0.55 < _sharp_rows(path) < 0.65  # the stream fills about 60% of the frame
+    ed = c.get(f"/api/clips/{clip['id']}/editor").json()
+    assert ed["edit"]["video_height"] == 0.6 and ed["default_video_height"] == 0.6
+
+    # A clip made before framing was saved re-renders exactly as it was: the whole stream, fit to the frame.
+    with ctx.db.session() as s:
+        s.get(Clip, clip["id"]).edit = {}
+    assert c.get(f"/api/clips/{clip['id']}/editor").json()["edit"]["video_height"] == 0
+    ctx.pipeline.rerender([out["id"]])
+    with ctx.db.session() as s:
+        path = Path(s.get(ClipOutput, out["id"]).file_path)
+    assert 0.27 < _sharp_rows(path) < 0.37

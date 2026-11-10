@@ -26,7 +26,7 @@ from .media.render import OutputFormat, render
 from .media.transcribe import TranscribeError
 from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import resolve_destinations, source_creator_ids
-from .schemas import VIDEO_HEIGHT, OverlaySettings, lenient
+from .schemas import ClipEdit, OverlaySettings, lenient
 
 log = logging.getLogger("clippr.pipeline")
 POSTS_PER_CHECK = 12
@@ -332,6 +332,8 @@ class Pipeline:
             clean = describe.clean_title(ref_title, creator_name)
 
             self._set(rid, "processing", "Rendering")
+            # Framing (and later edits) are saved with the clip, so a re-render never changes how it looks.
+            framing = ClipEdit(start=start, end=start + dur).model_dump()
             renders: dict[str, Path] = {}
             planned = []
             for did, platform, name, handle, st in dest_info:
@@ -339,11 +341,12 @@ class Pipeline:
                 ov = lenient(OverlaySettings, st.get("overlay")).model_dump()
                 key = json.dumps([fmt_raw, ov], sort_keys=True)
                 if key not in renders:
-                    renders[key] = self._render(source, clip_dir / f"render-{len(renders)}.mp4", fmt_raw, start, dur, ov, clean, words, work / f"ov{len(renders)}")
+                    renders[key] = self._render(source, clip_dir / f"render-{len(renders)}.mp4", fmt_raw, start, dur, ov, clean, words,
+                                                work / f"ov{len(renders)}", framing)
                 planned.append((did, platform, st, fmt_raw, ov, renders[key]))
 
             with self.ctx.db.session() as s:
-                clip = Clip(reference_id=rid, creator_id=matched_id, title=clean,
+                clip = Clip(reference_id=rid, creator_id=matched_id, title=clean, edit=framing,
                             vod_url=vod.url, vod_start=m.start, vod_end=m.end, stream_date=stream_date, status="ready",
                             files_dir=str(clip_dir), source_path=str(source), source_start=start, source_duration=dur,
                             words=[w.to_dict() for w in words], captions_note=captions_note,
@@ -410,9 +413,9 @@ class Pipeline:
                 words: list[Word], ov_dir: Path, edit: dict | None = None) -> Path:
         """`words` are timed from `start`; an editor `edit` may move the cut, zoom/pan, change speed and add texts."""
         fmt = OutputFormat.from_settings(fmt_raw)
-        zoom, pan, speed, texts, video_height = 1.0, (0.5, 0.5), 1.0, [], VIDEO_HEIGHT
+        zoom, pan, speed, texts, video_height = 1.0, (0.5, 0.5), 1.0, [], 0.0  # no edit: a clip from before framing was saved
         if edit:
-            video_height = edit.get("video_height", VIDEO_HEIGHT)  # edits saved before this option existed
+            video_height = edit.get("video_height", 0)  # edits saved before framing existed were fit to frame
             shift = start - edit["start"]  # words were timed from the original cut
             start, dur = edit["start"], edit["end"] - edit["start"]
             zoom, pan, speed, texts = edit["zoom"], (edit["pan_x"], edit["pan_y"]), edit["speed"], edit["texts"]

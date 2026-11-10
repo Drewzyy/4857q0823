@@ -68,7 +68,7 @@ export interface TextOverlayT { text: string; start: number; end: number; y_perc
 export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; texts: TextOverlayT[] }
 export interface EditorData {
   id: number; title: string; section_duration: number; original_start: number; original_duration: number;
-  edit: ClipEditT; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
+  edit: ClipEditT; default_video_height: number; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
 }
 export interface DiscordInbox { configured: boolean; channel_id: string | null; channel_name: string | null; server: string | null; bot: string | null; last_error: string | null; last_checked: number | null; last_unrecognized: string | null }
 export type Priority = "low" | "normal" | "high" | "urgent";

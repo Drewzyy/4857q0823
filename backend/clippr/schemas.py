@@ -149,13 +149,16 @@ class TextOverlay(Strict):
         return self
 
 
-VIDEO_HEIGHT = 0.45  # default: a little zoomed in (a 16:9 stream across the full width fills only 32%)
+# New clips are zoomed in: the stream fills 60% of the frame's height, centered, trimmed at the sides, so the
+# speaker is easy to see on a phone. 0 means "fit to frame": the whole stream across the full width (about 32%
+# for 16:9), which is how clips looked before.
+VIDEO_HEIGHT = 0.6
 
 
 class ClipEdit(Strict):
     start: float = Field(ge=0)  # seconds within the downloaded cut
     end: float = Field(gt=0)
-    video_height: float = Field(VIDEO_HEIGHT, ge=0.2, le=1.0)  # share of the frame's height the video fills
+    video_height: float = Field(VIDEO_HEIGHT, ge=0, le=1.0)  # share of the frame's height the video fills; 0 = fit to frame
     zoom: float = Field(1.0, ge=1.0, le=3.0)
     pan_x: float = Field(0.5, ge=0, le=1)  # which part stays in view when zoomed (0 left, 1 right)
     pan_y: float = Field(0.5, ge=0, le=1)

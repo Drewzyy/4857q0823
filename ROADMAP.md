@@ -1,5 +1,32 @@
 # Roadmap
 
+## Vyral 2.0 plan (Nov 2026)
+
+Built into the existing app, phase by phase, each tested before the next.
+
+**What exists to build on.** Desktop shell (Tauri/Rust: window, tray, updates, clipboard pickup) running a local
+service (Python/FastAPI, SQLite with migrations, a persistent job queue with retries, cancellation and crash
+recovery, secrets in the OS keychain), and a React UI. Video work is deterministic (FFmpeg, local Whisper,
+audio-fingerprint matching), sources are read with yt-dlp, Discord is wired for notifications and a phone inbox.
+There are no AI model APIs yet, no campaign data, and no social logins (uploads are manual).
+
+| Phase | Status | Notes |
+|---|---|---|
+| 1. Foundation: Vyral Intelligence, agent activity, events, notification service, dashboard | **Started.** Agents view (real job data), events log, Notification Service (per-category Discord channels, priorities, quiet hours, dedupe, history), Needs your attention | Next: costs per task once AI calls exist |
+| 2. Campaign Studio: campaigns, brief import, requirement extraction, compliance, standard and split-screen clipping, QC | Not started | Brief parsing and clip ranking need an AI model (decision below). Split-screen and QC checks that code can do (duration, aspect, loudness, caption timing) need none |
+| 3. Campaign Intelligence: scout, scoring, creator and footage matching, recommendations | Not started | No official API found for clippers to list Whop / Content Rewards campaigns; starts with paste-a-brief and paste-a-link import |
+| 4. Discord reports and earnings notifications | Partly (Phase 1 service) | Daily/weekly reports next |
+| 5. Account intelligence and publishing | Not started | Official publishing needs each platform's app review; manual upload stays the default |
+| 6. Autonomous operations | Partly (monitoring, auto clipping, health in Agents) | |
+| 7. Business intelligence | Not started | Needs earnings data (manual entry first) |
+
+**Decisions needed from the user:** an AI model provider and monthly budget (needed for Phases 2 and 3), whether to
+read Whop's public campaign directory, and whether to pursue platform app reviews for publishing.
+
+**Framing (done):** new clips are zoomed in (the stream fills 60% of the frame's height, centered) and the framing is
+saved with each clip; clips made earlier stay fit to frame. Video Editor: Zoomed in / Fit to frame, size, zoom,
+left/right, up/down, reset. Subject (face) tracking is not built yet.
+
 ## Done (Nov 2026)
 
 1. **Analytics**: after uploading, paste the post link on the clip (Ready to Upload). Vyral reads public views/likes/comments/shares for TikTok and YouTube every few hours (yt-dlp, no login) and stores snapshots; Instagram/Facebook numbers can be typed in. Analytics page: totals, by platform/streamer/page, by clip length, top clips, views over time. Unavailable shown as unavailable, never 0.

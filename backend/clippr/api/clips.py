@@ -21,7 +21,7 @@ from ..fetch import VIDEO_LINK, FetchError
 from ..media.ffmpeg import probe
 from ..media.overlay import Word, apply_text_edit
 from ..models import Clip, ClipOutput, Creator, Job, ReferenceVideo, SourceAccount
-from ..schemas import ClipEdit, OverlaySettings, deep_merge, lenient
+from ..schemas import VIDEO_HEIGHT, ClipEdit, OverlaySettings, deep_merge, lenient
 from .deps import ApiError, ctx, db, get_or_404
 from .system import load_settings
 
@@ -196,13 +196,14 @@ def edit_video_text(oid: int, body: VideoTextIn, c=Depends(ctx), s: Session = De
 def editor_data(cid: int, s: Session = Depends(db)):
     clip = get_or_404(s, Clip, cid, "Clip")
     start = round(clip.source_start or 0.0, 2)
-    try:  # an edit saved by an older version gets defaults for options added since
-        edit = ClipEdit.model_validate(clip.edit).model_dump()
+    # Clips from before framing was saved were rendered fit to frame, and stay that way until changed here.
+    try:
+        edit = ClipEdit.model_validate({"video_height": 0, **clip.edit}).model_dump()
     except ValidationError:
-        edit = ClipEdit(start=start, end=round(start + (clip.source_duration or 1.0), 2)).model_dump()
+        edit = ClipEdit(start=start, end=round(start + (clip.source_duration or 1.0), 2), video_height=0).model_dump()
     return {"id": clip.id, "title": clip.title, "section_duration": _footage_seconds(clip),
             "original_start": clip.source_start or 0.0, "original_duration": clip.source_duration or 0.0,
-            "edit": edit, "words": clip.words or [], "outputs": [_output(o) for o in _live_outputs(s, cid)]}
+            "edit": edit, "default_video_height": VIDEO_HEIGHT, "words": clip.words or [], "outputs": [_output(o) for o in _live_outputs(s, cid)]}
 
 
 @router.get("/media/clips/{cid}/source")

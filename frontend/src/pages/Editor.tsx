@@ -94,7 +94,9 @@ function EditorBody({ data }: { data: EditorData }) {
   const [aspect, setAspect] = useState(16 / 9);
   // Share of the 9:16 frame's height the stream fills when it spans the full width (about 32% for 16:9).
   const fullWidth = Math.round((9 / 16 / aspect) * 100) / 100;
-  const boxHeight = Math.max(e.video_height, fullWidth);
+  // video_height 0 is "fit to frame": the whole stream across the full width, as clips used to look.
+  const zoomedIn = e.video_height > 0;
+  const boxHeight = zoomedIn ? Math.max(e.video_height, fullWidth) : fullWidth;
   const total = data.section_duration;
   const first = data.outputs[0];
   const overlay: Overlay | null = first?.overlay ?? null;
@@ -284,20 +286,27 @@ function EditorBody({ data }: { data: EditorData }) {
           </div>
 
           <div className="card stack">
-            <h2>Size, zoom and speed</h2>
-            <div className="field"><label htmlFor="ed-size">Video size: {Math.round(boxHeight * 100)}% of the frame's height</label>
-              <div className="row">
-                <input id="ed-size" type="range" style={{ flex: 1 }} min={fullWidth} max={1} step={0.01} value={boxHeight}
-                  onChange={(ev) => patch({ video_height: Number(ev.target.value) }, "size")} />
-                <button className="btn ghost sm" onClick={() => patch({ video_height: fullWidth })}>Whole stream</button>
+            <div className="row"><h2>Framing, zoom and speed</h2><span className="spacer" />
+              <button className="btn ghost sm" onClick={() => patch({ video_height: data.default_video_height, zoom: 1, pan_x: 0.5, pan_y: 0.5 })}>
+                <RotateCcw size={12} />Reset to default</button></div>
+            <div className="field"><span className="label-text">Framing</span>
+              <div className="seg" role="group" aria-label="Framing" style={{ alignSelf: "flex-start" }}>
+                <button className={zoomedIn ? "on" : ""} onClick={() => !zoomedIn && patch({ video_height: data.default_video_height })}>Zoomed in</button>
+                <button className={zoomedIn ? "" : "on"} onClick={() => zoomedIn && patch({ video_height: 0 })}>Fit to frame</button>
               </div>
-              <span className="hint">Bigger trims the sides of the stream; use Left / right to choose what stays in view.</span></div>
+              <span className="hint">{zoomedIn ? "The stream is scaled up and its sides trimmed so the speaker is bigger on a phone. Left / right picks what stays in view."
+                : "The whole stream across the width of the frame, with blurred footage above and below."}</span></div>
+            {zoomedIn && (
+              <div className="field"><label htmlFor="ed-size">Video size: {Math.round(boxHeight * 100)}% of the frame's height</label>
+                <input id="ed-size" type="range" min={Math.min(1, fullWidth + 0.01)} max={1} step={0.01} value={boxHeight}
+                  onChange={(ev) => patch({ video_height: Number(ev.target.value) }, "size")} /></div>
+            )}
             <div className="ov-grid">
               <div className="field"><label htmlFor="ed-zoom">Zoom: {e.zoom.toFixed(2)}x</label>
                 <input id="ed-zoom" type="range" min={1} max={3} step={0.05} value={e.zoom} onChange={(ev) => patch({ zoom: Number(ev.target.value) }, "zoom")} /></div>
               <div className="field"><label htmlFor="ed-px">Left / right</label>
                 <input id="ed-px" type="range" min={0} max={1} step={0.01} value={e.pan_x} disabled={e.zoom <= 1 && boxHeight <= fullWidth} onChange={(ev) => patch({ pan_x: Number(ev.target.value) }, "px")} /></div>
-              <div className="field"><label htmlFor="ed-py">Up / down</label>
+              <div className="field"><label htmlFor="ed-py">Up / down{e.zoom <= 1 ? " (zoom in to use)" : ""}</label>
                 <input id="ed-py" type="range" min={0} max={1} step={0.01} value={e.pan_y} disabled={e.zoom <= 1} onChange={(ev) => patch({ pan_y: Number(ev.target.value) }, "py")} /></div>
             </div>
             <div className="field"><span className="label-text">Speed</span>
