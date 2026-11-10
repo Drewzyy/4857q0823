@@ -77,7 +77,9 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if cfg.run_worker:
-            ctx.jobs.start(workers=3)
+            # Room for the most clips the settings allow (4) plus monitoring, link intake and notifications alongside;
+            # how many clips build at once is limited separately (Settings), so extra workers just wait.
+            ctx.jobs.start(workers=7)
             ctx.inbox.start()
         yield
         ctx.inbox.stop()
