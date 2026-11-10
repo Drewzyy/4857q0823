@@ -61,6 +61,23 @@ MONITORABLE = ("tiktok", "youtube", "twitch")
 VIDEO_LINK = re.compile(r"^https://(?:(?:www\.|m\.)?tiktok\.com/(?:@[\w.-]+/video/\d+|t/\w+)|(?:vm|vt)\.tiktok\.com/\w+"
                         r"|(?:www\.|m\.)?youtube\.com/shorts/[\w-]+)/?(?:\?\S*)?$")
 
+_FIND_LINK = re.compile(r"https?://(?:(?:www\.|m\.)?tiktok\.com/(?:@[\w.-]+/video/\d+|t/\w+)|(?:vm|vt)\.tiktok\.com/\w+"
+                        r"|(?:www\.|m\.)?youtube\.com/shorts/[\w-]+)/?(?:\?[^\s<>\"']*)?", re.I)
+
+
+def find_links(text: str) -> list[str]:
+    """Every TikTok / YouTube Shorts video link in pasted text, in order, without repeats. Links can be glued
+    together (a multi-line paste into a one-line box), wrapped in <> or followed by punctuation."""
+    text = re.sub(r"(?<!\s)(https?://)", r" \1", text)  # split links pasted back to back
+    out = []
+    for m in _FIND_LINK.finditer(text):
+        link = m.group(0).rstrip(".,;:!?)]}")
+        link = "https://" + link.split("://", 1)[1]
+        if link not in out:
+            out.append(link)
+    return out
+
+
 _SINGLE_VOD = re.compile(r"(twitch\.tv/videos/\d+|youtube\.com/watch\?|youtu\.be/|youtube\.com/live/|kick\.com/video/[\w-]+|kick\.com/[\w-]+/videos/[\w-]+)", re.I)
 
 

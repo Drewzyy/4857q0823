@@ -184,7 +184,7 @@ export const api = {
   saveEdit: (clipId: number, e: ClipEditT) => request<{ rendering: number }>("PUT", `/clips/${clipId}/edit`, e),
   sourceUrl: (clipId: number) => `/api/media/clips/${clipId}/source?t=${encodeURIComponent(token())}`,
   references: () => request<RefPost[]>("GET", "/references"),
-  intake: (urls: string[]) => request<{ queued: number; ignored: number }>("POST", "/intake", { urls }),
+  intake: (text: string, creator_id: number | null = null) => request<{ queued: number; ignored: number }>("POST", "/intake", { text, creator_id }),
   addReference: (b: { url: string; creator_id?: number | null; source_id?: number | null }) => request<{ id: number }>("POST", "/references", b),
   stopReference: (id: number) => request<RefPost>("POST", `/references/${id}/stop`),
   retryReference: (id: number, vod_url?: string) => request<RefPost>("POST", `/references/${id}/retry`, { vod_url: vod_url || null }),

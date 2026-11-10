@@ -131,7 +131,21 @@ class Pipeline:
 
     def intake_link(self, url: str, creator_id: int | None = None) -> dict:
         """A link the user copied or pasted in a batch: clip it unless Vyral already has (or is making) it."""
-        post = self.ctx.fetcher.post_details(url)
+        placeholder = f"link:{url}"[:120]
+        platform = _link_platform(url)
+        try:
+            post = self.ctx.fetcher.post_details(url)
+        except FetchError as e:
+            # Shown in Activity so a link that can't be opened doesn't just vanish; Retry tries it again.
+            with self.ctx.db.session() as s:
+                ref = s.scalar(select(ReferenceVideo).where(ReferenceVideo.platform == platform, ReferenceVideo.external_id == placeholder))
+                if not ref:
+                    ref = ReferenceVideo(platform=platform, external_id=placeholder, url=url, title=url, creator_id=creator_id)
+                    s.add(ref)
+                ref.status, ref.status_detail = "failed", f"Couldn't open this link: {e}"
+            raise
+        with self.ctx.db.session() as s:  # it opened this time: drop the earlier "couldn't open" row
+            s.query(ReferenceVideo).filter(ReferenceVideo.platform == platform, ReferenceVideo.external_id == placeholder).delete()
         with self.ctx.db.session() as s:
             have = s.scalar(select(ReferenceVideo.status).where(ReferenceVideo.platform == _link_platform(url),
                                                                ReferenceVideo.external_id == post.id))

@@ -24,15 +24,11 @@ export default function ActivityPage() {
 
   const submit = async () => {
     setBusy(true);
-    const links = url.split(/\s+/).filter(Boolean);
     try {
-      if (links.length > 1) {  // a batch: each video link is queued; Vyral works out each one's streamer
-        const r = await api.intake(links);
-        toast(r.queued ? "ok" : "err", r.queued ? `Queued ${r.queued} link${r.queued === 1 ? "" : "s"}.${r.ignored ? ` Skipped ${r.ignored} that weren't video links.` : ""}` : "None of those are TikTok or YouTube Shorts video links.");
-      } else {
-        await api.addReference({ url: links[0], creator_id: creatorId });
-        toast("ok", "Working on it. It'll show up below.");
-      }
+      // Any paste works: one link, many (on separate lines or not), or links mixed in with other text.
+      const r = await api.intake(url, creatorId);
+      if (!r.queued) throw new Error("No TikTok or YouTube Shorts video links found in that. Paste the video's share link.");
+      toast("ok", `Working on ${r.queued} link${r.queued === 1 ? "" : "s"}. ${r.queued === 1 ? "It" : "They"}'ll show up below.${r.ignored ? ` Skipped ${r.ignored} other link${r.ignored === 1 ? "" : "s"}.` : ""}`);
       setUrl(""); refresh();
     }
     catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
@@ -46,8 +42,10 @@ export default function ActivityPage() {
 
       <form className="card row wrap" style={{ marginBottom: 16 }} onSubmit={(e) => { e.preventDefault(); if (url.trim()) void submit(); }}>
         <Wand2 size={16} color="var(--accent-hi)" />
-        <input className="input" style={{ flex: 1, minWidth: 260 }} aria-label="Video link" placeholder="Paste TikTok or YouTube Shorts links (one or many) to clip them now"
-          value={url} onChange={(e) => setUrl(e.target.value)} />
+        <textarea className="input" rows={Math.min(6, Math.max(1, url.split("\n").length))} style={{ flex: 1, minWidth: 260, resize: "vertical" }} aria-label="Video links"
+          placeholder="Paste TikTok or YouTube Shorts links (one or many) to clip them now"
+          value={url} onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (url.trim() && !busy) void submit(); } }} />
         <select className="select" style={{ width: 230 }} aria-label="Creator for pasted link" value={creatorId ?? ""} onChange={(e) => setCreatorId(e.target.value ? Number(e.target.value) : null)}>
           <option value="">Any streamer (from the caption)</option>{(creators.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <button className="btn primary" disabled={!url.trim() || busy}>{busy && <span className="spinner" />}Make clip</button>

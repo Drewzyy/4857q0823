@@ -434,7 +434,7 @@ def test_copied_and_batch_pasted_links_become_clips_once(env):
     link = "https://www.tiktok.com/@someclipper/video/7351234567890"
     fake.post_details = lambda url: RemotePost(url.rsplit("/", 1)[-1], url, "he did NOT #streamera")
     r = c.post("/api/intake", json={"urls": [link, link, "https://www.tiktok.com/@someclipper", "my notes"], "from_clipboard": True}).json()
-    assert r == {"queued": 1, "ignored": 3}  # one video link; a profile link and other text are ignored
+    assert r == {"queued": 1, "ignored": 2}  # one video link (twice); the profile link is ignored, as is other text
     drain(ctx)
     assert [x["status"] for x in c.get("/api/references").json()] == ["ready"]
     # Copying it again later doesn't make it twice.
@@ -556,3 +556,43 @@ def test_member_clip_goes_to_the_group_page(env):
     drain(ctx)
     ref = c.get("/api/references").json()[0]
     assert ref["status"] == "ready", ref["status_detail"]
+
+
+def test_find_links_handles_messy_pastes():
+    from clippr.fetch import find_links
+    glued = "https://www.tiktok.com/@a.b/video/111?_r=1https://vm.tiktok.com/ZMabc/"
+    assert find_links(glued) == ["https://www.tiktok.com/@a.b/video/111?_r=1", "https://vm.tiktok.com/ZMabc/"]
+    assert find_links("look <https://www.tiktok.com/t/ZT8x/>, and https://youtube.com/shorts/q_1.") == [
+        "https://www.tiktok.com/t/ZT8x/", "https://youtube.com/shorts/q_1"]
+    assert find_links("http://vt.tiktok.com/abc") == ["https://vt.tiktok.com/abc"]
+    assert find_links("https://www.tiktok.com/@clipper my notes") == []
+
+
+def test_pasted_text_queues_every_link_with_the_streamer(env):
+    ctx, c, fake = env
+    cid = c.post("/api/creators", json={"name": "Jason", "vod_channels": ["https://twitch.tv/jasontheween"]}).json()["id"]
+    r = c.post("/api/intake", json={"text": "https://www.tiktok.com/@a/video/1\nhttps://www.tiktok.com/@a/video/2 https://example.com", "creator_id": cid}).json()
+    assert r == {"queued": 2, "ignored": 1}
+    from clippr.models import Job
+    with ctx.db.session() as s:
+        assert sorted(j.payload["creator_id"] for j in s.query(Job).filter(Job.kind == "intake.link")) == [cid, cid]
+
+
+def test_a_link_that_wont_open_shows_up_and_can_be_retried(env):
+    from clippr.fetch import FetchError
+    from clippr.models import ReferenceVideo
+    ctx, c, fake = env
+    link = "https://www.tiktok.com/@a/video/9"
+    real = fake.post_details
+    fake.post_details = lambda url: (_ for _ in ()).throw(FetchError("TikTok didn't answer"))
+    with pytest.raises(FetchError):
+        ctx.pipeline.intake_link(link)
+    with ctx.db.session() as s:
+        ref = s.query(ReferenceVideo).one()
+        assert ref.status == "failed" and "TikTok didn't answer" in ref.status_detail
+        rid = ref.id
+    assert c.post(f"/api/references/{rid}/retry", json={}).json()["status"] == "new"
+    fake.post_details = real
+    assert "reference_id" in ctx.pipeline.intake_link(link)
+    with ctx.db.session() as s:
+        assert [r.external_id for r in s.query(ReferenceVideo)] == ["9"]  # the placeholder row is gone

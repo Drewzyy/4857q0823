@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import audit
-from ..fetch import VIDEO_LINK, FetchError
+from ..fetch import VIDEO_LINK, FetchError, find_links
 from ..media.ffmpeg import probe
 from ..media.overlay import Word, apply_text_edit
 from ..models import Clip, ClipOutput, Creator, Job, ReferenceVideo, SourceAccount
@@ -305,7 +305,9 @@ def add_reference(body: ManualIn, c=Depends(ctx), s: Session = Depends(db)):
 
 
 class IntakeIn(BaseModel):
-    urls: list[str] = Field(min_length=1, max_length=50)
+    urls: list[str] = Field(default_factory=list, max_length=50)
+    text: str | None = Field(None, max_length=20000)  # anything pasted: every video link in it is used
+    creator_id: int | None = None
     from_clipboard: bool = False
 
 
@@ -314,10 +316,14 @@ def intake(body: IntakeIn, c=Depends(ctx), s: Session = Depends(db)):
     """Video links to clip: copied (the desktop app watches the clipboard) or pasted in a batch."""
     if body.from_clipboard and not load_settings(s).intake.clipboard:
         return {"queued": 0, "ignored": len(body.urls)}
-    links = list(dict.fromkeys(u.strip() for u in body.urls if VIDEO_LINK.match(u.strip())))
+    if body.creator_id and not s.get(Creator, body.creator_id):
+        raise ApiError(422, "validation", "Creator not found")
+    pieces = [*body.urls, body.text or ""]
+    links = list(dict.fromkeys(l for piece in pieces for l in find_links(piece)))[:50]
     for url in links:  # a link Vyral already has (or is making) is skipped when the job runs
-        c.jobs.enqueue("intake.link", {"url": url}, max_attempts=3, session=s)
-    return {"queued": len(links), "ignored": len(body.urls) - len(links)}
+        c.jobs.enqueue("intake.link", {"url": url, "creator_id": body.creator_id}, max_attempts=3, session=s)
+    others = sum(len(re.findall(r"https?://\S+", p)) for p in pieces) - len(links)
+    return {"queued": len(links), "ignored": max(others, 0)}
 
 
 class RetryIn(BaseModel):
@@ -341,6 +347,10 @@ def retry_reference(rid: int, body: RetryIn, c=Depends(ctx), s: Session = Depend
     r = get_or_404(s, ReferenceVideo, rid, "Post")
     if r.status == "processing":
         raise ApiError(409, "busy", "Vyral is already working on this one")
+    if r.external_id.startswith("link:"):  # the link itself couldn't be opened: try opening it again
+        r.status, r.status_detail = "new", "Opening the link again"
+        c.jobs.enqueue("intake.link", {"url": r.url, "creator_id": r.creator_id}, max_attempts=3, session=s)
+        return _reference(r)
     payload: dict = {"reference_id": rid}
     if body.vod_url:
         from ..fetch import is_single_video

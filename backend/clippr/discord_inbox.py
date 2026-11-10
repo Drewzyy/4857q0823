@@ -16,7 +16,7 @@ import httpx
 from sqlalchemy import select
 
 from . import identify
-from .fetch import VIDEO_LINK
+from .fetch import find_links
 from .models import Creator, Setting
 
 log = logging.getLogger("clippr.discord_inbox")
@@ -63,7 +63,7 @@ def bot_channels(http: httpx.Client, token: str) -> dict:
 def parse(content: str, creators: list[tuple[int, str, list[str]]]) -> list[tuple[str, int | None]]:
     """Video links in a message, each with the streamer the rest of the message names (if any)."""
     words = content.replace("<", " ").replace(">", " ").split()  # Discord wraps links in <> to hide previews
-    links = list(dict.fromkeys(w for w in words if VIDEO_LINK.match(w)))
+    links = find_links(content)
     hint = " ".join(w for w in words if not w.startswith("http"))
     best, best_score = None, 0
     for cid, name, channels in (creators if hint else []):
