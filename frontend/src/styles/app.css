@@ -270,3 +270,7 @@ input[type=range] { accent-color: var(--accent); }
 .ed-chip.txt.sel { outline: 1px solid #fff; }
 .ed-textrow { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
 .ed-textrow.sel { border-color: var(--accent); }
+
+/* ---------- clip grade ---------- */
+.grade-badge { display: inline-flex; align-items: baseline; gap: 3px; padding: 2px 7px; border-radius: 6px; color: #111; font-weight: 800; font-size: 13px; flex: none; cursor: help; }
+.grade-badge span { font-size: 10px; font-weight: 700; opacity: .75; }

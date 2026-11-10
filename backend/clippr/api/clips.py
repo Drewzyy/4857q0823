@@ -67,7 +67,7 @@ def list_clips(status: Literal["ready", "uploaded", "expired", "all"] = "ready",
                     "creator": {"id": c.creator.id, "name": c.creator.name, "color": c.creator.color} if c.creator else None,
                     "vod_url": c.vod_url, "vod_start": c.vod_start, "vod_end": c.vod_end, "stream_date": _dt(c.stream_date),
                     "captions_text": " ".join(w["text"] for w in (c.words or [])), "has_captions": bool(c.words),
-                    "captions_note": c.captions_note, "editable": _has_footage(c),
+                    "captions_note": c.captions_note, "editable": _has_footage(c), "grade": c.grade,
                     "reference": _reference(c.reference), "outputs": outputs})
     return out
 
@@ -217,7 +217,7 @@ def editor_data(cid: int, s: Session = Depends(db)):
         edit = ClipEdit(start=start, end=round(start + (clip.source_duration or 1.0), 2), video_height=0).model_dump()
     return {"id": clip.id, "title": clip.title, "section_duration": _footage_seconds(clip),
             "original_start": clip.source_start or 0.0, "original_duration": clip.source_duration or 0.0,
-            "edit": edit, "default_video_height": VIDEO_HEIGHT, "words": clip.words or [],
+            "edit": edit, "default_video_height": VIDEO_HEIGHT, "words": clip.words or [], "grade": clip.grade,
             "creator": {"id": clip.creator.id, "name": clip.creator.name, "facecam": clip.creator.facecam} if clip.creator else None, "outputs": [_output(o) for o in _live_outputs(s, cid)]}
 
 

@@ -47,11 +47,12 @@ def new_post_message(account: str, platform: str, title: str, url: str, thumb: s
     return {"content": f"📥 **@{account}** just posted a new video. Vyral is making a clip.", "embeds": [embed]}
 
 
-def ready_message(title: str, creator: str | None, targets: list[tuple[str, str, str]]) -> dict:
-    """targets: (platform, destination name, handle)"""
+def ready_message(title: str, creator: str | None, targets: list[tuple[str, str, str]], graded: dict | None = None) -> dict:
+    """targets: (platform, destination name, handle). graded: the clip's grade, if it has one."""
+    head = f"**{graded['tier']} tier** ({graded['score']}/100). " if graded else ""
     lines = [f"• **{PLATFORM.get(p, p)}**: {name}" + (f" ({h if h.startswith('@') else '@' + h})" if h else "") for p, name, h in targets]
     return {"content": "✅ **Clip ready for upload**" + (f" ({creator})" if creator else ""),
-            "embeds": [{"title": (title or "New clip")[:250], "description": "\n".join(lines)[:3900], "color": 0x3FB67A,
+            "embeds": [{"title": (title or "New clip")[:250], "description": (head + "\n" if head else "") + "\n".join(lines)[:3800], "color": 0x3FB67A,
                         "footer": {"text": "Open Vyral > Ready to Upload to download it with the caption"}}]}
 
 

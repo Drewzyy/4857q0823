@@ -56,11 +56,12 @@ export interface ClipOutputT {
   width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; has_thumbnail: boolean; uploaded_at: string | null;
   video_title: string; overlay: Overlay; post_url: string | null; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
 }
+export interface GradeT { score: number; tier: "S" | "A" | "B" | "C" | "D"; parts: { name: string; points: number; max: number; note: string }[]; tips: string[] }
 export interface ClipT {
   id: number; title: string; status: string; created_at: string; expires_at: string;
   creator: { id: number; name: string; color: string } | null; vod_url: string | null; vod_start: number | null; vod_end: number | null;
   stream_date: string | null; captions_text: string; has_captions: boolean; captions_note: string; editable: boolean;
-  reference: RefPost | null; outputs: ClipOutputT[];
+  reference: RefPost | null; outputs: ClipOutputT[]; grade: GradeT | null;
 }
 export interface TextOverlayT { text: string; start: number; end: number; y_percent: number; size: number; color: string; font: FontKey; all_caps: boolean; outline: number }
 export interface LayerT { media_id: number; start: number; end: number; x: number; y: number; width: number }
@@ -70,7 +71,7 @@ export interface PresetT { id: number; name: string; data: PresetData }
 export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked" | "split"; cam: number[] | null; bottom_media: number | null; cut_dead_air: boolean; gaps: number[][]; cuts: number[][]; thumb_at: number | null; layers: LayerT[]; texts: TextOverlayT[] }
 export interface EditorData {
   id: number; title: string; section_duration: number; original_start: number; original_duration: number;
-  edit: ClipEditT; default_video_height: number; creator: { id: number; name: string; facecam: number[] | null } | null; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
+  edit: ClipEditT; default_video_height: number; creator: { id: number; name: string; facecam: number[] | null } | null; grade: GradeT | null; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
 }
 export interface DiscordInbox { configured: boolean; channel_id: string | null; channel_name: string | null; server: string | null; bot: string | null; last_error: string | null; last_checked: number | null; last_unrecognized: string | null }
 export type Priority = "low" | "normal" | "high" | "urgent";

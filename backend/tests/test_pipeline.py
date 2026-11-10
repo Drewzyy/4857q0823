@@ -788,3 +788,22 @@ def test_kick_channel_clips_become_videos(env):
     assert ctx.pipeline.check_source(src.json()["id"])["new"] == 1  # the barely watched clip waits
     drain(ctx)
     assert [r["status"] for r in c.get("/api/references").json()] == ["ready"]
+
+
+def test_clips_are_graded_and_regraded_after_edits(env):
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("gr1", "https://www.tiktok.com/@a.clips/video/gr1", "grade me", views=50_000, likes=4_000)]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    clip = c.get("/api/clips").json()[0]
+    g = clip["grade"]
+    assert g["tier"] in "SABCD" and 0 <= g["score"] <= 100 and len(g["parts"]) == 7
+    e = c.get(f"/api/clips/{clip['id']}/editor").json()
+    assert e["grade"] == g
+    c.put(f"/api/clips/{clip['id']}/edit", json={**e["edit"], "end": e["edit"]["start"] + 3})  # a 3 s clip
+    drain(ctx)
+    short = c.get("/api/clips").json()[0]["grade"]
+    assert next(p for p in short["parts"] if p["name"] == "Length")["points"] == 0

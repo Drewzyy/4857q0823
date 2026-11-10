@@ -305,3 +305,13 @@ test("video editor: gameplay under the stream, a sticker on top, saved as a pres
   await page.getByRole("button", { name: "Save & render" }).click();
   await expect(page.getByText(/Saved\. Re-rendering/)).toBeVisible();
 });
+
+test("every clip shows its grade, with the breakdown in the editor", async ({ page }) => {
+  await page.goto("/editor");
+  const row = page.getByRole("link", { name: /He did NOT just say that/ });
+  await expect(row.locator(".grade-badge")).toBeVisible();
+  await row.click();
+  await expect(page.getByRole("heading", { name: "Grade" })).toBeVisible();
+  await expect(page.getByText("Hook in the first 3 seconds")).toBeVisible();
+  if (process.env.SHOT) await page.getByRole("heading", { name: "Grade" }).locator("xpath=../..").screenshot({ path: process.env.SHOT });
+});

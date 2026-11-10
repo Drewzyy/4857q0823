@@ -9,13 +9,15 @@ import json
 import logging
 import random
 import shutil
+
+import numpy as np
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
-from . import describe, events, identify, notify
+from . import describe, events, grade, identify, notify
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost
@@ -425,10 +427,12 @@ class Pipeline:
                                      file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))
                 audit(s, "clip.ready", "clip", clip.id, {"reference": rid, "destinations": len(dest_info)})
                 clip_title, clip_id = clip.title, clip.id
+            graded = self.grade_clip(clip_id)
             self._set(rid, "ready", f"Ready to upload to {len(dest_info)} destination(s)" + (f". {captions_note}" if captions_note else ""))
-            events.emit(self.ctx, "approvals", f"Clip ready to upload: {clip_title}", body=f"{creator_name}, {len(dest_info)} page(s)",
+            tier = f" [{graded['tier']} tier, {graded['score']}/100]" if graded else ""
+            events.emit(self.ctx, "approvals", f"Clip ready to upload: {clip_title}{tier}", body=f"{creator_name}, {len(dest_info)} page(s)",
                         dedupe_key=f"ready:{rid}:{clip_id}", data={"clip_id": clip_id},
-                        discord=notify.ready_message(clip_title, creator_name, [(p, n, h) for _, p, n, h, _ in dest_info]))
+                        discord=notify.ready_message(clip_title, creator_name, [(p, n, h) for _, p, n, h, _ in dest_info], graded))
             return {"status": "ready", "outputs": len(dest_info)}
         except FetchError as e:
             self._set(rid, "failed", f"Download problem: {e}")
@@ -545,6 +549,49 @@ class Pipeline:
             log.exception("thumbnail failed")  # the video itself is fine
         return out
 
+    def grade_clip(self, clip_id: int) -> dict | None:
+        """Grade the clip as it now renders (after trims, cuts and speed) and store it with the clip."""
+        with self.ctx.db.session() as s:
+            clip = s.get(Clip, clip_id)
+            if not clip or not clip.source_path or not Path(clip.source_path).exists():
+                return None
+            e = dict(clip.edit or {})
+            start = e.get("start", clip.source_start or 0.0)
+            dur = e.get("end", start + (clip.source_duration or 0.0)) - start
+            speed = e.get("speed", 1.0)
+            removed = (e.get("gaps") or [] if e.get("cut_dead_air") else []) + (e.get("cuts") or [])
+            rel = deadair.relative(removed, start, dur)
+            shift = (clip.source_start or 0.0) - start  # words are timed from Vyral's original cut
+            ref = clip.reference
+            outs = s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip_id)).all()
+            ov = lenient(OverlaySettings, outs[0].overlay if outs else None).model_dump()
+            has_title = bool(outs and ov["title"]["enabled"] and (outs[0].video_title or "").strip())
+            facts = dict(source=Path(clip.source_path), start=start, dur=dur, rel=rel, speed=speed,
+                         words=[(w["start"] + shift, w["end"] + shift, w["text"]) for w in clip.words or []],
+                         captions=bool(ov["captions"]["enabled"] and clip.words), title=has_title,
+                         views=ref.views if ref else None, likes=ref.likes if ref else None, shares=ref.shares if ref else None,
+                         posted_at=ref.posted_at if ref else None, stream_clip=bool(ref and ref.platform in STREAM_CLIP_PLATFORMS))
+        try:
+            db = grade.loudness(facts["source"], facts["start"], facts["dur"], facts["rel"])
+        except FFmpegError:
+            log.exception("grading failed")
+            return None
+
+        def at(t: float) -> float:
+            return (t - deadair.removed_before(t, facts["rel"])) / facts["speed"]
+        words = [(at(a), at(b), w) for a, b, w in facts["words"] if 0 <= a < facts["dur"] and not deadair.inside(a, facts["rel"])]
+        length = (facts["dur"] - sum(b - a for a, b in facts["rel"])) / facts["speed"]
+        if abs(facts["speed"] - 1) > 1e-3:  # speed changes the clip's timing, not its loudness
+            db = db[np.round(np.arange(0, len(db), facts["speed"])).astype(int).clip(0, len(db) - 1)] if len(db) else db
+        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"],
+                             views=facts["views"], likes=facts["likes"], shares=facts["shares"], posted_at=facts["posted_at"],
+                             stream_clip=facts["stream_clip"]).to_dict()
+        with self.ctx.db.session() as s:
+            clip = s.get(Clip, clip_id)
+            if clip:
+                clip.grade = result
+        return result
+
     def _library_files(self, ids: list[int | None]) -> dict[int, tuple[Path, bool]]:
         """Library items that still exist on disk: id -> (file, is a video)."""
         wanted = {i for i in ids if i}
@@ -621,6 +668,8 @@ class Pipeline:
                         x.render_state, x.render_error = "failed", str(e)[:300]
             finally:
                 shutil.rmtree(work, ignore_errors=True)
+        for clip_id in {json.loads(k)[0] for k in groups}:
+            self.grade_clip(clip_id)  # the edit changed what the clip is: grade it again
         return {"rendered": done}
 
     # ---------- analytics ----------

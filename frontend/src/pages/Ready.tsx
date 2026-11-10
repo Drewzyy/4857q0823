@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { api, PLATFORM_LABEL, type ClipOutputT, type ClipT } from "../lib/api";
 import { bytes, ConfirmModal, Empty, ErrorNote, Loading, PlatformBadge, relTime, useToast } from "../components/ui";
 import { OverlayEditor } from "../components/OverlayEditor";
+import { GradeBadge } from "../components/GradeBadge";
 import type { Overlay } from "../lib/api";
 
 type Tab = "ready" | "uploaded" | "expired";
@@ -85,6 +86,7 @@ function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: 
       </div>
       <div className="stack" style={{ minWidth: 0 }}>
         <div className="row wrap">
+          <GradeBadge grade={clip.grade} />
           <h2 className="ellipsis" style={{ flex: 1, minWidth: 0 }}>{clip.title}</h2>
           {clip.creator && <span className="chip"><span className="dot" style={{ background: clip.creator.color }} />{clip.creator.name}</span>}
           {clip.editable && <Link className="btn sm" to={`/editor/${clip.id}`}><Clapperboard size={13} />Edit video</Link>}

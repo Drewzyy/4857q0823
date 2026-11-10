@@ -5,6 +5,7 @@ import { Clapperboard, Pause, Play, Plus, Redo2, RotateCcw, Trash2, Undo2 } from
 import { api, type ClipEditT, type EditorData, type FontKey, type Overlay, type TextOverlayT, type TextStyle } from "../lib/api";
 import { Empty, ErrorNote, Loading, relTime, useToast } from "../components/ui";
 import { EditorExtras, LayerPreview, useLibrary } from "../components/EditorExtras";
+import { GradeBadge, GradeCard } from "../components/GradeBadge";
 
 const FONTS: [FontKey, string][] = [["montserrat", "Montserrat Black"], ["anton", "Anton"], ["bebas", "Bebas Neue"], ["poppins", "Poppins ExtraBold"]];
 const SWATCHES = ["#FFFFFF", "#FFE500", "#F97316", "#22C55E", "#38BDF8", "#EC4899", "#000000"];
@@ -34,7 +35,7 @@ function ClipList() {
         <div className="card stack" style={{ gap: 0 }}>
           {clips.map((c) => (
             <Link key={c.id} to={`/editor/${c.id}`} className="list-row" style={{ color: "inherit" }}>
-              <span className="ellipsis" style={{ flex: 1 }}>{c.title}</span>
+              <GradeBadge grade={c.grade} /><span className="ellipsis" style={{ flex: 1 }}>{c.title}</span>
               {c.creator && <span className="chip"><span className="dot" style={{ background: c.creator.color }} />{c.creator.name}</span>}
               <span className="small faint">made {relTime(c.created_at)}</span>
               <span className="btn sm">Edit</span>
@@ -430,6 +431,8 @@ function EditorBody({ data }: { data: EditorData }) {
               <p className="small faint" style={{ margin: 0 }}>{e.thumb_at === null ? "Vyral uses the frame one second in. " : `Cover frame: ${fmt(e.thumb_at - e.start)} into the clip. `}
                 Pause the video where you want, then Use this frame. It's saved as a JPG next to each video and set as the video's cover. Saving re-renders, and the picture here updates when it's done.</p></div>
           </div>
+
+          <GradeCard grade={data.grade} />
 
           <EditorExtras e={e} patch={patch} at={out} outLen={outLen} toast={toast} />
 

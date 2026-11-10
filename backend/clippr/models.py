@@ -244,6 +244,7 @@ class Clip(Base):
     words: Mapped[list[Any]] = mapped_column(default=list)  # [{start, end, text}] relative to the clip
     captions_note: Mapped[str] = mapped_column(Text, default="")
     edit: Mapped[dict[str, Any]] = mapped_column(default=dict)  # video editor: trim, zoom/pan, speed, extra texts
+    grade: Mapped[dict[str, Any] | None] = mapped_column(nullable=True)  # grade.Grade: S to D and why
     status: Mapped[str] = mapped_column(String(16), default="ready")  # ready | expired
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
