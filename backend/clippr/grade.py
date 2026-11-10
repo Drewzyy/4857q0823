@@ -52,6 +52,16 @@ def loudness(path: Path, start: float, dur: float, gaps: list[tuple[float, float
     import subprocess
 
     sr = 8000
+    hop = int(sr * STEP)
+    if start == 0 and not gaps and dur > 600:
+        # A whole long video (long-form): read it in 2-minute pieces so hours of audio never sit in memory at once.
+        from .media.ffmpeg import decode_audio_chunks
+        out = []
+        for chunk in decode_audio_chunks(path, sr):  # 120 s pieces split evenly into 100 ms steps
+            n = len(chunk) // hop
+            if n:
+                out.append(20 * np.log10(np.sqrt((chunk[: n * hop].reshape(n, hop) ** 2).mean(axis=1)) + 1e-6))
+        return np.concatenate(out) if out else np.zeros(0)
     try:
         raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path),
                               "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"], capture_output=True, timeout=120, check=True).stdout
@@ -63,7 +73,6 @@ def loudness(path: Path, start: float, dur: float, gaps: list[tuple[float, float
         for a, b in gaps:
             keep[int(a * sr):int(b * sr)] = False
         x = x[keep]
-    hop = int(sr * STEP)
     n = len(x) // hop
     if n == 0:
         return np.zeros(0)
