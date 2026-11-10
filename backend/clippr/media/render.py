@@ -1,11 +1,14 @@
 """Render the final upload-ready video: sharp centered footage over a blurred, darkened copy."""
 from __future__ import annotations
 
-import os
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import encoders
 from .ffmpeg import FFmpegError, probe, run
+
+log = logging.getLogger("clippr.render")
 
 
 @dataclass(frozen=True)
@@ -44,7 +47,7 @@ SPLIT_SHARE = 0.5  # gameplay under the stream takes the bottom half
 def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = None, duration: float | None = None,
            overlay_dir: Path | None = None, zoom: float = 1.0, pan: tuple[float, float] = (0.5, 0.5), speed: float = 1.0,
            video_height: float = 0.0, cam: list[float] | None = None, bottom: Path | None = None,
-           gaps: list[tuple[float, float]] | None = None, layers: list[Layer] = ()) -> Path:
+           gaps: list[tuple[float, float]] | None = None, layers: list[Layer] = (), use_hardware: bool = True) -> Path:
     """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in).
     video_height: how much of the frame's height the sharp video fills (0.45 = 45%). A wide stream is trimmed at
     the sides (where pan says) to get there; 0 or anything below the stream's full-width height keeps it whole.
@@ -112,9 +115,6 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
                f"enable='between(t,{ly.start:.3f},{ly.end:.3f})'[o{n}]")
         last = f"o{n}"
     vf += f";[{last}]setsar=1" + (",ass=overlay.ass:fontsdir=fonts" if overlay_dir else "") + ",format=yuv420p[v]"
-    # High-quality constant-quality encode, capped so platforms don't re-compress it harder.
-    maxrate = f"{fmt.bitrate_mbps * 1.5:.1f}M"
-    vcodec = ["-c:v", "libx265", "-crf", "20", "-tag:v", "hvc1"] if fmt.codec == "h265" else ["-c:v", "libx264", "-crf", "17", "-profile:v", "high"]
     args = []
     if start is not None:
         args += ["-ss", f"{start:.3f}"]
@@ -128,12 +128,18 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         args += ["-map", "0:a:0", "-af", cut_a + (f"atempo={speed:.4f}," if abs(speed - 1) > 1e-3 else "") + "loudnorm=I=-14:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
     if inputs:  # looping gameplay and pictures never end on their own: stop with the clip
         args += ["-shortest"]
-    args += [*vcodec, "-preset", os.environ.get("CLIPPR_RENDER_PRESET", "medium"), "-maxrate", maxrate, "-bufsize", f"{fmt.bitrate_mbps * 3:.1f}M",
-             "-movflags", "+faststart", str(out)]
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".part.mp4")
-    args[-1] = str(tmp)
-    run(args, cwd=overlay_dir)
+    tail = ["-movflags", "+faststart", str(tmp)]
+    # The graphics card's encoder when there is one; if it fails on this clip, the processor's, which always works.
+    hw = encoders.args(fmt.codec, fmt.bitrate_mbps, use_hardware)
+    try:
+        run(args + hw + ([] if "-crf" not in hw else encoders.software_preset()) + tail, cwd=overlay_dir)
+    except FFmpegError:
+        if "-crf" in hw:
+            raise
+        log.warning("hardware encoder failed; rendering on the processor")
+        run(args + encoders.args(fmt.codec, fmt.bitrate_mbps, False) + encoders.software_preset() + tail, cwd=overlay_dir)
     tmp.replace(out)
     return out
 

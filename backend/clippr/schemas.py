@@ -118,6 +118,7 @@ class CaptionEngineSettings(Strict):
 class ProcessingSettings(Strict):
     max_concurrent_jobs: int = Field(2, ge=1, le=16)
     cut_dead_air: bool = True  # cut stretches with no sound out of new clips
+    hardware_encoding: bool = True  # render on the graphics card when this computer has a working video encoder
 
 
 class IntakeSettings(Strict):

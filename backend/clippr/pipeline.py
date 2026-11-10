@@ -529,8 +529,10 @@ class Pipeline:
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         if use_text:
             overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts))
+        with self.ctx.db.session() as s:
+            use_hardware = load_settings(s).processing.hardware_encoding
         render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan,
-               speed=speed, video_height=video_height, cam=cam, bottom=bottom, gaps=rel, layers=layers)
+               speed=speed, video_height=video_height, cam=cam, bottom=bottom, gaps=rel, layers=layers, use_hardware=use_hardware)
         cover = 1.0
         if edit and edit.get("thumb_at") is not None:
             t = min(max(edit["thumb_at"] - start, 0.0), dur)
@@ -563,44 +565,58 @@ class Pipeline:
                     o.render_state, o.render_error = "failed", "The re-render got stuck. Save your edit again to retry."
 
     def rerender(self, output_ids: list[int]) -> dict:
-        """Re-render outputs after their text or style was edited. Each gets its own new file."""
+        """Re-render outputs after an edit. Pages with the same format, text style and title share one render, so
+        three pages with the same settings cost one encode, not three."""
         done = 0
-        for oid in output_ids:
-            with self.ctx.db.session() as s:
+        groups: dict[str, list[int]] = {}
+        with self.ctx.db.session() as s:
+            for oid in output_ids:
                 o = s.get(ClipOutput, oid)
-                clip = s.get(Clip, o.clip_id) if o else None
-                if not o or not clip or clip.status != "ready" or not clip.source_path or not Path(clip.source_path).exists():
-                    if o:
-                        o.render_state, o.render_error = "failed", "The original footage for this clip has expired."
+                if o:
+                    key = json.dumps([o.clip_id, o.format, lenient(OverlaySettings, o.overlay).model_dump(), o.video_title], sort_keys=True, default=str)
+                    groups.setdefault(key, []).append(oid)
+        for ids in groups.values():
+            with self.ctx.db.session() as s:
+                o = s.get(ClipOutput, ids[0])
+                clip = s.get(Clip, o.clip_id)
+                if clip.status != "ready" or not clip.source_path or not Path(clip.source_path).exists():
+                    for oid in ids:
+                        x = s.get(ClipOutput, oid)
+                        x.render_state, x.render_error = "failed", "The original footage for this clip has expired."
                     continue
-                job = (Path(clip.source_path), Path(clip.files_dir), dict(o.format or {}), dict(o.overlay or {}), o.video_title,
-                       [Word.from_dict(w) for w in clip.words or []], clip.source_start or 0.0, clip.source_duration or 0.0, o.file_path,
-                       dict(clip.edit) if clip.edit else None, self._render_inputs(o, clip))
-            source, cdir, fmt_raw, ov, vtitle, words, start, dur, old, edit, inputs = job
-            ov = lenient(OverlaySettings, ov).model_dump()
-            out = cdir / f"output-{oid}-{int(now().timestamp() * 1000)}.mp4"
-            work = self._dir("tmp") / f"rerender-{oid}-{random.randrange(1 << 30)}"
+                source, cdir, fmt_raw, ov, vtitle = Path(clip.source_path), Path(clip.files_dir), dict(o.format or {}), dict(o.overlay or {}), o.video_title
+                words, start, dur = [Word.from_dict(w) for w in clip.words or []], clip.source_start or 0.0, clip.source_duration or 0.0
+                edit = dict(clip.edit) if clip.edit else None
+                inputs = {oid: self._render_inputs(s.get(ClipOutput, oid), clip) for oid in ids}
+            out = cdir / f"output-{ids[0]}-{int(now().timestamp() * 1000)}.mp4"
+            work = self._dir("tmp") / f"rerender-{ids[0]}-{random.randrange(1 << 30)}"
             try:
-                self._render(source, out, fmt_raw, start, dur, ov, vtitle, words, work, edit)
+                self._render(source, out, fmt_raw, start, dur, lenient(OverlaySettings, ov).model_dump(), vtitle, words, work, edit)
                 info = probe(out)
+                olds, kept = [], 0
                 with self.ctx.db.session() as s:
-                    o = s.get(ClipOutput, oid)
-                    if self._render_inputs(o, s.get(Clip, o.clip_id)) != inputs:
-                        # Edited again while this was rendering: a newer job renders the latest, so drop this one.
-                        out.unlink(missing_ok=True)
-                        out.with_suffix(".jpg").unlink(missing_ok=True)
-                        continue
-                    o.file_path, o.width, o.height, o.fps, o.size_bytes = str(out), info.width, info.height, info.fps, out.stat().st_size
-                    o.render_state, o.render_error = "ready", None
-                    still_used = s.scalar(select(func.count()).select_from(ClipOutput).where(ClipOutput.file_path == old)) if old else 0
-                if old and not still_used:
-                    Path(old).unlink(missing_ok=True)
-                    Path(old).with_suffix(".jpg").unlink(missing_ok=True)
-                done += 1
+                    for oid in ids:
+                        o = s.get(ClipOutput, oid)
+                        if self._render_inputs(o, s.get(Clip, o.clip_id)) != inputs[oid]:
+                            continue  # edited again while this rendered: the newer job renders the latest
+                        olds.append(o.file_path)
+                        o.file_path, o.width, o.height, o.fps, o.size_bytes = str(out), info.width, info.height, info.fps, out.stat().st_size
+                        o.render_state, o.render_error = "ready", None
+                        kept += 1
+                    s.flush()
+                    unused = [p for p in set(olds) if p and not s.scalar(select(func.count()).select_from(ClipOutput).where(ClipOutput.file_path == p))]
+                if not kept:
+                    out.unlink(missing_ok=True)
+                    out.with_suffix(".jpg").unlink(missing_ok=True)
+                for p in unused:
+                    Path(p).unlink(missing_ok=True)
+                    Path(p).with_suffix(".jpg").unlink(missing_ok=True)
+                done += kept
             except FFmpegError as e:
                 with self.ctx.db.session() as s:
-                    o = s.get(ClipOutput, oid)
-                    o.render_state, o.render_error = "failed", str(e)[:300]
+                    for oid in ids:
+                        x = s.get(ClipOutput, oid)
+                        x.render_state, x.render_error = "failed", str(e)[:300]
             finally:
                 shutil.rmtree(work, ignore_errors=True)
         return {"rendered": done}
