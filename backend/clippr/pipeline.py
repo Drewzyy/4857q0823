@@ -179,6 +179,7 @@ class Pipeline:
 
     # ---------- clip building ----------
     def _set(self, rid: int, status: str, detail: str, **fields) -> None:
+        self.ctx.jobs.beat()  # every step of a build is progress
         with self.ctx.db.session() as s:
             r = s.get(ReferenceVideo, rid)
             r.status, r.status_detail = status, detail
@@ -755,10 +756,11 @@ def register(ctx: Any) -> Pipeline:
     q.every("monitor.tick", 60)
     q.every("storage.cleanup", 6 * 3600)
     q.heavy = {"clip.build", "clip.rerender"}
-    # Searching several full streams can legitimately take a while; well past that, something is stuck.
-    q.time_limits = {"clip.build": 90 * 60, "clip.rerender": 30 * 60, "intake.link": 10 * 60, "source.check": 10 * 60}
+    # How long a job may go without any progress (a step finished, data downloaded) before it's given up on.
+    # Long searches are fine as long as they keep moving.
+    q.time_limits = {"clip.build": 20 * 60, "clip.rerender": 20 * 60, "intake.link": 10 * 60, "source.check": 10 * 60}
     q.on_timeout = {
-        "clip.build": lambda pl: p._set(pl["reference_id"], "failed", "This got stuck (a download stopped responding). Press Retry to try again."),
+        "clip.build": lambda pl: p._set(pl["reference_id"], "failed", "This stopped making progress for 20 minutes (most likely a download froze). Press Retry to try again."),
         "clip.rerender": lambda pl: p._render_stuck(pl.get("output_ids") or []),
     }
     return p

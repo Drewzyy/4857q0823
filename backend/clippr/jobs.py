@@ -51,6 +51,7 @@ class JobQueue:
         self.time_limits: dict[str, float] = {}
         self.on_timeout: dict[str, Callable[[dict], None]] = {}
         self._workers = 1
+        self._local = threading.local()  # the job this worker thread is running, for beat()
         self.heavy_limit: Callable[[], int] = lambda: 1
 
     def register(self, kind: str, handler: Handler) -> None:
@@ -131,6 +132,7 @@ class JobQueue:
             job = s.get(Job, job_id)
             kind, payload, attempts, max_attempts = job.kind, dict(job.payload), job.attempts, job.max_attempts
         handler = self.handlers.get(kind)
+        self._local.job_id, self._local.beat_at = job_id, time.monotonic()
         try:
             if not handler:
                 raise PermanentJobError(f"No handler registered for '{kind}'")
@@ -149,6 +151,8 @@ class JobQueue:
                     if j.status == "running":
                         j.status, j.error = "queued", f"{type(e).__name__}: {e}"[:500]
                         j.run_after = datetime.now(timezone.utc) + timedelta(seconds=backoff)
+        finally:
+            self._local.job_id = None
         return True
 
     def _finish(self, job_id: int, status: str, *, result: dict | None = None, error: str | None = None) -> None:
@@ -166,8 +170,20 @@ class JobQueue:
                 bucket = int(now // seconds)
                 self.enqueue(kind, payload(), idempotency_key=f"periodic:{kind}:{bucket}", max_attempts=1)
 
+    def beat(self) -> None:
+        """Called from inside a running job (or a download it's doing) to say it's still making progress.
+        Cheap to call often: it writes at most every 20 seconds."""
+        job_id = getattr(self._local, "job_id", None)
+        if not job_id or time.monotonic() - getattr(self._local, "beat_at", 0) < 20:
+            return
+        self._local.beat_at = time.monotonic()
+        with self.db.session() as s:
+            j = s.get(Job, job_id)
+            if j and j.status == "running":
+                j.heartbeat_at = datetime.now(timezone.utc)
+
     def _reap_stuck(self) -> None:
-        """A job past its time limit is marked failed so it stops holding a slot, and a fresh worker replaces the
+        """A job that made no progress for its time limit is marked failed so it stops holding a slot, and a fresh worker replaces the
         one still stuck inside it. (A thread can't be killed; when it finally returns, its result is ignored.)"""
         if not self.time_limits:
             return
@@ -175,10 +191,11 @@ class JobQueue:
         stuck = []
         with self.db.session() as s:
             for j in s.scalars(select(Job).where(Job.status == "running", Job.kind.in_(list(self.time_limits)))):
-                started = j.started_at.replace(tzinfo=j.started_at.tzinfo or timezone.utc) if j.started_at else None
-                if started and (now - started).total_seconds() > self.time_limits[j.kind]:
+                seen = max(d for d in (j.started_at, j.heartbeat_at) if d) if j.started_at else None
+                seen = seen.replace(tzinfo=seen.tzinfo or timezone.utc) if seen else None
+                if seen and (now - seen).total_seconds() > self.time_limits[j.kind]:
                     j.status, j.finished_at = "failed", now
-                    j.error = f"Stopped after {int(self.time_limits[j.kind] // 60)} minutes: it stopped making progress"
+                    j.error = f"Stopped: no progress for {int(self.time_limits[j.kind] // 60)} minutes"
                     stuck.append((j.kind, dict(j.payload)))
         for kind, payload in stuck:
             log.warning("gave up on a stuck %s job", kind)

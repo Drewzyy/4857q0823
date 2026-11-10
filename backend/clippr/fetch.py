@@ -57,6 +57,10 @@ class Fetcher(Protocol):
 
 MONITORABLE = ("tiktok", "youtube", "twitch", "kick")
 
+
+def on_progress() -> None:
+    """Replaced at startup with the job queue's beat(), so long downloads count as progress."""
+
 # Single TikTok videos (full links and the short share links the app copies: vm./vt.tiktok.com/x and
 # tiktok.com/t/x) and YouTube Shorts, found anywhere in pasted text.
 _FIND_LINK = re.compile(r"https?://(?:(?:www\.|m\.)?tiktok\.com/(?:@[\w.-]+/video/\d+|t/\w+)|(?:vm|vt)\.tiktok\.com/\w+"
@@ -173,6 +177,7 @@ def use_bundled_ffmpeg() -> None:
 class YtDlpFetcher:
     def _opts(self, **extra) -> dict:
         return {"quiet": True, "no_warnings": True, "noprogress": True, "socket_timeout": 30, "retries": 3,
+                "progress_hooks": [lambda _: on_progress()],  # a long download is progress too
                 # FFmpeg downloads (stream sections) give up after 60 s without data instead of waiting forever.
                 "external_downloader_args": {"ffmpeg_i": ["-rw_timeout", "60000000"]},
                 "ffmpeg_location": ffmpeg_exe(), "noplaylist": False, "cachedir": False, **extra}
@@ -208,7 +213,9 @@ class YtDlpFetcher:
 
     def download_audio(self, url: str, dest_dir: Path) -> Path:
         dest_dir.mkdir(parents=True, exist_ok=True)
-        info = self._extract(url, download=True, noplaylist=True, format="bestaudio/best",
+        # Only the sound is needed. Streams without an audio-only version (common on Kick) fall back to the
+        # smallest video, not the full-quality one: same audio, a fraction of the download.
+        info = self._extract(url, download=True, noplaylist=True, format="bestaudio/worst",
                              outtmpl=str(dest_dir / "%(id)s.%(ext)s"))
         return Path(info["requested_downloads"][0]["filepath"])
 

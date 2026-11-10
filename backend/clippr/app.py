@@ -68,6 +68,8 @@ def build_context(config: Config, secrets: SecretStore | None = None, fetcher=No
             return load_settings(s).processing.max_concurrent_jobs
 
     ctx.jobs.heavy_limit = heavy_limit
+    from . import fetch
+    fetch.on_progress = ctx.jobs.beat
     return ctx
 
 

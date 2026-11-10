@@ -92,7 +92,7 @@ def test_a_stuck_job_is_given_up_on_and_the_queue_keeps_moving(ctx):
     q._reap_stuck()
     with db.session() as s:
         j = s.get(Job, stuck_id)
-        assert j.status == "failed" and "Stopped after 1 minutes" in j.error
+        assert j.status == "failed" and "no progress for 1 minutes" in j.error
     assert told == [{"n": 1}]
     q.enqueue("quick", {})
     deadline = time.time() + 5
@@ -100,3 +100,32 @@ def test_a_stuck_job_is_given_up_on_and_the_queue_keeps_moving(ctx):
         time.sleep(0.1)
     assert done  # a replacement worker picked up the next job while the stuck one is still inside its handler
     q._stop.set(); release.set()
+
+
+def test_a_long_job_that_keeps_making_progress_is_left_alone(ctx):
+    import threading, time
+    from datetime import datetime, timedelta, timezone
+    q = JobQueue(ctx.db)
+    release, beats = threading.Event(), threading.Event()
+
+    def long_job(jc, pl):
+        q._local.beat_at = 0  # let the beat through right away
+        q.beat()
+        beats.set()
+        release.wait(30)
+        return {}
+    q.register("long", long_job)
+    q.time_limits = {"long": 60}
+    jid = q.enqueue("long", {})
+    t = threading.Thread(target=q.run_one, daemon=True)
+    t.start()
+    assert beats.wait(5)
+    with ctx.db.session() as s:  # started two hours ago, but it just reported progress
+        s.get(Job, jid).started_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    q._reap_stuck()
+    with ctx.db.session() as s:
+        assert s.get(Job, jid).status == "running"
+    release.set()
+    t.join(5)
+    with ctx.db.session() as s:
+        assert s.get(Job, jid).status == "succeeded"
