@@ -6,7 +6,10 @@ import re
 from datetime import datetime
 
 LIMITS = {"tiktok": 2200, "instagram": 2200, "youtube": 5000, "facebook": 5000}
-MAX_TAGS = {"instagram": 30, "tiktok": 30, "youtube": 15, "facebook": 30}
+# 3 to 5 specific hashtags beat 20 generic ones (TikTok's own guidance as relayed by creator playbooks; the
+# platforms read the caption for topic). Generic reach tags say nothing about the clip, so they're left out.
+MAX_TAGS = {"instagram": 5, "tiktok": 5, "youtube": 5, "facebook": 5}
+GENERIC_TAGS = {"#fyp", "#foryou", "#foryoupage", "#fy", "#fypシ", "#viral", "#viralvideo", "#trending", "#xyzbca", "#explore", "#explorepage"}
 BRAND_TAG = "#vyralclips"
 
 
@@ -34,17 +37,20 @@ def stream_date_line(when: datetime | None) -> str:
 def _tags(original: list[str], page: list[str], platform: str) -> list[str]:
     tags, seen = [], set()
     extra = [BRAND_TAG] + (["#shorts"] if platform == "youtube" else [])
-    for t in [*original, *page, *extra]:
+    for t in [*page, *original, *extra]:  # the page's own tags first: the user picked them for this page
         t = t.strip()
         if not t:
             continue
         t = t if t.startswith("#") else f"#{t}"
+        if t.lower() in GENERIC_TAGS:
+            continue
         if t.lower() not in seen:
             seen.add(t.lower())
             tags.append(t)
-    limit = MAX_TAGS.get(platform, 30)
-    if len(tags) > limit:  # always keep #vyralclips even when trimming
-        tags = [t for t in tags if t.lower() != BRAND_TAG][: limit - 1] + [BRAND_TAG]
+    limit = MAX_TAGS.get(platform, 5)
+    if len(tags) > limit:  # always keep #vyralclips (and #shorts on YouTube) when trimming
+        keep = [t.lower() for t in extra]
+        tags = [t for t in tags if t.lower() not in keep][: limit - len(extra)] + extra
     return tags
 
 

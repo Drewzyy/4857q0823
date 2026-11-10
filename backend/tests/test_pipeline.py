@@ -83,10 +83,10 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     tdesc = outs["tiktok"]["description"]
     local = datetime(2026, 11, 7, 20, tzinfo=timezone.utc).astimezone()
     assert tdesc == (f"He actually did it 😭\n\nFollow for more\n\nStreamer: Streamer A\nStreamed {local:%b} {local.day}, {local.year}"
-                     "\n\n#fyp #gaming #clips #vyralclips"), tdesc
+                     "\n\n#gaming #clips #vyralclips"), tdesc
     assert "@someone" not in tdesc
     assert outs["youtube"]["title"] == "He actually did it 😭"
-    assert outs["youtube"]["description"].endswith("#fyp #vyralclips #shorts")
+    assert outs["youtube"]["description"].endswith("\n\n#vyralclips #shorts")  # generic #fyp dropped
 
     # Text on the video: ALL CAPS bold, white title at the top for 5 s, yellow captions from speech.
     tt_out = outs["tiktok"]
@@ -852,3 +852,11 @@ def test_database_updates_never_cascade_deletes():
     with db.engine.connect() as conn:
         assert conn.execute(sa.text("select count(*) from clip_outputs")).scalar() == 1
         assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
+
+
+def test_hashtags_are_few_specific_and_the_pages_own_first():
+    from clippr.describe import build
+    _, desc = build("tiktok", "insane clutch #fyp #viral #warzone #clutch #fps #ranked", "Streamer A",
+                    {"hashtags": ["#streamera", "gaming"]})
+    tags = desc.rsplit("\n\n", 1)[-1].split()
+    assert tags == ["#streamera", "#gaming", "#warzone", "#clutch", "#vyralclips"]
