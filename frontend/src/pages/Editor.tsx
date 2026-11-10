@@ -92,6 +92,9 @@ function EditorBody({ data }: { data: EditorData }) {
   const video = useRef<HTMLVideoElement>(null);
   const bg = useRef<HTMLCanvasElement>(null);
   const [aspect, setAspect] = useState(16 / 9);
+  // Share of the 9:16 frame's height the stream fills when it spans the full width (about 32% for 16:9).
+  const fullWidth = Math.round((9 / 16 / aspect) * 100) / 100;
+  const boxHeight = Math.max(e.video_height, fullWidth);
   const total = data.section_duration;
   const first = data.outputs[0];
   const overlay: Overlay | null = first?.overlay ?? null;
@@ -225,11 +228,11 @@ function EditorBody({ data }: { data: EditorData }) {
         <div className="stack" style={{ alignItems: "center" }}>
           <div className="ed-preview" style={{ width: PREVIEW_W }} onClick={toggle} aria-label="Video preview">
             <canvas ref={bg} width={108} height={192} className="ed-bg" />
-            <div className="ed-fg" style={{ aspectRatio: String(aspect) }}>
+            <div className="ed-fg" style={{ height: `${boxHeight * 100}%` }}>
               <video ref={video} src={api.sourceUrl(data.id)} preload="auto" playsInline
                 onLoadedMetadata={(ev) => { const v = ev.currentTarget; if (v.videoWidth) setAspect(v.videoWidth / v.videoHeight); v.currentTime = e.start; v.playbackRate = e.speed; }}
                 onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
-                style={{ transform: `scale(${e.zoom})`, transformOrigin: `${e.pan_x * 100}% ${e.pan_y * 100}%` }} />
+                style={{ objectPosition: `${e.pan_x * 100}% ${e.pan_y * 100}%`, transform: `scale(${e.zoom})`, transformOrigin: `${e.pan_x * 100}% ${e.pan_y * 100}%` }} />
             </div>
             {inRange && overlay?.title.enabled && first.video_title.trim() && out < overlay.title.duration &&
               <div className="ov-text" style={css(overlay.title)}>{first.video_title.replace(/\p{Extended_Pictographic}/gu, "")}</div>}
@@ -281,12 +284,19 @@ function EditorBody({ data }: { data: EditorData }) {
           </div>
 
           <div className="card stack">
-            <h2>Zoom and speed</h2>
+            <h2>Size, zoom and speed</h2>
+            <div className="field"><label htmlFor="ed-size">Video size: {Math.round(boxHeight * 100)}% of the frame's height</label>
+              <div className="row">
+                <input id="ed-size" type="range" style={{ flex: 1 }} min={fullWidth} max={1} step={0.01} value={boxHeight}
+                  onChange={(ev) => patch({ video_height: Number(ev.target.value) }, "size")} />
+                <button className="btn ghost sm" onClick={() => patch({ video_height: fullWidth })}>Whole stream</button>
+              </div>
+              <span className="hint">Bigger trims the sides of the stream; use Left / right to choose what stays in view.</span></div>
             <div className="ov-grid">
               <div className="field"><label htmlFor="ed-zoom">Zoom: {e.zoom.toFixed(2)}x</label>
                 <input id="ed-zoom" type="range" min={1} max={3} step={0.05} value={e.zoom} onChange={(ev) => patch({ zoom: Number(ev.target.value) }, "zoom")} /></div>
               <div className="field"><label htmlFor="ed-px">Left / right</label>
-                <input id="ed-px" type="range" min={0} max={1} step={0.01} value={e.pan_x} disabled={e.zoom <= 1} onChange={(ev) => patch({ pan_x: Number(ev.target.value) }, "px")} /></div>
+                <input id="ed-px" type="range" min={0} max={1} step={0.01} value={e.pan_x} disabled={e.zoom <= 1 && boxHeight <= fullWidth} onChange={(ev) => patch({ pan_x: Number(ev.target.value) }, "px")} /></div>
               <div className="field"><label htmlFor="ed-py">Up / down</label>
                 <input id="ed-py" type="range" min={0} max={1} step={0.01} value={e.pan_y} disabled={e.zoom <= 1} onChange={(ev) => patch({ pan_y: Number(ev.target.value) }, "py")} /></div>
             </div>

@@ -497,3 +497,14 @@ def test_stop_ends_a_long_search(env):
     assert r["status"] == "failed" and "Stopped" in r["status_detail"]
     jobs = c.get("/api/jobs").json()
     assert all(j["status"] != "queued" for j in jobs if j["kind"] == "clip.build")
+
+
+def test_streamer_names_are_given_to_the_speech_model(env):
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("hn1", "https://www.tiktok.com/@a.clips/video/hn1", "names")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    assert ctx.transcriber.hints == ["Streamer A", "streamera"]

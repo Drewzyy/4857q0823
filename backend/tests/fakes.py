@@ -66,8 +66,9 @@ class FakeTranscriber:
         self.fail = fail
         self.calls = 0
 
-    def words(self, audio):
+    def words(self, audio, hints=()):
         self.calls += 1
+        self.hints = list(hints)
         if self.fail:
             raise TranscribeError("Couldn't load the speech model (ConnectError). Check your internet connection for the one-time download.")
         text = "no way he actually did that right now".split()

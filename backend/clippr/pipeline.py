@@ -28,7 +28,7 @@ from .media.render import OutputFormat, render
 from .media.transcribe import TranscribeError
 from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import resolve_destinations, source_creator_ids
-from .schemas import OverlaySettings, lenient
+from .schemas import VIDEO_HEIGHT, OverlaySettings, lenient
 
 log = logging.getLogger("clippr.pipeline")
 POSTS_PER_CHECK = 12
@@ -343,7 +343,10 @@ class Pipeline:
             shutil.move(str(section), source)
 
             self._set(rid, "processing", "Writing captions")
-            words, captions_note = self._transcribe(source, start, dur, work)
+            # The streamer's name and channel handles (every member's, for a group) help the speech model hear names.
+            channels = next((chs for cid, _, chs in candidates if cid == matched_id), [])
+            hints = list(dict.fromkeys([creator_name, *filter(None, map(identify.channel_handle, channels))]))
+            words, captions_note = self._transcribe(source, start, dur, work, hints)
             stream_date = self._stream_date(vod)
             clean = describe.clean_title(ref_title, creator_name)
 
@@ -385,7 +388,7 @@ class Pipeline:
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
-    def _transcribe(self, source: Path, start: float, dur: float, work: Path) -> tuple[list[Word], str]:
+    def _transcribe(self, source: Path, start: float, dur: float, work: Path, hints: list[str]) -> tuple[list[Word], str]:
         """Words spoken in the clip, timed from the clip's start. Captions are skipped (with a note) if this fails.
         A little extra audio is included on both sides so words at the edges aren't cut in half."""
         audio = work / "speech.wav"
@@ -393,7 +396,7 @@ class Pipeline:
         try:
             run(["-ss", f"{start - pad_before:.3f}", "-i", str(source), "-t", f"{dur + pad_before + 0.8:.3f}",
                  "-vn", "-ac", "1", "-ar", "16000", str(audio)])
-            raw = self.ctx.transcriber.words(audio)
+            raw = self.ctx.transcriber.words(audio, hints)
             shifted = [Word(w.start - pad_before, w.end - pad_before, w.text) for w in raw]
             return overlay.clean_words(shifted, dur), ""
         except (TranscribeError, FFmpegError) as e:
@@ -424,8 +427,9 @@ class Pipeline:
                 words: list[Word], ov_dir: Path, edit: dict | None = None) -> Path:
         """`words` are timed from `start`; an editor `edit` may move the cut, zoom/pan, change speed and add texts."""
         fmt = OutputFormat.from_settings(fmt_raw)
-        zoom, pan, speed, texts = 1.0, (0.5, 0.5), 1.0, []
+        zoom, pan, speed, texts, video_height = 1.0, (0.5, 0.5), 1.0, [], VIDEO_HEIGHT
         if edit:
+            video_height = edit.get("video_height", VIDEO_HEIGHT)  # edits saved before this option existed
             shift = start - edit["start"]  # words were timed from the original cut
             start, dur = edit["start"], edit["end"] - edit["start"]
             zoom, pan, speed, texts = edit["zoom"], (edit["pan_x"], edit["pan_y"]), edit["speed"], edit["texts"]
@@ -434,7 +438,8 @@ class Pipeline:
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         if use_text:
             overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts))
-        return render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan, speed=speed)
+        return render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None,
+                      zoom=zoom, pan=pan, speed=speed, video_height=video_height)
 
     @staticmethod
     def _render_inputs(o: ClipOutput, clip: Clip) -> str:

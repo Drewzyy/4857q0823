@@ -210,6 +210,7 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
   const save = page.getByRole("button", { name: "Save & render" });
   await expect(save).toBeDisabled();
 
+  await expect(page.getByText("Video size: 45% of the frame's height")).toBeVisible();  // a little zoomed in by default
   const start = Number(await page.getByLabel("Start (s)").inputValue());
   await page.getByLabel("End (s)").fill(String(start + 6));
   await page.getByRole("group", { name: "Speed" }).getByRole("button", { name: "1.5x" }).click();

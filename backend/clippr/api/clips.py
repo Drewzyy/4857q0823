@@ -198,7 +198,10 @@ def edit_video_text(oid: int, body: VideoTextIn, c=Depends(ctx), s: Session = De
 def editor_data(cid: int, s: Session = Depends(db)):
     clip = get_or_404(s, Clip, cid, "Clip")
     start = round(clip.source_start or 0.0, 2)
-    edit = clip.edit or ClipEdit(start=start, end=round(start + (clip.source_duration or 1.0), 2)).model_dump()
+    try:  # an edit saved by an older version gets defaults for options added since
+        edit = ClipEdit.model_validate(clip.edit).model_dump()
+    except ValidationError:
+        edit = ClipEdit(start=start, end=round(start + (clip.source_duration or 1.0), 2)).model_dump()
     return {"id": clip.id, "title": clip.title, "section_duration": _footage_seconds(clip),
             "original_start": clip.source_start or 0.0, "original_duration": clip.source_duration or 0.0,
             "edit": edit, "words": clip.words or [], "outputs": [_output(o) for o in _live_outputs(s, cid)]}

@@ -71,9 +71,9 @@ function General() {
         <div className="grid cols-2">
           <div className="field"><label htmlFor="acc">Accuracy</label>
             <select id="acc" className="select" value={s.captions.accuracy} onChange={(e) => up("captions", { accuracy: e.target.value as AppSettings["captions"]["accuracy"] })}>
-              <option value="fast">Fast (about 145 MB download)</option>
-              <option value="accurate">Accurate, recommended (about 480 MB)</option>
-              <option value="best">Best (about 1.6 GB, slower on older computers)</option>
+              <option value="fast">Fast (about 480 MB download, misses more words)</option>
+              <option value="accurate">Accurate, recommended (about 1.6 GB)</option>
+              <option value="best">Best (about 3 GB, much slower)</option>
             </select>
             <span className="hint">Accurate handles fast talkers, slang and names much better than Fast. Best is for when Accurate still mishears.</span></div>
           <div className="field"><label htmlFor="lang">Language spoken on stream</label>

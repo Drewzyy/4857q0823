@@ -22,7 +22,9 @@ from .ffmpeg import decode_audio_chunks
 from .overlay import Word
 
 log = logging.getLogger("clippr.transcribe")
-MODELS = {"fast": "base", "accurate": "small", "best": "large-v3-turbo"}
+# Stream audio (game sound, music, several people talking) needs a large model to be heard right; turbo is the
+# large model made fast enough for short clips on a laptop.
+MODELS = {"fast": "small", "accurate": "large-v3-turbo", "best": "large-v3"}
 
 
 class TranscribeError(Exception):
@@ -30,7 +32,7 @@ class TranscribeError(Exception):
 
 
 class Transcriber(Protocol):
-    def words(self, audio_or_video: Path) -> list[Word]: ...
+    def words(self, audio_or_video: Path, hints: list[str] = ()) -> list[Word]: ...
 
 
 class WhisperTranscriber:
@@ -53,12 +55,13 @@ class WhisperTranscriber:
                     raise TranscribeError(f"Couldn't load the speech model ({type(e).__name__}). Check your internet connection for the one-time download.")
             return self._models[name]
 
-    def words(self, audio_or_video: Path) -> list[Word]:
+    def words(self, audio_or_video: Path, hints: list[str] = ()) -> list[Word]:
+        """hints: names likely to be said (the streamer's name and channel), which speech models often mishear."""
         audio = np.concatenate(list(decode_audio_chunks(audio_or_video, 16000)) or [np.zeros(0, dtype=np.float32)])
         if len(audio) < 1600:
             return []
         accuracy, language = self.settings()
-        model = self._load(MODELS.get(accuracy, "small"))
+        model = self._load(MODELS.get(accuracy, MODELS["accurate"]))
         segments, _ = model.transcribe(
             audio,
             language=None if language == "auto" else language,
@@ -72,6 +75,7 @@ class WhisperTranscriber:
             log_prob_threshold=-1.0,
             no_speech_threshold=0.6,
             hallucination_silence_threshold=1.0,
+            hotwords=" ".join(h for h in hints if h) or None,
         )
         out: list[Word] = []
         for seg in segments:

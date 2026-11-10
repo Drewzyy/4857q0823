@@ -27,8 +27,11 @@ class OutputFormat:
 
 
 def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = None, duration: float | None = None,
-           overlay_dir: Path | None = None, zoom: float = 1.0, pan: tuple[float, float] = (0.5, 0.5), speed: float = 1.0) -> Path:
-    """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in)."""
+           overlay_dir: Path | None = None, zoom: float = 1.0, pan: tuple[float, float] = (0.5, 0.5), speed: float = 1.0,
+           video_height: float = 0.0) -> Path:
+    """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in).
+    video_height: how much of the frame's height the sharp video fills (0.45 = 45%). A wide stream is trimmed at
+    the sides (where pan says) to get there; 0 or anything below the stream's full-width height keeps it whole."""
     src, out = src.resolve(), out.resolve()
     info = probe(src)
     # Keep the stream's real frame rate (e.g. 60 or 59.94), capped at what platforms accept. If the
@@ -36,6 +39,10 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
     fps = min(info.fps, fmt.max_fps) if info.fps else fmt.max_fps
     W, H = fmt.width, fmt.height
     bw, bh = W // 4 // 2 * 2, H // 4 // 2 * 2
+    # Width/height of the area the video fills. Never wider than the stream itself: asking for less height than
+    # the full-width stream has just shows the whole stream, never trimmed at the top and bottom.
+    stream = info.width / info.height if info.width and info.height else 16 / 9
+    box = min(W / (H * video_height), stream) if video_height > 0 else stream
     vf = (
         # Editor zoom/pan crops the source; speed retimes it. Both are no-ops at their defaults.
         f"[0:v]crop=iw/{zoom:.4f}:ih/{zoom:.4f}:(iw-iw/{zoom:.4f})*{pan[0]:.4f}:(ih-ih/{zoom:.4f})*{pan[1]:.4f},"
@@ -43,7 +50,8 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         # Blur at quarter size then scale up: same look as a full-size blur, many times faster.
         f"[bg]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},gblur=sigma=10,"
         f"scale={W}:{H}:flags=bicubic,eq=brightness=-0.12:saturation=1.15[b];"
-        f"[fg]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos[f];"
+        f"[fg]crop=w='min(iw,ih*{box:.4f})':h='min(ih,iw/{box:.4f})':x='(iw-ow)*{pan[0]:.4f}':y='(ih-oh)*{pan[1]:.4f}',"
+        f"scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos[f];"
         f"[b][f]overlay=(W-w)/2:(H-h)/2,setsar=1"
         + (",ass=overlay.ass:fontsdir=fonts" if overlay_dir else "")
         + ",format=yuv420p[v]"
