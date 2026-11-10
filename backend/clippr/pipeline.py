@@ -378,7 +378,7 @@ class Pipeline:
 
             self._set(rid, "processing", "Rendering")
             # Framing (and later edits) are saved with the clip, so a re-render never changes how it looks.
-            framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur),
+            framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur, matched_id),
                                **self._dead_air(source, start, dur)).model_dump()
             renders: dict[str, Path] = {}
             planned = []
@@ -429,8 +429,14 @@ class Pipeline:
         gaps = deadair.detect(source, start, dur)
         return {"cut_dead_air": True, "gaps": gaps} if gaps else {}
 
-    def _auto_layout(self, source: Path, start: float, dur: float) -> dict:
-        """Stacked layout when the streamer's facecam sits in a corner over other content (a game, a video)."""
+    def _auto_layout(self, source: Path, start: float, dur: float, creator_id: int | None = None) -> dict:
+        """Stacked layout when the streamer's facecam sits in a corner over other content (a game, a video): where
+        the user marked it for this streamer, else where it's found."""
+        with self.ctx.db.session() as s:
+            c = s.get(Creator, creator_id) if creator_id else None
+            saved = list(c.facecam) if c and c.facecam else None
+        if saved:
+            return {"layout": "stacked", "cam": saved}
         try:
             info = probe(source)
             stream = info.width / info.height if info.width and info.height else 16 / 9

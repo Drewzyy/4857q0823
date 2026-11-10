@@ -91,6 +91,10 @@ function EditorBody({ data }: { data: EditorData }) {
   const [selText, setSelText] = useState<number | null>(null);
   const video = useRef<HTMLVideoElement>(null);
   const bg = useRef<HTMLCanvasElement>(null);
+  const stk = useRef<HTMLCanvasElement>(null); // stacked layout preview: content on top, facecam below
+  const pick = useRef<HTMLCanvasElement>(null); // the whole stream frame, to draw the facecam box on
+  const [draft, setDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [savedCam, setSavedCam] = useState<number[] | null>(data.creator?.facecam ?? null);
   const [aspect, setAspect] = useState(16 / 9);
   // Share of the 9:16 frame's height the stream fills when it spans the full width (about 32% for 16:9).
   const fullWidth = Math.round((9 / 16 / aspect) * 100) / 100;
@@ -107,6 +111,8 @@ function EditorBody({ data }: { data: EditorData }) {
   const out = clamp((t - e.start) / e.speed, 0, outLen); // where the playhead is in the finished clip
 
   const patch = (p: Partial<ClipEditT>, key = "") => h.set({ ...e, ...p }, key);
+  const eRef = useRef(e);
+  eRef.current = e;
   const setText = (i: number, p: Partial<TextOverlayT>, key = "") => patch({ texts: e.texts.map((x, j) => (j === i ? { ...x, ...p } : x)) }, `text${i}${key}`);
 
   // Keep playback inside the trimmed range and at the chosen speed; draw the blurred background.
@@ -124,6 +130,20 @@ function EditorBody({ data }: { data: EditorData }) {
           c.filter = "blur(6px) brightness(0.88) saturate(1.15)";
           const cw = c.canvas.width, ch = c.canvas.height, s = Math.max(cw / v.videoWidth, ch / v.videoHeight);
           c.drawImage(v, (cw - v.videoWidth * s) / 2, (ch - v.videoHeight * s) / 2, v.videoWidth * s, v.videoHeight * s);
+        }
+        const cur = eRef.current, vw = v.videoWidth, vh = v.videoHeight;
+        if (cur.layout === "stacked" && cur.cam && vw && v.readyState >= 2) {
+          const k = stk.current?.getContext("2d");
+          if (k) {  // same maths as the render: content crop fills the top 60%, the facecam box fills the rest
+            const W = k.canvas.width, H = k.canvas.height, hb = Math.round(H * 0.4), ht = H - hb, a = W / ht;
+            const cw2 = Math.min(vw, vh * a), ch2 = Math.min(vh, vw / a);
+            k.drawImage(v, (vw - cw2) * cur.pan_x, (vh - ch2) * cur.pan_y, cw2, ch2, 0, 0, W, ht);
+            const [x, y, w, h] = cur.cam, bw = w * vw, bh = h * vh, ba = W / hb;
+            const sw = Math.min(bw, bh * ba), sh = Math.min(bh, bw / ba);
+            k.drawImage(v, x * vw + (bw - sw) / 2, y * vh + (bh - sh) / 2, sw, sh, 0, ht, W, hb);
+          }
+          const p = pick.current?.getContext("2d");
+          if (p) p.drawImage(v, 0, 0, p.canvas.width, p.canvas.height);
         }
       }
       raf = requestAnimationFrame(tick);
@@ -231,7 +251,8 @@ function EditorBody({ data }: { data: EditorData }) {
         <div className="stack" style={{ alignItems: "center" }}>
           <div className="ed-preview" style={{ width: PREVIEW_W }} onClick={toggle} aria-label="Video preview">
             <canvas ref={bg} width={108} height={192} className="ed-bg" />
-            <div className="ed-fg" style={{ height: `${boxHeight * 100}%` }}>
+            {stacked && <canvas ref={stk} width={PREVIEW_W * 2} height={Math.round(PREVIEW_W * 2 * 16 / 9)} className="ed-bg" />}
+            <div className="ed-fg" style={{ height: `${boxHeight * 100}%`, visibility: stacked ? "hidden" : undefined }}>
               <video ref={video} src={api.sourceUrl(data.id)} preload="auto" playsInline
                 onLoadedMetadata={(ev) => { const v = ev.currentTarget; if (v.videoWidth) setAspect(v.videoWidth / v.videoHeight); v.currentTime = e.start; v.playbackRate = e.speed; }}
                 onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
@@ -294,9 +315,9 @@ function EditorBody({ data }: { data: EditorData }) {
               <div className="seg" role="group" aria-label="Framing" style={{ alignSelf: "flex-start" }}>
                 <button className={!stacked && zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: zoomedIn ? e.video_height : data.default_video_height })}>Zoomed in</button>
                 <button className={!stacked && !zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: 0 })}>Fit to frame</button>
-                {e.cam && <button className={stacked ? "on" : ""} onClick={() => patch({ layout: "stacked" })}>Facecam on bottom</button>}
+                <button className={stacked ? "on" : ""} onClick={() => patch({ layout: "stacked", cam: e.cam ?? savedCam ?? [0.72, 0.62, 0.26, 0.34] })}>Facecam on bottom</button>
               </div>
-              <span className="hint">{stacked ? "Vyral found the streamer's facecam: the content fills the top and the facecam is scaled up underneath. The preview here shows the normal framing; the rendered video uses this layout. Left / right picks which part of the content stays in view."
+              <span className="hint">{stacked ? "The content fills the top and the facecam is scaled up underneath. If the bottom isn't the streamer's camera, drag a box around it below. Left / right picks which part of the content stays in view."
                 : zoomedIn ? "The stream is scaled up and its sides trimmed so the speaker is bigger on a phone. Left / right picks what stays in view."
                 : "The whole stream across the width of the frame, with blurred footage above and below."}</span></div>
             {zoomedIn && !stacked && (
@@ -324,6 +345,36 @@ function EditorBody({ data }: { data: EditorData }) {
                   The preview plays them; the rendered video skips them, so your own text may land a little earlier than shown.</span></div>
             )}
           </div>
+
+          {stacked && (
+            <div className="card stack">
+              <div className="row"><h2>Facecam</h2><span className="spacer" /></div>
+              <p className="small faint" style={{ margin: 0 }}>Drag a box around the streamer's camera. The bottom of the clip shows what's inside it.</p>
+              <div style={{ position: "relative", width: 320, height: 180, cursor: "crosshair", touchAction: "none", borderRadius: 6, overflow: "hidden", background: "#000" }}
+                onPointerDown={(ev) => { const r = ev.currentTarget.getBoundingClientRect(); const x = (ev.clientX - r.left) / r.width, y = (ev.clientY - r.top) / r.height;
+                  ev.currentTarget.setPointerCapture(ev.pointerId); setDraft({ x0: x, y0: y, x1: x, y1: y }); }}
+                onPointerMove={(ev) => { if (!draft) return; const r = ev.currentTarget.getBoundingClientRect();
+                  setDraft({ ...draft, x1: clamp((ev.clientX - r.left) / r.width, 0, 1), y1: clamp((ev.clientY - r.top) / r.height, 0, 1) }); }}
+                onPointerUp={() => { if (!draft) return; const x = Math.min(draft.x0, draft.x1), y = Math.min(draft.y0, draft.y1);
+                  const w = Math.abs(draft.x1 - draft.x0), hh = Math.abs(draft.y1 - draft.y0); setDraft(null);
+                  if (w > 0.03 && hh > 0.03) patch({ cam: [x, y, w, hh].map((n) => Math.round(n * 10000) / 10000) }); }}>
+                <canvas ref={pick} width={640} height={360} style={{ width: "100%", height: "100%", display: "block" }} />
+                {(() => { const b = draft ? [Math.min(draft.x0, draft.x1), Math.min(draft.y0, draft.y1), Math.abs(draft.x1 - draft.x0), Math.abs(draft.y1 - draft.y0)] : e.cam;
+                  return b && <div style={{ position: "absolute", left: `${b[0] * 100}%`, top: `${b[1] * 100}%`, width: `${b[2] * 100}%`, height: `${b[3] * 100}%`,
+                    border: "2px solid var(--accent-hi)", boxShadow: "0 0 0 9999px rgba(0,0,0,.45)", pointerEvents: "none" }} />; })()}
+              </div>
+              {data.creator && (
+                <div className="row wrap">
+                  <button className="btn sm" disabled={!e.cam || JSON.stringify(savedCam) === JSON.stringify(e.cam)}
+                    onClick={async () => { try { await api.setCreatorFacecam(data.creator!.id, e.cam); setSavedCam(e.cam); toast("ok", `New ${data.creator!.name} clips will use this spot.`); }
+                      catch (err) { toast("err", err instanceof Error ? err.message : String(err)); } }}>
+                    Use this spot for every {data.creator.name} clip</button>
+                  {savedCam && <button className="btn ghost sm" onClick={async () => { try { await api.setCreatorFacecam(data.creator!.id, null); setSavedCam(null); toast("ok", "Saved spot removed. Vyral goes back to finding the facecam itself."); }
+                    catch (err) { toast("err", err instanceof Error ? err.message : String(err)); } }}>Stop using a saved spot</button>}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="card stack">
             <div className="row"><h2>Thumbnail</h2><span className="spacer" />

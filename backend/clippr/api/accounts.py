@@ -117,6 +117,22 @@ def update_creator(cid: int, body: CreatorPatch, s: Session = Depends(db)):
     return ser.creator(c)
 
 
+class FacecamIn(BaseModel):
+    cam: list[float] | None = Field(None, min_length=4, max_length=4)
+
+
+@router.put("/creators/{cid}/facecam")
+def set_creator_facecam(cid: int, body: FacecamIn, s: Session = Depends(db)):
+    """Where this streamer's facecam sits. New clips of them use the stacked layout with it; None turns that off."""
+    c = get_or_404(s, Creator, cid, "Creator")
+    if body.cam:
+        x, y, w, h = body.cam
+        if not (0 <= x < 1 and 0 <= y < 1 and 0.02 <= w <= 1 and 0.02 <= h <= 1 and x + w <= 1.001 and y + h <= 1.001):
+            raise ApiError(422, "validation", "The facecam box has to be inside the frame")
+    c.facecam = [round(v, 4) for v in body.cam] if body.cam else None
+    return ser.creator(c)
+
+
 @router.delete("/creators/{cid}", status_code=204)
 def delete_creator(cid: int, s: Session = Depends(db)):
     c = get_or_404(s, Creator, cid, "Creator")

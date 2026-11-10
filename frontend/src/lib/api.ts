@@ -68,7 +68,7 @@ export interface TextOverlayT { text: string; start: number; end: number; y_perc
 export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked"; cam: number[] | null; cut_dead_air: boolean; gaps: number[][]; thumb_at: number | null; texts: TextOverlayT[] }
 export interface EditorData {
   id: number; title: string; section_duration: number; original_start: number; original_duration: number;
-  edit: ClipEditT; default_video_height: number; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
+  edit: ClipEditT; default_video_height: number; creator: { id: number; name: string; facecam: number[] | null } | null; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
 }
 export interface DiscordInbox { configured: boolean; channel_id: string | null; channel_name: string | null; server: string | null; bot: string | null; last_error: string | null; last_checked: number | null; last_unrecognized: string | null }
 export type Priority = "low" | "normal" | "high" | "urgent";
@@ -140,6 +140,7 @@ export const api = {
   creators: () => request<Creator[]>("GET", "/creators"),
   createCreatorFull: (b: { name: string; color?: string; vod_channels: string[]; clip_permission: boolean }) => request<Creator>("POST", "/creators", b),
   updateCreator: (id: number, b: Partial<Creator>) => request<Creator>("PATCH", `/creators/${id}`, b),
+  setCreatorFacecam: (id: number, cam: number[] | null) => request<Creator>("PUT", `/creators/${id}/facecam`, { cam }),
   deleteCreator: (id: number) => request<void>("DELETE", `/creators/${id}`),
   folders: () => request<Folder[]>("GET", "/folders"),
   createFolder: (name: string) => request<Folder>("POST", "/folders", { name }),

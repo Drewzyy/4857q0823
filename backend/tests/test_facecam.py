@@ -11,7 +11,7 @@ FACE = Path(__file__).parent / "fixtures" / "face.jpg"
 def _stream(tmp: Path, corner: bool) -> Path:
     """A 1280x720 'game' with the face pasted small in the bottom-right corner, or big in the middle."""
     src = tmp / "stream.mp4"
-    face = "scale=200:-2" if corner else "scale=-2:600"
+    face = "scale=110:-2" if corner else "scale=-2:600"  # a small facecam, about 9% of the width
     pos = "W-w-30:H-h-30" if corner else "(W-w)/2:(H-h)/2"
     run(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=3", "-loop", "1", "-i", str(FACE),
          "-filter_complex", f"[1:v]{face}[f];[0:v][f]overlay={pos}:shortest=1", "-t", "3",

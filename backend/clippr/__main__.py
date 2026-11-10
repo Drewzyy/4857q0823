@@ -66,6 +66,16 @@ def _self_test(audio: Path, data_dir: Path) -> int:
     finally:
         os.environ["PATH"] = path
     print(json.dumps({"impersonate": impersonate, "stream_sections": sections}))
+    try:  # the facecam layout needs OpenCV and both face models inside the app
+        import cv2
+
+        from clippr.media.facecam import MODEL
+        cv2.FaceDetectorYN.create(str(MODEL), "", (320, 320))
+        facecam = not cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml").empty()
+    except Exception as e:
+        print(json.dumps({"facecam_error": f"{type(e).__name__}: {e}"}))
+        facecam = False
+    print(json.dumps({"facecam": facecam}))
     words = WhisperTranscriber(data_dir / "models").words(audio)
     print(json.dumps({"words": [w.text for w in words]}))
     with tempfile.TemporaryDirectory() as td:
@@ -78,7 +88,7 @@ def _self_test(audio: Path, data_dir: Path) -> int:
         out = render(d / "src.mp4", d / "out.mp4", OutputFormat(), duration=3, overlay_dir=d / "ov")
         info = probe(out)
         print(json.dumps({"render": [info.width, info.height]}))
-    return 0 if impersonate and sections and words and info.height == 1920 else 1
+    return 0 if impersonate and sections and facecam and words and info.height == 1920 else 1
 
 
 def main() -> None:

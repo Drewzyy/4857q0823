@@ -217,7 +217,8 @@ def editor_data(cid: int, s: Session = Depends(db)):
         edit = ClipEdit(start=start, end=round(start + (clip.source_duration or 1.0), 2), video_height=0).model_dump()
     return {"id": clip.id, "title": clip.title, "section_duration": _footage_seconds(clip),
             "original_start": clip.source_start or 0.0, "original_duration": clip.source_duration or 0.0,
-            "edit": edit, "default_video_height": VIDEO_HEIGHT, "words": clip.words or [], "outputs": [_output(o) for o in _live_outputs(s, cid)]}
+            "edit": edit, "default_video_height": VIDEO_HEIGHT, "words": clip.words or [],
+            "creator": {"id": clip.creator.id, "name": clip.creator.name, "facecam": clip.creator.facecam} if clip.creator else None, "outputs": [_output(o) for o in _live_outputs(s, cid)]}
 
 
 @router.get("/media/clips/{cid}/source")

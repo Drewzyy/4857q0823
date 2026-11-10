@@ -2,7 +2,9 @@
 
 When one is found the clip is laid out stacked: the content on top, the facecam scaled up underneath. A face in
 the middle of the frame or filling much of it is the streamer just talking to camera, so the normal framing stays.
-Detection is OpenCV's bundled face model on a handful of frames; no network, a fraction of a second per clip.
+Detection is OpenCV's YuNet face model (bundled, MIT licensed; handles turned and partly covered faces), with
+the older Haar model as a fallback, on a dozen frames. No network, about a second per clip. When it misses, the
+user marks the facecam in the editor once per streamer.
 """
 from __future__ import annotations
 
@@ -14,30 +16,38 @@ from .ffmpeg import FFmpegError, run
 
 log = logging.getLogger("clippr.facecam")
 
-SAMPLES = 8
-SAMPLE_WIDTH = 640
+SAMPLES = 12
+SAMPLE_WIDTH = 960  # facecams are small: enough pixels for a face a few percent of the frame wide
+MODEL = Path(__file__).parent / "models" / "face_detection_yunet_2023mar.onnx"
 CAM_SHARE = 0.4  # share of the output height the facecam panel takes in the stacked layout
 
 
 def _faces(img) -> list[tuple[int, int, int, int]]:
     import cv2
+    h, w = img.shape[:2]
+    if MODEL.exists() and hasattr(cv2, "FaceDetectorYN"):
+        try:
+            det = cv2.FaceDetectorYN.create(str(MODEL), "", (w, h), 0.55, 0.3, 50)
+            _, found = det.detect(img)
+            return [tuple(int(v) for v in f[:4]) for f in (found if found is not None else [])]
+        except cv2.error:
+            log.exception("YuNet failed; using the older face model")
     model = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     gray = cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
-    h = gray.shape[0]
-    found = model.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(max(20, h // 25),) * 2)
+    found = model.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(max(16, h // 40),) * 2)
     return [tuple(int(v) for v in f) for f in found]
 
 
 def pick(frames: list[list[tuple[int, int, int, int]]], width: int, height: int) -> tuple[float, float, float] | None:
     """The facecam's face as (center x, center y, face width), all as shares of the frame, or None.
 
-    It counts only if the same small, off-center face shows up in at least half of the sampled frames."""
+    It counts only if the same small, off-center face shows up in about a third of the sampled frames or more."""
     cands = []
     for faces in frames:
         for x, y, w, h in faces:
             cx, cy, fw = (x + w / 2) / width, (y + h / 2) / height, w / width
-            small = fw < 0.2
-            off_center = abs(cx - 0.5) > 0.22 or abs(cy - 0.5) > 0.25
+            small = fw < 0.22
+            off_center = abs(cx - 0.5) > 0.18 or abs(cy - 0.5) > 0.2
             if small and off_center:
                 cands.append((cx, cy, fw))
     best, support = None, 0
@@ -45,7 +55,7 @@ def pick(frames: list[list[tuple[int, int, int, int]]], width: int, height: int)
         near = [d for d in cands if abs(d[0] - c[0]) < 0.06 and abs(d[1] - c[1]) < 0.08]
         if len(near) > support:
             best, support = near, len(near)
-    if not best or support < max(2, len(frames) / 2):
+    if not best or support < max(2, len(frames) * 0.35):  # the streamer can look away or duck out of frame
         return None
     n = len(best)
     return sum(d[0] for d in best) / n, sum(d[1] for d in best) / n, sum(d[2] for d in best) / n

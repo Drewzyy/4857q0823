@@ -286,3 +286,21 @@ test("agents page shows real agents and what needs you", async ({ page }) => {
   await page.getByRole("link", { name: "Details" }).click();  // the dashboard's agents card leads here
   await expect(page).toHaveURL(/\/agents$/);
 });
+
+test("video editor: facecam on bottom with a hand-drawn box", async ({ page }) => {
+  await page.goto("/editor");
+  await page.getByRole("link", { name: /He did NOT just say that/ }).click();
+  const video = page.locator(".ed-preview video");
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 2)).toBe(true);
+  await page.getByRole("button", { name: "Facecam on bottom" }).click();
+  const area = page.getByText("Drag a box around the streamer's camera").locator("xpath=following-sibling::div[1]");
+  const box = (await area.boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 120, box.y + 100, { steps: 5 });
+  await page.mouse.up();
+  await page.getByRole("button", { name: /Use this spot for every/ }).click();
+  await expect(page.getByText(/clips will use this spot/)).toBeVisible();
+  await page.screenshot({ path: process.env.SHOT ?? "facecam.png", fullPage: true });
+  await page.getByRole("button", { name: "Save & render" }).click();
+});

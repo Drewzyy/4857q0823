@@ -59,7 +59,8 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
             f"[0:v]{cut_v}setpts=PTS/{speed:.4f},fps={fps:.3f},split=2[a][c];"
             f"[a]crop=w='min(iw,ih*{W / ht:.4f})':h='min(ih,iw/{W / ht:.4f})':x='(iw-ow)*{pan[0]:.4f}':y='(ih-oh)*{pan[1]:.4f}',"
             f"scale={W}:{ht}:flags=lanczos,setsar=1[t];"
-            f"[c]crop=iw*{cw:.4f}:ih*{ch:.4f}:iw*{cx:.4f}:ih*{cy:.4f},scale={W}:{hb}:flags=lanczos,setsar=1[m];"
+            f"[c]crop=iw*{cw:.4f}:ih*{ch:.4f}:iw*{cx:.4f}:ih*{cy:.4f},"  # a box drawn by hand can be any shape: fill, then trim
+            f"scale={W}:{hb}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{hb},setsar=1[m];"
             f"[t][m]vstack,setsar=1"
             + (",ass=overlay.ass:fontsdir=fonts" if overlay_dir else "")
             + ",format=yuv420p[v]"

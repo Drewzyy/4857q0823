@@ -634,3 +634,23 @@ def test_a_page_can_take_several_streamers(env):
     # Editing it down to one streamer, or to none (any streamer), works.
     assert c.patch(f"/api/destinations/{page['id']}", json={"creator_ids": [b]}).json()["creator_ids"] == [b]
     assert c.patch(f"/api/destinations/{page['id']}", json={"creator_ids": []}).json()["creator_ids"] == []
+
+
+def test_a_streamers_saved_facecam_spot_is_used_for_new_clips(env):
+    ctx, c, fake = env
+    cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    assert c.put(f"/api/creators/{cid}/facecam", json={"cam": [1.2, 0, 0.3, 0.3]}).status_code == 422  # outside the frame
+    assert c.put(f"/api/creators/{cid}/facecam", json={"cam": [0.7, 0.6, 0.28, 0.35]}).json()["facecam"] == [0.7, 0.6, 0.28, 0.35]
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_ids": [cid]})
+    url = "https://www.twitch.tv/streamera/clip/Cam1"
+    sid = c.post("/api/sources", json={"input": "twitch.tv/streamera", "platform": "twitch", "creator_ids": [cid]}).json()["id"]
+    c.post("/api/funnel/auto-route", json={})
+    fake.origins[url] = ("https://www.twitch.tv/videos/7", 131.0)
+    fake.posts = [RemotePost("Cam1", url, "clip", posted_at=datetime.now(timezone.utc) + timedelta(seconds=5), views=900)]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    clip = c.get("/api/clips").json()[0]
+    ed = c.get(f"/api/clips/{clip['id']}/editor").json()
+    assert ed["edit"]["layout"] == "stacked" and ed["edit"]["cam"] == [0.7, 0.6, 0.28, 0.35]
+    assert ed["creator"]["facecam"] == [0.7, 0.6, 0.28, 0.35]
+    assert c.put(f"/api/creators/{cid}/facecam", json={"cam": None}).json()["facecam"] is None

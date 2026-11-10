@@ -15,7 +15,8 @@ def creator(c: Creator | None) -> dict[str, Any] | None:
     if not c:
         return None
     return {"id": c.id, "name": c.name, "color": c.color, "notes": c.notes,
-            "vod_channels": list(c.vod_channels or []), "clip_permission": bool(c.clip_permission)}
+            "vod_channels": list(c.vod_channels or []), "clip_permission": bool(c.clip_permission),
+            "facecam": c.facecam}
 
 
 def folder(f: Folder | None) -> dict[str, Any] | None:

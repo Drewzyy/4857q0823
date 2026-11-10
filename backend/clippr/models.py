@@ -46,6 +46,7 @@ class Creator(Base):
     vod_channels: Mapped[list[Any]] = mapped_column(default=list)
     # User confirmed they're allowed to clip this creator (e.g. part of their clipping program).
     clip_permission: Mapped[bool] = mapped_column(Boolean, default=False)
+    facecam: Mapped[list[Any] | None] = mapped_column(nullable=True)  # [x, y, w, h] shares of the stream, set in the editor
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 

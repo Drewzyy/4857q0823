@@ -105,6 +105,7 @@ jobs:
           "$BIN" --self-test "$SAMPLE" --data-dir "$RUNNER_TEMP/selftest" | tee "$RUNNER_TEMP/selftest.json"
           grep -qi '"render": \[1080, 1920\]' "$RUNNER_TEMP/selftest.json"
           grep -q '"impersonate": true, "stream_sections": true' "$RUNNER_TEMP/selftest.json"
+          grep -q '"facecam": true' "$RUNNER_TEMP/selftest.json"
           grep -qiE 'test|captions|actually' "$RUNNER_TEMP/selftest.json"
 
       - name: Build the app

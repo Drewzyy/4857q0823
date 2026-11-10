@@ -34,7 +34,7 @@ build-backend = "setuptools.build_meta"
 include = ["clippr*"]
 
 [tool.setuptools.package-data]
-clippr = ["migrations/*.ini", "migrations/*.py", "migrations/versions/*.py", "media/fonts/*"]
+clippr = ["migrations/*.ini", "migrations/*.py", "migrations/versions/*.py", "media/fonts/*", "media/models/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
