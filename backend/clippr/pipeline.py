@@ -32,6 +32,8 @@ from .schemas import OverlaySettings
 
 log = logging.getLogger("clippr.pipeline")
 POSTS_PER_CHECK = 12
+LIVE_RETRY_SECONDS = 1800
+LIVE_WAITS = 24  # a still-live stream is looked at again every 30 minutes, for up to 12 hours
 
 
 def now() -> datetime:
@@ -212,7 +214,29 @@ class Pipeline:
             s.add(asset)
         return feats
 
-    def build_clip(self, rid: int, vod_override: str | None = None) -> dict:
+    def _search_order(self, candidates: list, text: str, posted_at: datetime | None, per_channel: int) -> list:
+        """Every candidate stream, most likely first: streams of the streamer the post names, then streams that
+        started before the post was made, newest first (one that started after it can't contain the moment).
+        One quick lookup per stream gives its start time and whether it's still live."""
+        entries = []
+        for rank, (cid, cname, channels) in enumerate(candidates):
+            for ch in channels:
+                score = identify.mention_score(cname, text) + identify.mention_score(identify.channel_handle(ch), text)
+                for v in self.ctx.fetcher.recent_vods(ch, per_channel):
+                    try:
+                        v = self.ctx.fetcher.vod_details(v.url)
+                    except FetchError:
+                        pass  # search it anyway, just without its start time
+                    entries.append((score, rank, v, cid, cname))
+
+        def likelihood(e):
+            score, rank, v, *_ = e
+            after_post = bool(posted_at and v.published_at and v.published_at > posted_at)
+            return (-score, after_post, -(v.published_at.timestamp() if v.published_at else 0), rank)
+
+        return [(v, cid, cname) for _, _, v, cid, cname in sorted(entries, key=likelihood)]
+
+    def build_clip(self, rid: int, vod_override: str | None = None, waits: int = 0) -> dict:
         with self.ctx.db.session() as s:
             ref = s.get(ReferenceVideo, rid)
             if not ref:
@@ -248,30 +272,33 @@ class Pipeline:
                 return self._stop(rid, "needs_setup", f"Route {where} to at least one destination in the Account Funnel.", account, ref.url)
             all_dests = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {}), d.creator_id) for d in dests]
             from_twitch = ref.platform == "twitch"
-            ref_url, ref_title = ref.url, ref.title
+            ref_url, ref_title, posted_at = ref.url, ref.title, ref.posted_at
         self._set(rid, "processing", "Listening to the post")
         work = self._dir("tmp") / f"build-{rid}-{random.randrange(1 << 30)}"
         try:
             ref_audio = self.ctx.fetcher.download_audio(ref_url, work / "ref")
             ref_feats = match.extract_features(ref_audio)
 
-            found = None
-            searched = 0
-            for cid, cname, channels in candidates:
-                for ch in channels:
-                    vods = self.ctx.fetcher.recent_vods(ch, cfg.monitoring.streams_to_search)
-                    for v in vods:
-                        searched += 1
-                        self._set(rid, "processing", f"Searching {cname}'s stream {searched}: {v.title or v.url}"[:300])
-                        m = match.find_in_stream(ref_feats, self._vod_features(v.url, v.title))
-                        if m:
-                            found = (v, m, cid, cname)
-                            break
-                    if found:
-                        break
-                if found:
+            found, searched, live = None, 0, []
+            self._set(rid, "processing", "Finding the most likely streams")
+            for v, cid, cname in self._search_order(candidates, f"{ref_title or ''} {account or ''}", posted_at, cfg.monitoring.streams_to_search):
+                if v.is_live:
+                    live.append(cname)  # downloading a stream that's still going would never finish
+                    continue
+                searched += 1
+                self._set(rid, "processing", f"Searching {cname}'s stream {searched}: {v.title or v.url}"[:300])
+                m = match.find_in_stream(ref_feats, self._vod_features(v.url, v.title))
+                if m:
+                    found = (v, m, cid, cname)
                     break
             names = " / ".join(n for _, n, _ in candidates)
+            if not found and live and waits < LIVE_WAITS:
+                who = " / ".join(dict.fromkeys(live))
+                self._set(rid, "new", f"Not in {searched} finished stream(s), and {who} is still live. "
+                          "Vyral looks again every 30 minutes until the stream ends.")
+                self.ctx.jobs.enqueue("clip.build", {"reference_id": rid, "vod_url": vod_override, "waits": waits + 1},
+                                      delay=LIVE_RETRY_SECONDS, max_attempts=3)
+                return {"status": "waiting_for_live_stream"}
             if not found:
                 return self._stop(rid, "no_match", f"Couldn't find this moment in {names}'s last {searched} stream(s). "
                                   "If it's from an older stream, paste that stream's link with Retry.", account, ref_url)
@@ -522,7 +549,7 @@ def register(ctx: Any) -> Pipeline:
     q = ctx.jobs
     q.register("monitor.tick", lambda jc, pl: p.tick())
     q.register("source.check", lambda jc, pl: p.check_source(pl["source_id"]))
-    q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url")))
+    q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url"), pl.get("waits", 0)))
     q.register("intake.link", lambda jc, pl: p.intake_link(pl["url"], pl.get("creator_id")))
     q.register("notify.discord", lambda jc, pl: p.send_discord(pl))
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())

@@ -371,7 +371,10 @@ def test_pasted_link_finds_the_streamer_it_names(env):
     ref = c.get("/api/references").json()[0]
     assert ref["status"] == "ready" and ref["creator"]["name"] == "Streamer B", ref["status_detail"]
     assert [o["destination"]["display_name"] for o in c.get("/api/clips").json()[0]["outputs"]] == ["B page"]
-    assert ("vods", "https://kick.com/streamerb") in fake.calls and ("vods", "https://www.twitch.tv/streamera") not in fake.calls
+    # Streamer B's streams are searched before Streamer A's.
+    order = ctx.pipeline._search_order([(a, "Streamer A", ["https://www.twitch.tv/streamera"]), (b, "Streamer B", ["https://kick.com/streamerb"])],
+                                       "streamer b did NOT just say that #streamerb #fyp", None, 2)
+    assert [cname for _, _, cname in order] == ["Streamer B", "Streamer B", "Streamer A", "Streamer A"]
 
 
 def test_twitch_channel_clips_become_videos(env):
@@ -458,3 +461,22 @@ def test_group_page_gets_clips_from_each_members_account(env):
     ref = c.get("/api/references").json()[0]
     assert ref["status"] == "ready", ref["status_detail"]
     assert [o["destination"]["display_name"] for o in c.get("/api/clips").json()[0]["outputs"]] == ["vyralc0re"]
+
+
+def test_a_stream_still_live_is_skipped_not_downloaded_forever(env):
+    """The moment is in a stream that's still going: its audio isn't downloaded (that would never finish).
+    Vyral waits and looks again, and makes the clip once the stream has ended."""
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.live = {"https://www.twitch.tv/videos/2"}
+    fake.posts = [RemotePost("lv1", "https://www.tiktok.com/@a.clips/video/lv1", "live moment")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)  # runs the first attempt; the retry is scheduled 30 minutes out
+    ref = c.get("/api/references").json()[0]
+    assert ref["status"] == "new" and "still live" in ref["status_detail"], ref["status_detail"]
+    assert ("audio", "https://www.twitch.tv/videos/2") not in fake.calls
+    # The stream ends; the scheduled retry finds the moment.
+    fake.live = set()
+    assert ctx.pipeline.build_clip(ref["id"], None, 1)["status"] == "ready"

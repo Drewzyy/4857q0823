@@ -18,6 +18,7 @@ class FakeFetcher:
         self.posts: list[RemotePost] = []
         self.calls: list[tuple] = []
         self.fail_listing = False
+        self.live: set[str] = set()  # stream urls that are still being broadcast
 
     def recent_posts(self, platform, username, profile_url, limit):
         self.calls.append(("posts", username))
@@ -55,7 +56,7 @@ class FakeFetcher:
 
     def vod_details(self, url):
         self.calls.append(("vod_details", url))
-        return RemoteVod(url.rsplit("/", 1)[-1], url, "Big stream", None, datetime(2026, 11, 7, 20, 0, tzinfo=timezone.utc))
+        return RemoteVod(url.rsplit("/", 1)[-1], url, "Big stream", None, datetime(2026, 11, 7, 20, 0, tzinfo=timezone.utc), url in self.live)
 
 
 class FakeTranscriber:
