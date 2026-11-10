@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api import accounts, analytics, clips, inbox, notifications, system, updates
+from .api import accounts, analytics, clips, inbox, library, notifications, system, updates
 from .api.system import load_settings
 from .fetch import Fetcher, YtDlpFetcher
 from .media.transcribe import Transcriber, WhisperTranscriber
@@ -133,7 +133,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         log.exception("unhandled error")
         return JSONResponse({"error": {"code": "internal", "message": "Something went wrong. Details are in the app log."}}, status_code=500)
 
-    for r in (accounts.router, system.router, clips.router, updates.router, analytics.router, inbox.router, notifications.router):
+    for r in (accounts.router, library.router, system.router, clips.router, updates.router, analytics.router, inbox.router, notifications.router):
         app.include_router(r, prefix="/api")
 
     dist = cfg.frontend_dist

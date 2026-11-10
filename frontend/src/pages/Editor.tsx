@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clapperboard, Pause, Play, Plus, Redo2, RotateCcw, Trash2, Undo2 } from "lucide-react";
 import { api, type ClipEditT, type EditorData, type FontKey, type Overlay, type TextOverlayT, type TextStyle } from "../lib/api";
 import { Empty, ErrorNote, Loading, relTime, useToast } from "../components/ui";
+import { EditorExtras, LayerPreview, useLibrary } from "../components/EditorExtras";
 
 const FONTS: [FontKey, string][] = [["montserrat", "Montserrat Black"], ["anton", "Anton"], ["bebas", "Bebas Neue"], ["poppins", "Poppins ExtraBold"]];
 const SWATCHES = ["#FFFFFF", "#FFE500", "#F97316", "#22C55E", "#38BDF8", "#EC4899", "#000000"];
@@ -101,6 +102,9 @@ function EditorBody({ data }: { data: EditorData }) {
   // video_height 0 is "fit to frame": the whole stream across the full width, as clips used to look.
   const zoomedIn = e.video_height > 0;
   const stacked = e.layout === "stacked" && !!e.cam;
+  const split = e.layout === "split" && !!e.bottom_media;
+  const { items: library } = useLibrary();
+  const firstGameplay = library.find((m) => m.kind === "video");
   const boxHeight = zoomedIn ? Math.max(e.video_height, fullWidth) : fullWidth;
   const total = data.section_duration;
   const first = data.outputs[0];
@@ -132,12 +136,19 @@ function EditorBody({ data }: { data: EditorData }) {
           c.drawImage(v, (cw - v.videoWidth * s) / 2, (ch - v.videoHeight * s) / 2, v.videoWidth * s, v.videoHeight * s);
         }
         const cur = eRef.current, vw = v.videoWidth, vh = v.videoHeight;
-        if (cur.layout === "stacked" && cur.cam && vw && v.readyState >= 2) {
+        const camMode = cur.layout === "stacked" && cur.cam, splitMode = cur.layout === "split" && cur.bottom_media;
+        if ((camMode || splitMode) && vw && v.readyState >= 2) {
           const k = stk.current?.getContext("2d");
-          if (k) {  // same maths as the render: content crop fills the top 60%, the facecam box fills the rest
-            const W = k.canvas.width, H = k.canvas.height, hb = Math.round(H * 0.4), ht = H - hb, a = W / ht;
+          if (k) {  // same maths as the render: content on top; the facecam (40%) or gameplay (50%) underneath
+            const W = k.canvas.width, H = k.canvas.height, hb = Math.round(H * (camMode ? 0.4 : 0.5)), ht = H - hb, a = W / ht;
             const cw2 = Math.min(vw, vh * a), ch2 = Math.min(vh, vw / a);
             k.drawImage(v, (vw - cw2) * cur.pan_x, (vh - ch2) * cur.pan_y, cw2, ch2, 0, 0, W, ht);
+          }
+        }
+        if (camMode && vw && v.readyState >= 2) {
+          const k = stk.current?.getContext("2d");
+          if (k && cur.cam) {
+            const W = k.canvas.width, H = k.canvas.height, hb = Math.round(H * 0.4), ht = H - hb;
             const [x, y, w, h] = cur.cam, bw = w * vw, bh = h * vh, ba = W / hb;
             const sw = Math.min(bw, bh * ba), sh = Math.min(bh, bw / ba);
             k.drawImage(v, x * vw + (bw - sw) / 2, y * vh + (bh - sh) / 2, sw, sh, 0, ht, W, hb);
@@ -251,8 +262,8 @@ function EditorBody({ data }: { data: EditorData }) {
         <div className="stack" style={{ alignItems: "center" }}>
           <div className="ed-preview" style={{ width: PREVIEW_W }} onClick={toggle} aria-label="Video preview">
             <canvas ref={bg} width={108} height={192} className="ed-bg" />
-            {stacked && <canvas ref={stk} width={PREVIEW_W * 2} height={Math.round(PREVIEW_W * 2 * 16 / 9)} className="ed-bg" />}
-            <div className="ed-fg" style={{ height: `${boxHeight * 100}%`, visibility: stacked ? "hidden" : undefined }}>
+            {(stacked || split) && <canvas ref={stk} width={PREVIEW_W * 2} height={Math.round(PREVIEW_W * 2 * 16 / 9)} className="ed-bg" />}
+            <div className="ed-fg" style={{ height: `${boxHeight * 100}%`, visibility: stacked || split ? "hidden" : undefined }}>
               <video ref={video} src={api.sourceUrl(data.id)} preload="auto" playsInline
                 onLoadedMetadata={(ev) => { const v = ev.currentTarget; if (v.videoWidth) setAspect(v.videoWidth / v.videoHeight); v.currentTime = e.start; v.playbackRate = e.speed; }}
                 onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
@@ -261,6 +272,9 @@ function EditorBody({ data }: { data: EditorData }) {
             {inRange && overlay?.title.enabled && first.video_title.trim() && out < overlay.title.duration &&
               <div className="ov-text" style={css(overlay.title)}>{first.video_title.replace(/\p{Extended_Pictographic}/gu, "")}</div>}
             {overlay?.captions.enabled && caption && <div className="ov-text" style={css(overlay.captions)}>{caption.text}</div>}
+            {split && <video key={e.bottom_media} src={api.libraryUrl(e.bottom_media!)} muted autoPlay loop playsInline
+              style={{ position: "absolute", left: 0, right: 0, bottom: 0, width: "100%", height: "50%", objectFit: "cover" }} />}
+            {inRange && e.layers.map((ly, i) => <LayerPreview key={i} layer={ly} item={library.find((m) => m.id === ly.media_id)} at={out} />)}
             {inRange && e.texts.map((x, i) => out >= x.start && out < x.end &&
               <div key={i} className="ov-text" style={css(x)}>{x.text}</div>)}
             {!inRange && <div className="ed-outside">Outside the kept part</div>}
@@ -313,14 +327,18 @@ function EditorBody({ data }: { data: EditorData }) {
                 <RotateCcw size={12} />Reset to default</button></div>
             <div className="field"><span className="label-text">Framing</span>
               <div className="seg" role="group" aria-label="Framing" style={{ alignSelf: "flex-start" }}>
-                <button className={!stacked && zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: zoomedIn ? e.video_height : data.default_video_height })}>Zoomed in</button>
-                <button className={!stacked && !zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: 0 })}>Fit to frame</button>
+                <button className={!stacked && !split && zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: zoomedIn ? e.video_height : data.default_video_height })}>Zoomed in</button>
+                <button className={!stacked && !split && !zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: 0 })}>Fit to frame</button>
                 <button className={stacked ? "on" : ""} onClick={() => patch({ layout: "stacked", cam: e.cam ?? savedCam ?? [0.72, 0.62, 0.26, 0.34] })}>Facecam on bottom</button>
+                <button className={split ? "on" : ""} disabled={!e.bottom_media && !firstGameplay}
+                  title={firstGameplay ? "" : "Add a gameplay video to your library first (Presets and overlays)"}
+                  onClick={() => patch({ layout: "split", bottom_media: e.bottom_media ?? firstGameplay?.id ?? null })}>Gameplay on bottom</button>
               </div>
-              <span className="hint">{stacked ? "The content fills the top and the facecam is scaled up underneath. If the bottom isn't the streamer's camera, drag a box around it below. Left / right picks which part of the content stays in view."
+              <span className="hint">{split ? `The stream fills the top half and ${library.find((m) => m.id === e.bottom_media)?.name ?? "your gameplay"} loops underneath, muted. Pick other gameplay under Presets and overlays.`
+                : stacked ? "The content fills the top and the facecam is scaled up underneath. If the bottom isn't the streamer's camera, drag a box around it below. Left / right picks which part of the content stays in view."
                 : zoomedIn ? "The stream is scaled up and its sides trimmed so the speaker is bigger on a phone. Left / right picks what stays in view."
                 : "The whole stream across the width of the frame, with blurred footage above and below."}</span></div>
-            {zoomedIn && !stacked && (
+            {zoomedIn && !stacked && !split && (
               <div className="field"><label htmlFor="ed-size">Video size: {Math.round(boxHeight * 100)}% of the frame's height</label>
                 <input id="ed-size" type="range" min={Math.min(1, fullWidth + 0.01)} max={1} step={0.01} value={boxHeight}
                   onChange={(ev) => patch({ video_height: Number(ev.target.value) }, "size")} /></div>
@@ -386,6 +404,8 @@ function EditorBody({ data }: { data: EditorData }) {
               <p className="small faint" style={{ margin: 0 }}>{e.thumb_at === null ? "Vyral uses the frame one second in. " : `Cover frame: ${fmt(e.thumb_at - e.start)} into the clip. `}
                 Pause the video where you want, then Use this frame. It's saved as a JPG next to each video and set as the video's cover. Saving re-renders, and the picture here updates when it's done.</p></div>
           </div>
+
+          <EditorExtras e={e} patch={patch} at={out} outLen={outLen} toast={toast} />
 
           <div className="card stack">
             <div className="row"><h2>Text</h2><span className="spacer" /><button className="btn sm" disabled={e.texts.length >= 20} onClick={addText}><Plus size={13} />Add text</button></div>

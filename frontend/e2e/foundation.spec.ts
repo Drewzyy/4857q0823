@@ -283,3 +283,25 @@ test("video editor: facecam on bottom with a hand-drawn box", async ({ page }) =
   if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT, fullPage: true });
   await page.getByRole("button", { name: "Save & render" }).click();
 });
+
+test("video editor: gameplay under the stream, a sticker on top, saved as a preset", async ({ page }) => {
+  const dir = process.env.E2E_MEDIA!;
+  test.skip(!dir, "needs E2E_MEDIA with game.mp4 and sticker.png");
+  await page.goto("/editor");
+  await page.getByRole("link", { name: /He did NOT just say that/ }).click();
+  const video = page.locator(".ed-preview video").first();
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 2)).toBe(true);
+  await page.getByLabel("Add files to library").setInputFiles([`${dir}/game.mp4`, `${dir}/sticker.png`]);
+  await expect(page.getByText("Added 2 files to your library.")).toBeVisible();
+  await page.locator(".list-row", { hasText: "game" }).getByRole("button", { name: "Gameplay on bottom" }).click();
+  await expect(page.getByRole("group", { name: "Framing" }).getByRole("button", { name: "Gameplay on bottom" })).toHaveClass(/on/);
+  await page.locator(".list-row", { hasText: "sticker" }).getByRole("button", { name: "Put on top" }).click();
+  await page.getByLabel("To (s)").last().fill("8");
+  await page.getByLabel("New preset name").fill("Gameplay + pop");
+  await page.getByRole("button", { name: "Save preset" }).click();
+  await expect(page.getByText("Preset saved.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Gameplay + pop", exact: true })).toBeVisible();
+  if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT, fullPage: true });
+  await page.getByRole("button", { name: "Save & render" }).click();
+  await expect(page.getByText(/Saved\. Re-rendering/)).toBeVisible();
+});

@@ -101,6 +101,30 @@ class DestinationAccount(Base):
     creator: Mapped[Creator | None] = relationship(lazy="joined")
 
 
+class MediaItem(Base):
+    """A video or picture the user added to the library: gameplay for split screen, animations, stickers."""
+
+    __tablename__ = "media_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(10))  # video | image
+    path: Mapped[str] = mapped_column(Text)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration: Mapped[float | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class Preset(Base):
+    """A reusable set of texts, layers and gameplay to put on clips."""
+
+    __tablename__ = "presets"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    data: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(120), primary_key=True)

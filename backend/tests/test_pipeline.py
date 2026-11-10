@@ -704,3 +704,50 @@ def test_search_gives_up_after_twenty_streams(env, monkeypatch):
     drain(ctx)
     ref = c.get("/api/references").json()[0]
     assert ref["status"] == "no_match" and "last 1 stream" in ref["status_detail"]
+
+
+def test_gameplay_split_stickers_and_presets(env, tmp_path):
+    from clippr.media.ffmpeg import run
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("gm1", "https://www.tiktok.com/@a.clips/video/gm1", "split me")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    # Add gameplay (a solid green video) and a red sticker to the library.
+    game, sticker = tmp_path / "parkour.mp4", tmp_path / "pop.png"
+    run(["-f", "lavfi", "-i", "color=c=0x00ff00:size=640x360:rate=30", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", str(game)])
+    run(["-f", "lavfi", "-i", "color=c=red:size=100x100", "-frames:v", "1", str(sticker)])
+    assert c.post("/api/library", files={"file": ("notes.txt", b"hi")}).status_code == 422
+    g = c.post("/api/library", files={"file": ("parkour.mp4", game.read_bytes())}).json()
+    st = c.post("/api/library", files={"file": ("pop.png", sticker.read_bytes())}).json()
+    assert g["kind"] == "video" and st["kind"] == "image" and g["duration"] > 1.5
+    assert [x["name"] for x in c.get("/api/library").json()] == ["pop", "parkour"]
+    # A preset: the sticker for the first 2 seconds plus the gameplay.
+    preset = {"layers": [{"media_id": st["id"], "start": 0, "end": 2, "x": 0.5, "y": 0.25, "width": 0.3}], "bottom_media": g["id"]}
+    assert c.post("/api/presets", json={"name": "bad", "data": {"layers": [{**preset["layers"][0], "end": 0}]}}).status_code == 422
+    pid = c.post("/api/presets", json={"name": "Retention pack", "data": preset}).json()["id"]
+    assert c.get("/api/presets").json()[0]["data"]["bottom_media"] == g["id"]
+    # Applying it in the editor: split layout with the gameplay underneath, sticker on top.
+    clip = c.get("/api/clips").json()[0]
+    e = c.get(f"/api/clips/{clip['id']}/editor").json()["edit"]
+    assert c.put(f"/api/clips/{clip['id']}/edit", json={**e, "layout": "split", **preset}).status_code == 200
+    drain(ctx)
+    out = c.get("/api/clips").json()[0]["outputs"][0]
+    assert out["render_state"] == "ready"
+    with ctx.db.session() as s:
+        path = Path(s.get(ClipOutput, out["id"]).file_path)
+    f = _frame(path, 1.0)
+    h, w = f.shape[:2]
+    bottom = f[int(h * 0.8), w // 2]
+    assert bottom[1] > 200 and bottom[0] < 80 and bottom[2] < 80  # the green gameplay fills the bottom half
+    top = f[int(h * 0.25), w // 2]
+    assert top[0] > 200 and top[1] < 80  # the red sticker sits over the stream
+    # A file removed from the library is skipped, not an error.
+    c.delete(f"/api/library/{st['id']}")
+    c.put(f"/api/clips/{clip['id']}/edit", json={**e, "layout": "split", **preset, "speed": 1.25})
+    drain(ctx)
+    assert c.get("/api/clips").json()[0]["outputs"][0]["render_state"] == "ready"
+    c.delete(f"/api/presets/{pid}")
+    assert c.get("/api/presets").json() == []

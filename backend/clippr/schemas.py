@@ -156,6 +156,22 @@ class TextOverlay(Strict):
 VIDEO_HEIGHT = 0.6
 
 
+class LayerEdit(Strict):
+    """A library picture or video on top of the clip for part of it."""
+    media_id: int
+    start: float = Field(0, ge=0)  # seconds in the finished clip
+    end: float = Field(2, gt=0)
+    x: float = Field(0.5, ge=0, le=1)  # center, as shares of the frame
+    y: float = Field(0.3, ge=0, le=1)
+    width: float = Field(0.4, ge=0.05, le=1)  # share of the frame's width
+
+    @model_validator(mode="after")
+    def _ordered(self):
+        if self.end <= self.start:
+            raise ValueError("a layer must end after it starts")
+        return self
+
+
 class ClipEdit(Strict):
     start: float = Field(ge=0)  # seconds within the downloaded cut
     end: float = Field(gt=0)
@@ -165,9 +181,19 @@ class ClipEdit(Strict):
     pan_y: float = Field(0.5, ge=0, le=1)
     speed: float = Field(1.0, ge=0.5, le=2.0)
     # "stacked": content on top, the streamer's facecam (cam: x, y, w, h as shares of the source) underneath.
-    layout: Literal["normal", "stacked"] = "normal"
+    # "split": content on top, a library video (bottom_media, e.g. gameplay) looping underneath.
+    layout: Literal["normal", "stacked", "split"] = "normal"
     cam: list[float] | None = Field(None, min_length=4, max_length=4)
+    bottom_media: int | None = None
     cut_dead_air: bool = False
     thumb_at: float | None = Field(None, ge=0)  # cover frame, in source seconds; None picks one a second in
     gaps: list[list[float]] = Field(default_factory=list, max_length=200)  # silent stretches, in source seconds
     texts: list[TextOverlay] = Field(default_factory=list, max_length=20)
+    layers: list[LayerEdit] = Field(default_factory=list, max_length=20)
+
+
+class PresetData(Strict):
+    """What a preset adds to a clip: texts and layers, and optionally gameplay underneath."""
+    texts: list[TextOverlay] = Field(default_factory=list, max_length=20)
+    layers: list[LayerEdit] = Field(default_factory=list, max_length=20)
+    bottom_media: int | None = None

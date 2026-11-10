@@ -22,9 +22,9 @@ from .fetch import MONITORABLE, FetchError, RemotePost
 from .media import deadair, facecam, match, overlay
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
-from .media.render import OutputFormat, render, thumbnail
+from .media.render import Layer, OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
-from .models import Clip, ClipOutput, Creator, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
+from .models import Clip, ClipOutput, Creator, Job, MediaItem, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import destination_creator_ids, pages_for, source_creator_ids
 from .schemas import ClipEdit, OverlaySettings, lenient
 
@@ -500,19 +500,28 @@ class Pipeline:
 
     def _render(self, source: Path, out: Path, fmt_raw: dict, start: float, dur: float, ov: dict, title_text: str,
                 words: list[Word], ov_dir: Path, edit: dict | None = None) -> Path:
-        """`words` are timed from `start`; an editor `edit` may move the cut, zoom/pan, change speed and add texts."""
+        """`words` are timed from `start`; an editor `edit` may move the cut, zoom/pan, change speed, cut dead air,
+        lay the clip out over a facecam or gameplay, and add texts and library layers."""
         fmt = OutputFormat.from_settings(fmt_raw)
-        cam, rel = None, []
+        cam = bottom = None
+        rel: list[tuple[float, float]] = []
+        layers: list[Layer] = []
         zoom, pan, speed, texts, video_height = 1.0, (0.5, 0.5), 1.0, [], 0.0  # no edit: a clip from before framing was saved
         if edit:
             video_height = edit.get("video_height", 0)  # edits saved before framing existed were fit to frame
             shift = start - edit["start"]  # words were timed from the original cut
             start, dur = edit["start"], edit["end"] - edit["start"]
             zoom, pan, speed, texts = edit["zoom"], (edit["pan_x"], edit["pan_y"]), edit["speed"], edit["texts"]
+            files = self._library_files([edit.get("bottom_media")] + [ly["media_id"] for ly in edit.get("layers") or []])
             if edit.get("layout") == "stacked" and edit.get("cam"):
                 cam = edit["cam"]
+            elif edit.get("layout") == "split" and edit.get("bottom_media") in files:
+                bottom = files[edit["bottom_media"]][0]
+            layers = [Layer(files[ly["media_id"]][0], ly["start"], ly["end"], ly["x"], ly["y"], ly["width"], files[ly["media_id"]][1])
+                      for ly in edit.get("layers") or [] if ly["media_id"] in files]  # a file removed from the library is skipped
             if edit.get("cut_dead_air"):
                 rel = deadair.relative(edit.get("gaps"), start, dur)
+
             def at(t: float) -> float:  # source time from the cut's start to finished-clip time
                 return (t - deadair.removed_before(t, rel)) / speed
             words = [Word(at(w.start + shift), at(w.end + shift), w.text) for w in words if not deadair.inside(w.start + shift, rel)]
@@ -520,17 +529,26 @@ class Pipeline:
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         if use_text:
             overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts))
-        render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None,
-               zoom=zoom, pan=pan, speed=speed, video_height=video_height, cam=cam, gaps=rel)
-        at = 1.0
+        render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan,
+               speed=speed, video_height=video_height, cam=cam, bottom=bottom, gaps=rel, layers=layers)
+        cover = 1.0
         if edit and edit.get("thumb_at") is not None:
             t = min(max(edit["thumb_at"] - start, 0.0), dur)
-            at = (t - deadair.removed_before(t, rel)) / speed
+            cover = (t - deadair.removed_before(t, rel)) / speed
         try:
-            thumbnail(out, min(at, max(out_dur - 0.1, 0)))
+            thumbnail(out, min(cover, max(out_dur - 0.1, 0)))
         except FFmpegError:
             log.exception("thumbnail failed")  # the video itself is fine
         return out
+
+    def _library_files(self, ids: list[int | None]) -> dict[int, tuple[Path, bool]]:
+        """Library items that still exist on disk: id -> (file, is a video)."""
+        wanted = {i for i in ids if i}
+        if not wanted:
+            return {}
+        with self.ctx.db.session() as s:
+            items = s.scalars(select(MediaItem).where(MediaItem.id.in_(wanted))).all()
+            return {m.id: (Path(m.path), m.kind == "video") for m in items if Path(m.path).exists()}
 
     @staticmethod
     def _render_inputs(o: ClipOutput, clip: Clip) -> str:
