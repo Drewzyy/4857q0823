@@ -101,6 +101,24 @@ class DestinationAccount(Base):
     creator: Mapped[Creator | None] = relationship(lazy="joined")
 
 
+class LongformVideo(Base):
+    """A long video (a stream VOD, a podcast, a YouTube video, or a file) to find the best moments in."""
+
+    __tablename__ = "longform_videos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_path: Mapped[str | None] = mapped_column(Text, nullable=True)  # a dropped-in file, copied into the data folder
+    title: Mapped[str] = mapped_column(Text, default="")
+    creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)
+    clips_wanted: Mapped[int] = mapped_column(Integer, default=6)
+    status: Mapped[str] = mapped_column(String(16), default="new")  # new | processing | ready | failed
+    status_detail: Mapped[str] = mapped_column(Text, default="")
+    duration: Mapped[float | None] = mapped_column(nullable=True)
+    moments: Mapped[list[Any]] = mapped_column(default=list)  # [{start, end, score, why, clip_id}]
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    creator: Mapped[Creator | None] = relationship(lazy="joined")
+
+
 class MediaItem(Base):
     """A video or picture the user added to the library: gameplay for split screen, animations, stickers."""
 
@@ -231,6 +249,7 @@ class Clip(Base):
     __tablename__ = "clips"
     id: Mapped[int] = mapped_column(primary_key=True)
     reference_id: Mapped[int | None] = mapped_column(ForeignKey("reference_videos.id", ondelete="SET NULL"), nullable=True)
+    longform_id: Mapped[int | None] = mapped_column(ForeignKey("longform_videos.id", ondelete="SET NULL"), nullable=True)
     creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)
     title: Mapped[str] = mapped_column(Text, default="")
     vod_url: Mapped[str | None] = mapped_column(Text, nullable=True)

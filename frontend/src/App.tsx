@@ -1,3 +1,4 @@
+import LongformPage from "./pages/Longform";
 import { useEffect } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -16,7 +17,7 @@ import EditorPage from "./pages/Editor";
 
 const PAGES: Record<string, JSX.Element> = {
   "/": <Dashboard />, "/ready": <Ready />, "/activity": <ActivityPage />, "/sources": <Sources />, "/destinations": <Destinations />,
-  "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />, "/editor": <EditorPage />,
+  "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />, "/editor": <EditorPage />, "/longform": <LongformPage />,
 };
 
 export default function App() {

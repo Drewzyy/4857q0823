@@ -56,6 +56,11 @@ export interface ClipOutputT {
   width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; has_thumbnail: boolean; uploaded_at: string | null;
   video_title: string; overlay: Overlay; post_url: string | null; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
 }
+export interface LongformMoment { start: number; end: number; peak: number; score: number; why: string[]; text: string; clip_id?: number; tier?: string | null; clip_title?: string | null }
+export interface LongformT {
+  id: number; url: string | null; is_file: boolean; title: string; creator: { id: number; name: string } | null; clips_wanted: number;
+  status: "new" | "processing" | "ready" | "failed"; status_detail: string; duration: number | null; created_at: string; moments: LongformMoment[];
+}
 export interface GradeT { score: number; tier: "S" | "A" | "B" | "C" | "D"; parts: { name: string; points: number; max: number; note: string }[]; tips: string[] }
 export interface ClipT {
   id: number; title: string; status: string; created_at: string; expires_at: string;
@@ -176,6 +181,15 @@ export const api = {
   editCaptions: (clipId: number, text: string) => request<{ captions_text: string; rendering: number }>("PATCH", `/clips/${clipId}/captions`, { text }),
   editor: (clipId: number) => request<EditorData>("GET", `/clips/${clipId}/editor`),
   saveEdit: (clipId: number, e: ClipEditT) => request<{ rendering: number }>("PUT", `/clips/${clipId}/edit`, e),
+  longform: () => request<LongformT[]>("GET", "/longform"),
+  addLongform: (b: { url: string; creator_id: number | null; clips_wanted: number }) => request<LongformT>("POST", "/longform", b),
+  uploadLongform: (file: File, creator_id: number | null, clips_wanted: number) => {
+    const fd = new FormData(); fd.append("file", file); fd.append("clips_wanted", String(clips_wanted));
+    if (creator_id) fd.append("creator_id", String(creator_id));
+    return request<LongformT>("POST", "/longform/upload", fd);
+  },
+  retryLongform: (id: number) => request<LongformT>("POST", `/longform/${id}/retry`),
+  removeLongform: (id: number) => request<void>("DELETE", `/longform/${id}`),
   library: () => request<MediaItemT[]>("GET", "/library"),
   addToLibrary: (file: File) => { const fd = new FormData(); fd.append("file", file); return request<MediaItemT>("POST", "/library", fd); },
   removeFromLibrary: (id: number) => request<void>("DELETE", `/library/${id}`),

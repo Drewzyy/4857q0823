@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
-from . import describe, events, grade, identify, notify
+from . import describe, events, grade, identify, moments, notify
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost
@@ -26,7 +26,7 @@ from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
 from .media.render import Layer, OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
-from .models import Clip, ClipOutput, Creator, Job, MediaItem, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
+from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, LongformVideo, MediaItem, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import destination_creator_ids, pages_for, source_creator_ids
 from .schemas import ClipEdit, OverlaySettings, lenient
 
@@ -383,52 +383,14 @@ class Pipeline:
             local = match.find_in_stream(ref_feats, match.extract_features(section), pad=0.4)
             start, dur = (local.start, local.end - local.start) if local else (min(lead, m.start), m.end - m.start)
 
-            # Keep the full-quality cut until the clip expires so text edits can be re-rendered later.
-            clip_dir = self._dir("clips") / f"ref{rid}-{int(now().timestamp())}"
-            clip_dir.mkdir(parents=True, exist_ok=True)
-            source = clip_dir / f"source{section.suffix or '.mp4'}"
-            shutil.move(str(section), source)
-
-            self._set(rid, "processing", "Writing captions")
-            # The streamer's name and channel handles (every member's, for a group) help the speech model hear names.
             channels = next((chs for cid, _, chs in candidates if cid == matched_id), [])
+            # The streamer's name and channel handles (every member's, for a group) help the speech model hear names.
             hints = list(dict.fromkeys([creator_name, *filter(None, map(identify.channel_handle, channels))]))
-            words, captions_note = self._transcribe(source, start, dur, work, hints)
-            stream_date = self._stream_date(vod)
-            clean = describe.clean_title(ref_title, creator_name)
-
-            self._set(rid, "processing", "Rendering")
-            # Framing (and later edits) are saved with the clip, so a re-render never changes how it looks.
-            framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur, matched_id),
-                               **self._dead_air(source, start, dur)).model_dump()
-            renders: dict[str, Path] = {}
-            planned = []
-            for did, platform, name, handle, st in dest_info:
-                fmt_raw = dict(st.get("format") or {})
-                ov = lenient(OverlaySettings, st.get("overlay")).model_dump()
-                key = json.dumps([fmt_raw, ov], sort_keys=True)
-                if key not in renders:
-                    renders[key] = self._render(source, clip_dir / f"render-{len(renders)}.mp4", fmt_raw, start, dur, ov, clean, words,
-                                                work / f"ov{len(renders)}", framing)
-                planned.append((did, platform, st, fmt_raw, ov, renders[key]))
-
-            with self.ctx.db.session() as s:
-                clip = Clip(reference_id=rid, creator_id=matched_id, title=clean, edit=framing,
-                            vod_url=vod.url, vod_start=m.start, vod_end=m.end, stream_date=stream_date, status="ready",
-                            files_dir=str(clip_dir), source_path=str(source), source_start=start, source_duration=dur,
-                            words=[w.to_dict() for w in words], captions_note=captions_note,
-                            expires_at=now() + timedelta(days=cfg.storage.retention_days))
-                s.add(clip)
-                s.flush()
-                for did, platform, st, fmt_raw, ov, path in planned:
-                    info = probe(path)
-                    title, desc = describe.build(platform, ref_title, creator_name, st, stream_date)
-                    s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=title, description=desc,
-                                     video_title=clean, overlay=ov, format=fmt_raw,
-                                     file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))
-                audit(s, "clip.ready", "clip", clip.id, {"reference": rid, "destinations": len(dest_info)})
-                clip_title, clip_id = clip.title, clip.id
-            graded = self.grade_clip(clip_id)
+            clip_id, clip_title, graded, captions_note = self._produce_clip(
+                section, start, dur, work, title=describe.clean_title(ref_title, creator_name), post_title=ref_title,
+                creator_id=matched_id, creator_name=creator_name, dest_info=dest_info, hints=hints,
+                retention_days=cfg.storage.retention_days, progress=lambda d: self._set(rid, "processing", d),
+                reference_id=rid, vod_url=vod.url, vod_start=m.start, vod_end=m.end, stream_date=self._stream_date(vod))
             self._set(rid, "ready", f"Ready to upload to {len(dest_info)} destination(s)" + (f". {captions_note}" if captions_note else ""))
             tier = f" [{graded['tier']} tier, {graded['score']}/100]" if graded else ""
             events.emit(self.ctx, "approvals", f"Clip ready to upload: {clip_title}{tier}", body=f"{creator_name}, {len(dest_info)} page(s)",
@@ -469,6 +431,159 @@ class Pipeline:
             log.exception("facecam check failed")
             return {}
         return {"layout": "stacked", "cam": cam} if cam else {}
+
+    # ---------- long-form ----------
+    def _lf(self, lid: int, status: str, detail: str, **fields) -> None:
+        self.ctx.jobs.beat()
+        with self.ctx.db.session() as s:
+            v = s.get(LongformVideo, lid)
+            if v:
+                v.status, v.status_detail = status, detail
+                for k, val in fields.items():
+                    setattr(v, k, val)
+
+    def make_longform(self, lid: int, stop_requested: Callable[[], bool] = lambda: False) -> dict:
+        """Find the best moments in a long video and make each one a clip for the pages that take its streamer."""
+        with self.ctx.db.session() as s:
+            v = s.get(LongformVideo, lid)
+            if not v:
+                return {"skipped": True}
+            url, file_path, title, creator_id, wanted = v.url, v.file_path, v.title, v.creator_id, v.clips_wanted
+            creator = s.get(Creator, creator_id) if creator_id else None
+            creator_name = creator.name if creator else ""
+            hints = [creator.name, *filter(None, map(identify.channel_handle, creator.vod_channels or []))] if creator else []
+            dests = pages_for(s, {creator_id}) if creator_id else \
+                [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique() if not destination_creator_ids(d)]
+            dest_info = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {})) for d in dests]
+            cfg = load_settings(s)
+        if not dest_info:
+            who = f"{creator_name}'s clips" if creator_name else "clips of any streamer"
+            self._lf(lid, "failed", f"No page takes {who}. Under Destinations, add one or set a page to "
+                     f"{creator_name or 'Any streamer'}, then press Retry.")
+            return {"status": "needs_setup"}
+        work = self._dir("tmp") / f"longform-{lid}-{random.randrange(1 << 30)}"
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            heat = None
+            if url:
+                self._lf(lid, "processing", "Reading the video")
+                vtitle, _, heatmap = self.ctx.fetcher.longform_details(url)
+                title = title or vtitle
+                self._lf(lid, "processing", "Downloading its sound", title=title)
+                audio = self.ctx.fetcher.download_audio(url, work / "audio")
+            else:
+                audio, heatmap = Path(file_path), None
+            length = probe(audio).duration or 0.0
+            self._lf(lid, "processing", "Listening for the best moments", duration=length)
+            db = grade.loudness(audio, 0, length)
+            heat = moments.heat_curve(heatmap, len(db))
+            cands = moments.candidates(db, heat, limit=max(wanted * 2, wanted + 4))
+            if not cands:
+                self._lf(lid, "failed", "No moment stood out enough to clip. Very quiet or very short videos don't have peaks to find.")
+                return {"status": "no_moments"}
+            for n, m in enumerate(cands, 1):  # pass 2: what's said in each candidate
+                if stop_requested():
+                    return {"status": "stopped"}
+                self._lf(lid, "processing", f"Listening to candidate {n} of {len(cands)}")
+                piece = work / f"cand{n}.wav"
+                run(["-ss", f"{m.start:.3f}", "-i", str(audio), "-t", f"{m.end - m.start:.3f}", "-vn", "-ac", "1", "-ar", "16000", str(piece)])
+                try:
+                    words = [(w.start, w.end, w.text) for w in self.ctx.transcriber.words(piece, hints)]
+                except Exception:
+                    log.exception("couldn't transcribe a candidate; judged on sound alone")
+                    words = []
+                moments.speech_bonus(m, words)
+            chosen = moments.pick(cands, wanted)
+            self._lf(lid, "processing", f"Found {len(chosen)} moments. Making the clips",
+                     moments=[m.to_dict() for m in chosen])
+            made = []
+            for n, m in enumerate(chosen, 1):
+                if stop_requested():
+                    return {"status": "stopped"}
+                prefix = f"Clip {n} of {len(chosen)}: "
+                lead, dur = 3.0, m.end - m.start
+                self._lf(lid, "processing", prefix + "cutting it in full quality")
+                if url:
+                    section = self.ctx.fetcher.download_section(url, max(0.0, m.start - lead), m.end + 2, work / f"sec{n}")
+                    # The download starts on a keyframe near the asked-for time: line it up on the sound.
+                    ref = work / f"ref{n}.wav"
+                    run(["-ss", f"{m.start:.3f}", "-i", str(audio), "-t", f"{dur:.3f}", "-vn", "-ac", "1", "-ar", "16000", str(ref)])
+                    local = match.find_in_stream(match.extract_features(ref), match.extract_features(section), pad=0.0)
+                    start = local.start if local else min(lead, m.start)
+                else:
+                    section = work / f"sec{n}.mp4"
+                    run(["-ss", f"{max(0.0, m.start - lead):.3f}", "-i", str(file_path), "-t", f"{dur + lead + 2:.3f}",
+                         "-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-c:a", "aac", "-b:a", "256k", str(section)])
+                    start = min(lead, m.start)
+                clip_id, clip_title, graded, _ = self._produce_clip(
+                    section, start, dur, work / f"w{n}", title=moments.title_for(m, title), post_title=title,
+                    creator_id=creator_id, creator_name=creator_name, dest_info=dest_info, hints=hints,
+                    retention_days=cfg.storage.retention_days, progress=lambda d, p=prefix: self._lf(lid, "processing", p + d.lower()),
+                    longform_id=lid)
+                made.append({**m.to_dict(), "clip_id": clip_id, "tier": graded["tier"] if graded else None})
+                self._lf(lid, "processing", f"{prefix}ready", moments=made + [x.to_dict() for x in chosen[n:]])
+            self._lf(lid, "ready", f"{len(made)} clips ready to upload", moments=made)
+            events.emit(self.ctx, "approvals", f"{len(made)} clips ready from \"{title[:80]}\"", body="Long-form", link=None,
+                        dedupe_key=f"longform:{lid}:{len(made)}", data={"longform_id": lid})
+            return {"status": "ready", "clips": len(made)}
+        except FetchError as e:
+            self._lf(lid, "failed", f"Download problem: {e}")
+            raise
+        except FFmpegError as e:
+            self._lf(lid, "failed", str(e))
+            return {"status": "failed"}
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def _produce_clip(self, section: Path, start: float, dur: float, work: Path, *, title: str, post_title: str,
+                      creator_id: int | None, creator_name: str, dest_info: list, hints: list[str], retention_days: int,
+                      progress: Callable[[str], None], reference_id: int | None = None, longform_id: int | None = None,
+                      vod_url: str | None = None, vod_start: float | None = None, vod_end: float | None = None,
+                      stream_date: datetime | None = None) -> tuple[int, str, dict | None, str]:
+        """Turn a downloaded section into a finished clip: captions, framing, one render per distinct page format,
+        a Clip with an output per page, and its grade. `start`/`dur` locate the moment inside `section`.
+        Returns (clip id, title, grade, captions note)."""
+        # Keep the full-quality cut until the clip expires so text edits can be re-rendered later.
+        clip_dir = self._dir("clips") / f"{'ref' if reference_id else 'long'}{reference_id or longform_id}-{int(now().timestamp() * 1000)}"
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        source = clip_dir / f"source{section.suffix or '.mp4'}"
+        shutil.move(str(section), source)
+
+        progress("Writing captions")
+        words, captions_note = self._transcribe(source, start, dur, work, hints)
+
+        progress("Rendering")
+        # Framing (and later edits) are saved with the clip, so a re-render never changes how it looks.
+        framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur, creator_id),
+                           **self._dead_air(source, start, dur)).model_dump()
+        renders: dict[str, Path] = {}
+        planned = []
+        for did, platform, name, handle, st in dest_info:
+            fmt_raw = dict(st.get("format") or {})
+            ov = lenient(OverlaySettings, st.get("overlay")).model_dump()
+            key = json.dumps([fmt_raw, ov], sort_keys=True)
+            if key not in renders:
+                renders[key] = self._render(source, clip_dir / f"render-{len(renders)}.mp4", fmt_raw, start, dur, ov, title, words,
+                                            work / f"ov{len(renders)}", framing)
+            planned.append((did, platform, st, fmt_raw, ov, renders[key]))
+
+        with self.ctx.db.session() as s:
+            clip = Clip(reference_id=reference_id, longform_id=longform_id, creator_id=creator_id, title=title, edit=framing,
+                        vod_url=vod_url, vod_start=vod_start, vod_end=vod_end, stream_date=stream_date, status="ready",
+                        files_dir=str(clip_dir), source_path=str(source), source_start=start, source_duration=dur,
+                        words=[w.to_dict() for w in words], captions_note=captions_note,
+                        expires_at=now() + timedelta(days=retention_days))
+            s.add(clip)
+            s.flush()
+            for did, platform, st, fmt_raw, ov, path in planned:
+                info = probe(path)
+                ptitle, desc = describe.build(platform, post_title, creator_name, st, stream_date)
+                s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=ptitle, description=desc,
+                                 video_title=title, overlay=ov, format=fmt_raw,
+                                 file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))
+            audit(s, "clip.ready", "clip", clip.id, {"reference": reference_id, "longform": longform_id, "destinations": len(dest_info)})
+            clip_title, clip_id = clip.title, clip.id
+        return clip_id, clip_title, self.grade_clip(clip_id), captions_note
 
     def _transcribe(self, source: Path, start: float, dur: float, work: Path, hints: list[str]) -> tuple[list[Word], str]:
         """Words spoken in the clip, timed from the clip's start. Captions are skipped (with a note) if this fails.
@@ -749,17 +864,19 @@ def register(ctx: Any) -> Pipeline:
     # Jobs queued by versions before the events log carry a raw message; they're dropped rather than resent.
     q.register("notify.discord", lambda jc, pl: events.deliver(ctx, pl["event_id"]) if "event_id" in pl else {"skipped": "old format"})
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())
+    q.register("longform.make", lambda jc, pl: p.make_longform(pl["longform_id"], jc.cancelled))
     q.register("clip.rerender", lambda jc, pl: p.rerender(pl["output_ids"]))
     q.register("metrics.fetch", lambda jc, pl: p.fetch_metrics(pl["output_id"]))
     q.register("metrics.refresh", lambda jc, pl: p.refresh_metrics())
     q.every("metrics.refresh", 3 * 3600)
     q.every("monitor.tick", 60)
     q.every("storage.cleanup", 6 * 3600)
-    q.heavy = {"clip.build", "clip.rerender"}
+    q.heavy = {"clip.build", "clip.rerender", "longform.make"}
     # How long a job may go without any progress (a step finished, data downloaded) before it's given up on.
     # Long searches are fine as long as they keep moving.
-    q.time_limits = {"clip.build": 20 * 60, "clip.rerender": 20 * 60, "intake.link": 10 * 60, "source.check": 10 * 60}
+    q.time_limits = {"longform.make": 20 * 60, "clip.build": 20 * 60, "clip.rerender": 20 * 60, "intake.link": 10 * 60, "source.check": 10 * 60}
     q.on_timeout = {
+        "longform.make": lambda pl: p._lf(pl["longform_id"], "failed", "This stopped making progress for 20 minutes (most likely a download froze). Press Retry."),
         "clip.build": lambda pl: p._set(pl["reference_id"], "failed", "This stopped making progress for 20 minutes (most likely a download froze). Press Retry to try again."),
         "clip.rerender": lambda pl: p._render_stuck(pl.get("output_ids") or []),
     }

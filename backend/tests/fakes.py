@@ -19,7 +19,8 @@ class FakeFetcher:
         self.calls: list[tuple] = []
         self.fail_listing = False
         self.live: set[str] = set()  # stream urls that are still being broadcast
-        self.origins: dict[str, tuple[str, float]] = {}  # Twitch clip url -> (its stream, offset)
+        self.origins: dict[str, tuple[str, float]] = {}
+        self.heatmap: list[dict] | None = None  # Twitch clip url -> (its stream, offset)
 
     def recent_posts(self, platform, username, profile_url, limit):
         self.calls.append(("posts", username))
@@ -38,7 +39,7 @@ class FakeFetcher:
 
     def download_audio(self, url, dest_dir):
         self.calls.append(("audio", url))
-        src = self.m["stream"] if url.endswith("/videos/2") else self.m["other"] if url.endswith("/videos/1") else self.m["clip"]
+        src = self.m["stream"] if url.endswith("/videos/2") or "watch?v=" in url else self.m["other"] if url.endswith("/videos/1") else self.m["clip"]
         return self._copy(src, dest_dir, Path(src).name)
 
     def recent_vods(self, channel_url, limit):
@@ -54,6 +55,10 @@ class FakeFetcher:
         run(["-ss", f"{max(0, start - 1.7):.2f}", "-i", str(self.m["stream"]), "-t", f"{end - start + 1.7:.2f}",
              "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(out)])
         return out
+
+    def longform_details(self, url):
+        self.calls.append(("longform", url))
+        return "A long stream", 240.0, self.heatmap
 
     def twitch_clip_origin(self, url):
         self.calls.append(("origin", url))

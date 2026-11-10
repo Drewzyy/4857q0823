@@ -315,3 +315,21 @@ test("every clip shows its grade, with the breakdown in the editor", async ({ pa
   await expect(page.getByText("Hook in the first 3 seconds")).toBeVisible();
   if (process.env.SHOT) await page.getByRole("heading", { name: "Grade" }).locator("xpath=../..").screenshot({ path: process.env.SHOT });
 });
+
+test("long-form: paste a link or drop in a file", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("navigation").getByRole("link", { name: "Long-form" }).click();
+  await expect(page.getByRole("heading", { name: "Long-form" })).toBeVisible();
+  await page.getByLabel("Long video link").fill("not a link");
+  await page.getByRole("button", { name: "Find clips" }).click();
+  await expect(page.getByText(/Paste the link to one video/)).toBeVisible();
+  await page.getByLabel("Long video link").fill("https://www.youtube.com/watch?v=abc123");
+  await page.getByRole("button", { name: "Find clips" }).click();
+  await expect(page.getByText("Added. Vyral is finding the best moments.")).toBeVisible();
+  await page.getByLabel("Video files").setInputFiles({ name: "podcast-ep-12.mp4", mimeType: "video/mp4", buffer: Buffer.from("not really a video") });
+  await expect(page.getByText("podcast-ep-12", { exact: true })).toBeVisible();
+  await expect(page.getByText("https://www.youtube.com/watch?v=abc123", { exact: true })).toBeVisible();
+  if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
+  await page.getByRole("button", { name: "Remove podcast-ep-12" }).click();
+  await expect(page.getByText("podcast-ep-12", { exact: true })).toHaveCount(0);
+});

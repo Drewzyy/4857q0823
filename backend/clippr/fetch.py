@@ -53,6 +53,7 @@ class Fetcher(Protocol):
     def vod_details(self, url: str) -> RemoteVod: ...
     def download_section(self, url: str, start: float, end: float, dest_dir: Path) -> Path: ...
     def twitch_clip_origin(self, url: str) -> tuple[str, float] | None: ...
+    def longform_details(self, url: str) -> tuple[str, float | None, list[dict] | None]: ...
 
 
 MONITORABLE = ("tiktok", "youtube", "twitch", "kick")
@@ -228,6 +229,11 @@ class YtDlpFetcher:
             if e and e.get("id"):
                 out.append(RemoteVod(str(e["id"]), e.get("url") or e.get("webpage_url"), e.get("title") or "", e.get("duration"), _date(e)))
         return out
+
+    def longform_details(self, url: str) -> tuple[str, float | None, list[dict] | None]:
+        """A long video's title, length and, on YouTube, its most-replayed graph (viewers rewinding)."""
+        e = self._extract(url, noplaylist=True)
+        return e.get("title") or "", e.get("duration"), e.get("heatmap")
 
     def twitch_clip_origin(self, url: str) -> tuple[str, float] | None:
         """The stream a Twitch clip was cut from and where in it the clip starts, as Twitch reports it publicly
