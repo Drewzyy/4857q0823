@@ -1,7 +1,7 @@
 import numpy as np
 import subprocess
 
-from clippr.media.ffmpeg import ffmpeg_exe, run
+from clippr.media.ffmpeg import ffmpeg_exe, probe, run
 from clippr.media.render import OutputFormat, render
 
 
@@ -24,3 +24,18 @@ def test_video_height_makes_the_stream_fill_more_of_the_frame(tmp_path):
     assert 0.55 < zoomed < 0.65
     smaller = _sharp_rows(render(src, tmp_path / "c.mp4", fmt, video_height=0.2))  # less than full width: whole stream, uncut
     assert abs(smaller - whole) < 0.03
+
+
+def test_thumbnail_is_saved_and_embedded(tmp_path):
+    from clippr.media.ffmpeg import ffmpeg_exe
+    from clippr.media.render import thumbnail
+    import subprocess
+    src = tmp_path / "v.mp4"
+    run(["-f", "lavfi", "-i", "testsrc2=size=360x640:rate=30:duration=2", "-c:v", "libx264", "-preset", "ultrafast", str(src)])
+    jpg = thumbnail(src, 1.0)
+    assert jpg.exists() and jpg.stat().st_size > 1000
+    info = subprocess.run([ffmpeg_exe(), "-i", str(src)], capture_output=True, text=True).stderr
+    assert "attached pic" in info and probe(src).duration > 1.5
+    assert thumbnail(src, 99).exists()  # past the end falls back to the last frame
+    info = subprocess.run([ffmpeg_exe(), "-i", str(src)], capture_output=True, text=True).stderr
+    assert info.count("attached pic") == 1  # a new cover replaces the old one

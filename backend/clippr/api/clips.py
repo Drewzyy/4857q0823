@@ -37,7 +37,8 @@ def _output(o: ClipOutput) -> dict:
     return {"id": o.id, "platform": o.platform, "title": o.title, "description": o.description, "status": o.status,
             "destination": {"id": d.id, "display_name": d.display_name, "handle": d.handle} if d else None,
             "width": o.width, "height": o.height, "fps": o.fps, "size_bytes": o.size_bytes,
-            "available": bool(o.file_path and Path(o.file_path).exists()), "uploaded_at": _dt(o.uploaded_at),
+            "available": bool(o.file_path and Path(o.file_path).exists()),
+            "has_thumbnail": bool(o.file_path and Path(o.file_path).with_suffix(".jpg").exists()), "uploaded_at": _dt(o.uploaded_at),
             "video_title": o.video_title, "overlay": lenient(OverlaySettings, o.overlay).model_dump(),
             "render_state": o.render_state, "render_error": o.render_error, "post_url": o.post_url,
             # Changes whenever the file is re-rendered, so the preview reloads.
@@ -124,6 +125,8 @@ def save_to_downloads(oid: int, s: Session = Depends(db), c=Depends(ctx)):
         target = folder / f"{_safe_name(dest_name)} - {_safe_name(o.title)} ({n}).mp4"
         n += 1
     shutil.copyfile(o.file_path, target)
+    if (thumb := Path(o.file_path).with_suffix(".jpg")).exists():
+        shutil.copyfile(thumb, target.with_suffix(".jpg"))
     audit(s, "clip.saved", "output", oid, {"platform": o.platform})
     if c.config.desktop_mode:
         _reveal(target)
@@ -137,6 +140,17 @@ def media(oid: int, download: bool = False, s: Session = Depends(db)):
         raise ApiError(410, "expired", "This clip's video has expired")
     name = f"{_safe_name(o.destination.display_name if o.destination else o.platform)} - {_safe_name(o.title)}.mp4"
     return FileResponse(o.file_path, media_type="video/mp4", filename=name if download else None,
+                        content_disposition_type="attachment" if download else "inline")
+
+
+@router.get("/media/outputs/{oid}/thumbnail")
+def media_thumbnail(oid: int, download: bool = False, s: Session = Depends(db)):
+    o = get_or_404(s, ClipOutput, oid, "Clip")
+    thumb = Path(o.file_path).with_suffix(".jpg") if o.file_path else None
+    if not thumb or not thumb.exists():
+        raise ApiError(404, "no_thumbnail", "This clip has no thumbnail yet")
+    name = f"{_safe_name(o.destination.display_name if o.destination else o.platform)} - {_safe_name(o.title)}.jpg"
+    return FileResponse(thumb, media_type="image/jpeg", filename=name if download else None,
                         content_disposition_type="attachment" if download else "inline")
 
 
@@ -253,6 +267,7 @@ def delete_clip(cid: int, s: Session = Depends(db)):
     for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)).unique():
         if o.file_path:
             Path(o.file_path).unlink(missing_ok=True)
+            Path(o.file_path).with_suffix(".jpg").unlink(missing_ok=True)
     if clip.files_dir:
         shutil.rmtree(clip.files_dir, ignore_errors=True)
     audit(s, "clip.deleted", "clip", cid)

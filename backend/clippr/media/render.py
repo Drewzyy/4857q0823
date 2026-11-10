@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .ffmpeg import probe, run
+from .ffmpeg import FFmpegError, probe, run
 
 
 @dataclass(frozen=True)
@@ -99,3 +99,22 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
     run(args, cwd=overlay_dir)
     tmp.replace(out)
     return out
+
+
+def thumbnail(video: Path, at: float) -> Path:
+    """Save the frame at `at` seconds as the video's cover: a JPG next to it, also embedded in the MP4."""
+    video = video.resolve()
+    jpg = video.with_suffix(".jpg")
+    jpg.unlink(missing_ok=True)
+    try:
+        run(["-ss", f"{max(at, 0):.3f}", "-i", str(video), "-map", "0:v:0", "-frames:v", "1", "-q:v", "2", str(jpg)])
+    except FFmpegError:
+        pass
+    if not jpg.exists():  # past the end: use the last frame
+        run(["-sseof", "-0.5", "-i", str(video), "-map", "0:v:0", "-frames:v", "1", "-q:v", "2", str(jpg)])
+    tmp = video.with_suffix(".cover.mp4")
+    # Only the main video and audio are kept, so picking a new cover replaces the old one.
+    run(["-i", str(video), "-i", str(jpg), "-map", "0:v:0", "-map", "0:a?", "-map", "1", "-c", "copy", "-disposition:v:1", "attached_pic",
+         "-movflags", "+faststart", str(tmp)])
+    tmp.replace(video)
+    return jpg

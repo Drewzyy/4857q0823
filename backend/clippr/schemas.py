@@ -168,5 +168,6 @@ class ClipEdit(Strict):
     layout: Literal["normal", "stacked"] = "normal"
     cam: list[float] | None = Field(None, min_length=4, max_length=4)
     cut_dead_air: bool = False
+    thumb_at: float | None = Field(None, ge=0)  # cover frame, in source seconds; None picks one a second in
     gaps: list[list[float]] = Field(default_factory=list, max_length=200)  # silent stretches, in source seconds
     texts: list[TextOverlay] = Field(default_factory=list, max_length=20)

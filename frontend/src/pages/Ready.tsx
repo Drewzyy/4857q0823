@@ -245,6 +245,8 @@ function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT
       <div className="row wrap">
         <button className="btn primary" disabled={!o.available || busy || o.render_state === "rendering"} onClick={save}>{busy ? <span className="spinner" /> : <FolderDown size={14} />}Save to computer</button>
         {o.available && !health?.desktop_mode && o.render_state !== "rendering" && <a className="btn" href={api.mediaUrl(o.id, true, o.version)} download><Download size={14} />Download</a>}
+        {o.has_thumbnail && o.render_state !== "rendering" && <a className="btn" href={api.thumbUrl(o.id, true, o.version)} download title="The cover image you picked in the editor">
+          <img src={api.thumbUrl(o.id, false, o.version)} alt="" style={{ width: 18, height: 32, objectFit: "cover", borderRadius: 3 }} />Thumbnail</a>}
         <span className="spacer" />
         {o.status === "ready" && <button className="btn" onClick={() => mark("uploaded")}><CheckCircle2 size={14} />Mark uploaded</button>}
         {o.status === "uploaded" && <button className="btn ghost" onClick={() => mark("ready")}><Undo2 size={14} />Not uploaded</button>}
@@ -253,7 +255,7 @@ function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT
       <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} aria-expanded={showText} onClick={() => setShowText(!showText)}>
         <Type size={13} />{showText ? "Hide text on video" : "Edit text on video (title, captions, colors, font, size, position)"}</button>
       {showText && <VideoTextPanel o={o} clip={clip} onChange={onChange} toast={toast} />}
-      <p className="small faint">Save to computer puts the full-quality file in Downloads › Vyral and shows it in {navigator.userAgent.includes("Windows") ? "File Explorer" : "Finder"}.</p>
+      <p className="small faint">Save to computer puts the full-quality file (and its thumbnail) in Downloads › Vyral and shows it in {navigator.userAgent.includes("Windows") ? "File Explorer" : "Finder"}.</p>
     </div>
   );
 }

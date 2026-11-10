@@ -326,6 +326,17 @@ function EditorBody({ data }: { data: EditorData }) {
           </div>
 
           <div className="card stack">
+            <div className="row"><h2>Thumbnail</h2><span className="spacer" />
+              {e.thumb_at !== null && <button className="btn ghost sm" onClick={() => seek(e.thumb_at!)}>Show it</button>}
+              <button className="btn sm" onClick={() => patch({ thumb_at: Math.round(t * 100) / 100 })}>Use this frame</button></div>
+            <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
+              {first?.has_thumbnail && <img src={api.thumbUrl(first.id, false, first.version)} alt="Current thumbnail"
+                style={{ width: 72, height: 128, objectFit: "cover", borderRadius: 6, background: "var(--card-3)", flex: "none" }} />}
+              <p className="small faint" style={{ margin: 0 }}>{e.thumb_at === null ? "Vyral uses the frame one second in. " : `Cover frame: ${fmt(e.thumb_at - e.start)} into the clip. `}
+                Pause the video where you want, then Use this frame. It's saved as a JPG next to each video and set as the video's cover. Saving re-renders, and the picture here updates when it's done.</p></div>
+          </div>
+
+          <div className="card stack">
             <div className="row"><h2>Text</h2><span className="spacer" /><button className="btn sm" disabled={e.texts.length >= 20} onClick={addText}><Plus size={13} />Add text</button></div>
             <p className="small faint">Extra text on top of the title and captions. Times are in the finished clip. To change the title or caption style, use Edit text in Ready to Upload.</p>
             {e.texts.map((x, i) => (

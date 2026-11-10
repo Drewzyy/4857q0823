@@ -55,7 +55,7 @@ export interface RefPost {
 export interface ClipOutputT {
   id: number; platform: Platform; title: string; description: string; status: "ready" | "uploaded" | "expired";
   destination: { id: number; display_name: string; handle: string } | null;
-  width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; uploaded_at: string | null;
+  width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; has_thumbnail: boolean; uploaded_at: string | null;
   video_title: string; overlay: Overlay; post_url: string | null; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
 }
 export interface ClipT {
@@ -65,7 +65,7 @@ export interface ClipT {
   reference: RefPost | null; outputs: ClipOutputT[];
 }
 export interface TextOverlayT { text: string; start: number; end: number; y_percent: number; size: number; color: string; font: FontKey; all_caps: boolean; outline: number }
-export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked"; cam: number[] | null; cut_dead_air: boolean; gaps: number[][]; texts: TextOverlayT[] }
+export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked"; cam: number[] | null; cut_dead_air: boolean; gaps: number[][]; thumb_at: number | null; texts: TextOverlayT[] }
 export interface EditorData {
   id: number; title: string; section_duration: number; original_start: number; original_duration: number;
   edit: ClipEditT; default_video_height: number; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
@@ -174,6 +174,8 @@ export const api = {
   updateOutput: (id: number, b: Partial<{ title: string; description: string; status: "ready" | "uploaded" }>) => request<ClipOutputT>("PATCH", `/outputs/${id}`, b),
   saveOutput: (id: number) => request<{ path: string }>("POST", `/outputs/${id}/save`),
   deleteClip: (id: number) => request<void>("DELETE", `/clips/${id}`),
+  thumbUrl: (id: number, download = false, version?: string | null) =>
+    `/api/media/outputs/${id}/thumbnail?t=${encodeURIComponent(token())}${download ? "&download=true" : ""}${version ? `&v=${encodeURIComponent(version)}` : ""}`,
   mediaUrl: (id: number, download = false, version?: string | null) =>
     `/api/media/outputs/${id}?t=${encodeURIComponent(token())}${download ? "&download=true" : ""}${version ? `&v=${encodeURIComponent(version)}` : ""}`,
   editVideoText: (id: number, b: { video_title?: string; overlay?: Partial<Overlay>; apply_style_to_all?: boolean }) => request<ClipOutputT>("PATCH", `/outputs/${id}/video`, b),

@@ -22,7 +22,7 @@ from .fetch import MONITORABLE, FetchError, RemotePost
 from .media import deadair, facecam, match, overlay
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
-from .media.render import OutputFormat, render
+from .media.render import OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
 from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import resolve_destinations, source_creator_ids
@@ -456,8 +456,17 @@ class Pipeline:
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         if use_text:
             overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts))
-        return render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None,
-                      zoom=zoom, pan=pan, speed=speed, video_height=video_height, cam=cam, gaps=rel)
+        render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None,
+               zoom=zoom, pan=pan, speed=speed, video_height=video_height, cam=cam, gaps=rel)
+        at = 1.0
+        if edit and edit.get("thumb_at") is not None:
+            t = min(max(edit["thumb_at"] - start, 0.0), dur)
+            at = (t - deadair.removed_before(t, rel)) / speed
+        try:
+            thumbnail(out, min(at, max(out_dur - 0.1, 0)))
+        except FFmpegError:
+            log.exception("thumbnail failed")  # the video itself is fine
+        return out
 
     @staticmethod
     def _render_inputs(o: ClipOutput, clip: Clip) -> str:
@@ -490,12 +499,14 @@ class Pipeline:
                     if self._render_inputs(o, s.get(Clip, o.clip_id)) != inputs:
                         # Edited again while this was rendering: a newer job renders the latest, so drop this one.
                         out.unlink(missing_ok=True)
+                        out.with_suffix(".jpg").unlink(missing_ok=True)
                         continue
                     o.file_path, o.width, o.height, o.fps, o.size_bytes = str(out), info.width, info.height, info.fps, out.stat().st_size
                     o.render_state, o.render_error = "ready", None
                     still_used = s.scalar(select(func.count()).select_from(ClipOutput).where(ClipOutput.file_path == old)) if old else 0
                 if old and not still_used:
                     Path(old).unlink(missing_ok=True)
+                    Path(old).with_suffix(".jpg").unlink(missing_ok=True)
                 done += 1
             except FFmpegError as e:
                 with self.ctx.db.session() as s:
@@ -539,6 +550,7 @@ class Pipeline:
                 for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id)).unique():
                     if o.file_path:
                         Path(o.file_path).unlink(missing_ok=True)
+                        Path(o.file_path).with_suffix(".jpg").unlink(missing_ok=True)
                     o.file_path, o.status = None, "expired"
                 if clip.files_dir:
                     shutil.rmtree(clip.files_dir, ignore_errors=True)  # renders + the kept source cut
