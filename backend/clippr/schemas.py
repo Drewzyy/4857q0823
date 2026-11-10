@@ -117,6 +117,7 @@ class CaptionEngineSettings(Strict):
 
 class ProcessingSettings(Strict):
     max_concurrent_jobs: int = Field(2, ge=1, le=16)
+    cut_dead_air: bool = True  # cut stretches with no sound out of new clips
 
 
 class IntakeSettings(Strict):
@@ -166,4 +167,6 @@ class ClipEdit(Strict):
     # "stacked": content on top, the streamer's facecam (cam: x, y, w, h as shares of the source) underneath.
     layout: Literal["normal", "stacked"] = "normal"
     cam: list[float] | None = Field(None, min_length=4, max_length=4)
+    cut_dead_air: bool = False
+    gaps: list[list[float]] = Field(default_factory=list, max_length=200)  # silent stretches, in source seconds
     texts: list[TextOverlay] = Field(default_factory=list, max_length=20)

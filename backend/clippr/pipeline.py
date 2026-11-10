@@ -19,7 +19,7 @@ from . import describe, events, identify, notify
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost
-from .media import facecam, match, overlay
+from .media import deadair, facecam, match, overlay
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
 from .media.render import OutputFormat, render
@@ -336,7 +336,8 @@ class Pipeline:
 
             self._set(rid, "processing", "Rendering")
             # Framing (and later edits) are saved with the clip, so a re-render never changes how it looks.
-            framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur)).model_dump()
+            framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur),
+                               **self._dead_air(source, start, dur)).model_dump()
             renders: dict[str, Path] = {}
             planned = []
             for did, platform, name, handle, st in dest_info:
@@ -376,6 +377,15 @@ class Pipeline:
             return self._stop(rid, "failed", str(e), account, ref_url)
         finally:
             shutil.rmtree(work, ignore_errors=True)
+
+    def _dead_air(self, source: Path, start: float, dur: float) -> dict:
+        """Silent stretches to cut, if the user has dead-air cutting on (it is by default)."""
+        with self.ctx.db.session() as s:
+            on = load_settings(s).processing.cut_dead_air
+        if not on:
+            return {}
+        gaps = deadair.detect(source, start, dur)
+        return {"cut_dead_air": True, "gaps": gaps} if gaps else {}
 
     def _auto_layout(self, source: Path, start: float, dur: float) -> dict:
         """Stacked layout when the streamer's facecam sits in a corner over other content (a game, a video)."""
@@ -428,7 +438,7 @@ class Pipeline:
                 words: list[Word], ov_dir: Path, edit: dict | None = None) -> Path:
         """`words` are timed from `start`; an editor `edit` may move the cut, zoom/pan, change speed and add texts."""
         fmt = OutputFormat.from_settings(fmt_raw)
-        cam = None
+        cam, rel = None, []
         zoom, pan, speed, texts, video_height = 1.0, (0.5, 0.5), 1.0, [], 0.0  # no edit: a clip from before framing was saved
         if edit:
             video_height = edit.get("video_height", 0)  # edits saved before framing existed were fit to frame
@@ -437,13 +447,17 @@ class Pipeline:
             zoom, pan, speed, texts = edit["zoom"], (edit["pan_x"], edit["pan_y"]), edit["speed"], edit["texts"]
             if edit.get("layout") == "stacked" and edit.get("cam"):
                 cam = edit["cam"]
-            words = [Word((w.start + shift) / speed, (w.end + shift) / speed, w.text) for w in words]
-        out_dur = dur / speed
+            if edit.get("cut_dead_air"):
+                rel = deadair.relative(edit.get("gaps"), start, dur)
+            def at(t: float) -> float:  # source time from the cut's start to finished-clip time
+                return (t - deadair.removed_before(t, rel)) / speed
+            words = [Word(at(w.start + shift), at(w.end + shift), w.text) for w in words if not deadair.inside(w.start + shift, rel)]
+        out_dur = (dur - sum(b - a for a, b in rel)) / speed
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         if use_text:
             overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts))
         return render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None,
-                      zoom=zoom, pan=pan, speed=speed, video_height=video_height, cam=cam)
+                      zoom=zoom, pan=pan, speed=speed, video_height=video_height, cam=cam, gaps=rel)
 
     @staticmethod
     def _render_inputs(o: ClipOutput, clip: Clip) -> str:

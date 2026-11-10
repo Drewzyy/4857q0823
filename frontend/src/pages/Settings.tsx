@@ -62,6 +62,11 @@ function General() {
           <div className="field"><label htmlFor="conc">Clips rendered at the same time: {s.processing.max_concurrent_jobs}</label>
             <input id="conc" type="range" min={1} max={4} value={s.processing.max_concurrent_jobs} onChange={(e) => up("processing", { max_concurrent_jobs: Number(e.target.value) })} />
             <span className="hint">1 keeps your computer responsive. Raise it on a fast machine.</span></div>
+          <div className="field"><span className="label-text">Dead air</span>
+            <div className="seg" role="group" aria-label="Dead air" style={{ alignSelf: "flex-start" }}>
+              <button className={s.processing.cut_dead_air ? "on" : ""} onClick={() => up("processing", { cut_dead_air: true })}>Cut it out</button>
+              <button className={s.processing.cut_dead_air ? "" : "on"} onClick={() => up("processing", { cut_dead_air: false })}>Keep it</button></div>
+            <span className="hint">Silent stretches of a second or more are cut out of new clips so they keep moving. Each clip can be switched back in the editor.</span></div>
         </div>
       </div>
 
