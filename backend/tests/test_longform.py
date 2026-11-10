@@ -73,3 +73,13 @@ def test_a_pasted_link_uses_the_replay_graph_and_the_streamers_pages(env):
     m = lf["moments"][0]
     assert m["start"] < 150 and m["end"] > 128, m  # the most-replayed stretch
     assert ("longform", "https://www.youtube.com/watch?v=long1") in fake.calls
+
+
+def test_clips_start_and_end_on_whole_sentences():
+    m = moments.Moment(start=100.0, end=130.0, peak=118.0, score=50)
+    # Words from 94 s in the video: a sentence starts at 97.0 (after a pause) and one ends at 131.2.
+    words = [(0.0, 0.4, "and"), (0.5, 1.0, "then."), (3.0, 3.4, "So"), (3.5, 4.0, "he"), (4.1, 30.0, "goes"),
+             (30.1, 37.2, "crazy!"), (38.0, 38.5, "next")]
+    moments.snap(m, words, offset=94.0)
+    assert abs(m.start - (97.0 - 0.15)) < 0.01  # opens on "So", not mid-sentence
+    assert abs(m.end - (131.2 + 0.3)) < 0.01  # ends after "crazy!"

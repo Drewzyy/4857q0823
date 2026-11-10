@@ -8,8 +8,10 @@ short-form analytics consistently report):
   high-energy moment, not silence or a slow build.
 - Energy: reaction peaks (shouting, laughing, explosions) well above the clip's normal level.
 - Pacing: steady talking and little dead air keep people watching to the end.
-- Length: about 15 to 60 seconds finishes most often; very short clips lack payoff and long ones lose viewers.
-- Captions and a title: most people watch muted, and the title tells them why to stay.
+- Length: 20 to 45 seconds for stream and gaming clips; shorter lacks setup, longer loses viewers.
+- Visual pace: the first frame is already moving and the picture keeps changing; the most-viewed clips are
+  the fastest, not the best looking.
+- Captions and a title: table stakes now (most people watch muted), so they count, but less.
 - Payoff: the clip ends on or near its biggest moment instead of trailing off.
 
 The grade is a prediction, never a promise: S means every signal Vyral can measure is strong, not that a clip
@@ -65,6 +67,22 @@ def loudness(path: Path, start: float, dur: float, gaps: list[tuple[float, float
     return 20 * np.log10(np.sqrt((frames ** 2).mean(axis=1)) + 1e-6)
 
 
+def motion(path: Path, start: float, dur: float) -> np.ndarray | None:
+    """How much the picture changes every 0.5 s (0 still .. 1 completely new), from tiny grey frames: cheap."""
+    import subprocess
+
+    w, h = 64, 36
+    try:
+        raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path), "-an",
+                              "-vf", f"fps=2,scale={w}:{h},format=gray", "-f", "rawvideo", "-"], capture_output=True, timeout=120, check=True).stdout
+    except (subprocess.SubprocessError, OSError):
+        return None
+    frames = np.frombuffer(raw, dtype=np.uint8)[: len(raw) // (w * h) * w * h].reshape(-1, h, w).astype(np.float32) / 255
+    if len(frames) < 2:
+        return None
+    return np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
+
+
 def _tier(score: int) -> str:
     return next(t for t, floor in TIERS if score >= floor)
 
@@ -89,8 +107,9 @@ def _proof(views: int | None, likes: int | None, shares: int | None, posted_at: 
 
 def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: float, has_captions: bool, has_title: bool,
           views: int | None = None, likes: int | None = None, shares: int | None = None, posted_at: datetime | None = None,
-          stream_clip: bool = False) -> Grade:
-    """db: loudness every 100 ms of the finished clip. words: (start, end, text) in finished-clip seconds."""
+          stream_clip: bool = False, motion: np.ndarray | None = None) -> Grade:
+    """db: loudness every 100 ms of the finished clip. words: (start, end, text) in finished-clip seconds.
+    motion: how much the picture changes, 0..1, every 0.5 s of the finished clip (None if it couldn't be read)."""
     parts, tips = [], []
 
     def add(name: str, frac: float, top: int, note: str, tip: str | None = None) -> None:
@@ -118,22 +137,36 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
     add("Energy and reactions", energy, 15, f"Biggest moments hit {peak - base:.0f} dB above normal, {spikes} spike{'' if spikes == 1 else 's'}.",
         "This one is calm. Clips with a clear reaction (shouting, laughing, a big play) do much better.")
 
+    # Faster talking is linked to more shares in TikTok research; past ~4.5 words a second it gets hard to follow.
     rate = len(words) / max(length, 1)
     silent = float((db < base - 15).mean()) if len(db) else 1.0
-    pacing = 0.6 * (1 - min(1.0, abs(rate - 2.6) / 2.6)) + 0.4 * (1 - min(1.0, silent / 0.25))
+    talk = min(1.0, rate / 2.5) if rate <= 4.5 else max(0.0, 1 - (rate - 4.5) / 3)
+    pacing = 0.6 * talk + 0.4 * (1 - min(1.0, silent / 0.25))
     add("Pacing", pacing, 10, f"{rate:.1f} words a second, {silent * 100:.0f}% quiet.",
         "There are quiet stretches. Turn on Dead air > Cut out, or cut the slow part.")
 
-    if 15 <= length <= 60:
+    # Gaming clip tools find under ~20 s lacks setup for the payoff, over ~45 s loses people before the reaction.
+    if 20 <= length <= 45:
         fit = 1.0
-    elif length < 15:
-        fit = max(0.0, (length - 5) / 10)
+    elif length < 20:
+        fit = max(0.0, (length - 8) / 12)
     else:
-        fit = max(0.0, 1 - (length - 60) / 60)
-    add("Length", fit, 10, f"{length:.0f} s long; 15 to 60 s is the sweet spot.",
-        "Trim it toward 15 to 60 seconds." if length > 60 else "It's very short; give the moment a little setup.")
+        fit = max(0.0, 1 - (length - 45) / 45)
+    add("Length", fit, 10, f"{length:.0f} s long; 20 to 45 s is the sweet spot.",
+        "Trim it toward 20 to 45 seconds." if length > 45 else "It's very short; give the moment a little setup.")
 
-    add("Captions and title", (0.6 if has_captions else 0) + (0.4 if has_title else 0), 10,
+    # The best-performing clips are fast and their first frame is already interesting: the picture is moving.
+    if motion is not None and len(motion):
+        first = float(np.mean(motion[:2]))
+        busy = float(np.mean(motion))
+        visual = 0.5 * min(1.0, first / 0.08) + 0.5 * min(1.0, busy / 0.06)
+        add("Visual pace", visual, 5, ("Moving from the first frame" if first >= 0.08 else "The first second is fairly still") +
+            f"; the picture changes {'a lot' if busy >= 0.06 else 'a little'}.",
+            "Open on movement: start where something is already happening on screen.")
+    else:
+        add("Visual pace", 0.5, 5, "Couldn't read the picture, so this part is neutral.")
+
+    add("Captions and title", (0.6 if has_captions else 0) + (0.4 if has_title else 0), 5,
         ("Captions on" if has_captions else "No captions") + (", title on." if has_title else ", no title."),
         "Turn captions on: most people scroll with the sound off.")
 

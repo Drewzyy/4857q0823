@@ -485,14 +485,16 @@ class Pipeline:
                 if stop_requested():
                     return {"status": "stopped"}
                 self._lf(lid, "processing", f"Listening to candidate {n} of {len(cands)}")
-                piece = work / f"cand{n}.wav"
-                run(["-ss", f"{m.start:.3f}", "-i", str(audio), "-t", f"{m.end - m.start:.3f}", "-vn", "-ac", "1", "-ar", "16000", str(piece)])
+                piece, offset = work / f"cand{n}.wav", max(0.0, m.start - 6)  # a little extra, to find where sentences start and end
+                run(["-ss", f"{offset:.3f}", "-i", str(audio), "-t", f"{m.end + 6 - offset:.3f}", "-vn", "-ac", "1", "-ar", "16000", str(piece)])
                 try:
                     words = [(w.start, w.end, w.text) for w in self.ctx.transcriber.words(piece, hints)]
                 except Exception:
                     log.exception("couldn't transcribe a candidate; judged on sound alone")
                     words = []
-                moments.speech_bonus(m, words)
+                moments.snap(m, words, offset)
+                moments.speech_bonus(m, [(a + offset - m.start, b + offset - m.start, t) for a, b, t in words
+                                         if m.start <= a + offset < m.end])
             chosen = moments.pick(cands, wanted)
             self._lf(lid, "processing", f"Found {len(chosen)} moments. Making the clips",
                      moments=[m.to_dict() for m in chosen])
@@ -699,7 +701,8 @@ class Pipeline:
         length = (facts["dur"] - sum(b - a for a, b in facts["rel"])) / facts["speed"]
         if abs(facts["speed"] - 1) > 1e-3:  # speed changes the clip's timing, not its loudness
             db = db[np.round(np.arange(0, len(db), facts["speed"])).astype(int).clip(0, len(db) - 1)] if len(db) else db
-        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"],
+        mo = grade.motion(facts["source"], facts["start"], facts["dur"])
+        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"], motion=mo,
                              views=facts["views"], likes=facts["likes"], shares=facts["shares"], posted_at=facts["posted_at"],
                              stream_clip=facts["stream_clip"]).to_dict()
         with self.ctx.db.session() as s:

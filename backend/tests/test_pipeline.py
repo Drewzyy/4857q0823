@@ -800,7 +800,7 @@ def test_clips_are_graded_and_regraded_after_edits(env):
     drain(ctx)
     clip = c.get("/api/clips").json()[0]
     g = clip["grade"]
-    assert g["tier"] in "SABCD" and 0 <= g["score"] <= 100 and len(g["parts"]) == 7
+    assert g["tier"] in "SABCD" and 0 <= g["score"] <= 100 and len(g["parts"]) == 8
     e = c.get(f"/api/clips/{clip['id']}/editor").json()
     assert e["grade"] == g
     c.put(f"/api/clips/{clip['id']}/edit", json={**e["edit"], "end": e["edit"]["start"] + 3})  # a 3 s clip

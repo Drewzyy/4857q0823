@@ -18,7 +18,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 STEP = 0.1  # seconds per loudness value
-MIN_LEN, MAX_LEN = 15.0, 60.0
+# Clipping tools that study gaming clips find under ~20 s lacks the setup for the payoff to land and over ~45 s
+# loses viewers before the reaction; 60 s is the hard cap, used only when the payoff runs long.
+MIN_LEN, TARGET_LEN, MAX_LEN = 20.0, 45.0, 60.0
 
 HYPE = re.compile(r"\b(no way|oh my (god|gosh)|let'?s go+|what the|what\?|bro+|yo+|holy|are you serious|crazy|insane|"
                   r"wtf|oh no|dude|hell no|shut up|i can'?t|look at|did you see|ha(ha)+|lmao|lol|omg|wait|run|stop)\b", re.I)
@@ -101,6 +103,8 @@ def candidates(db: np.ndarray, heat: np.ndarray | None = None, limit: int = 20) 
                 best_start, best_hook = s, hook
         start = best_start
         end = max(end, start + MIN_LEN)
+        if end - start > TARGET_LEN:  # trim the setup first, keeping the payoff whole
+            start = max(start, min(peak - 5, end - TARGET_LEN))
         end = min(end, start + MAX_LEN, len(db) * STEP)
         a, b = int(start / STEP), int(end / STEP)
         if taken[a:b].any():
@@ -136,6 +140,29 @@ def candidates(db: np.ndarray, heat: np.ndarray | None = None, limit: int = 20) 
                 why.insert(0, "one of the most replayed parts of the video")
         out.append(Moment(start, end, peak, 100 * score / score_max, why))
     return sorted(out, key=lambda m: -m.score)[:limit]
+
+
+def snap(m: Moment, words: list[tuple[float, float, str]], offset: float) -> None:
+    """Start and end on whole sentences, so the clip opens on a complete thought and doesn't cut a word off.
+    words: (start, end, text) in seconds from `offset` in the video, covering a little more than the moment."""
+    if not words:
+        return
+    abs_words = [(offset + a, offset + b, t) for a, b, t in words]
+    # A new thought starts after a pause or a sentence end. Pick the one nearest the planned start, but not
+    # after the peak's setup (at most 3 s later) and not more than 6 s earlier.
+    starts = [a for i, (a, _, _) in enumerate(abs_words)
+              if i == 0 or a - abs_words[i - 1][1] > 0.35 or abs_words[i - 1][2].rstrip().endswith((".", "!", "?"))]
+    ok = [a for a in starts if m.start - 6 <= a <= min(m.start + 3, m.peak - 5)]
+    if ok:
+        m.start = max(0.0, min(ok, key=lambda a: abs(a - m.start)) - 0.15)
+    # End after the sentence being said when it would end, unless that runs past the hard cap.
+    ends = [b for i, (_, b, t) in enumerate(abs_words)
+            if t.rstrip().endswith((".", "!", "?")) or i == len(abs_words) - 1 or abs_words[i + 1][0] - b > 0.35]
+    ok = [b for b in ends if m.end - 2 <= b <= m.start + MAX_LEN]
+    if ok:
+        m.end = min(ok, key=lambda b: abs(b - m.end)) + 0.3
+    if m.end - m.start < MIN_LEN * 0.75:
+        m.end = m.start + MIN_LEN * 0.75
 
 
 def speech_bonus(m: Moment, words: list[tuple[float, float, str]]) -> None:
