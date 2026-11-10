@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from .fetch import MONITORABLE
-from .models import Connection, Creator, DestinationAccount, Folder, Job, SourceAccount
+from .models import Creator, DestinationAccount, Folder, Job, SourceAccount
 
 
 def _dt(v):
@@ -22,17 +22,6 @@ def folder(f: Folder | None) -> dict[str, Any] | None:
     return {"id": f.id, "name": f.name} if f else None
 
 
-def connection(c: Connection | None) -> dict[str, Any] | None:
-    if not c:
-        return None
-    return {
-        "id": c.id, "platform": c.platform, "display_name": c.display_name, "avatar_url": c.avatar_url,
-        "status": c.status, "last_error": c.last_error, "scopes": c.scopes,
-        "access_expires_at": _dt(c.access_expires_at), "refresh_expires_at": _dt(c.refresh_expires_at),
-        "last_checked_at": _dt(c.last_checked_at), "created_at": _dt(c.created_at),
-    }
-
-
 def source(s: SourceAccount, route_count: int = 0, creators_by_id: dict | None = None) -> dict[str, Any]:
     from .routing import source_creator_ids
 
@@ -44,7 +33,6 @@ def source(s: SourceAccount, route_count: int = 0, creators_by_id: dict | None =
         "id": s.id, "platform": s.platform, "username": s.username, "display_name": s.display_name,
         "profile_url": s.profile_url, "avatar_url": s.avatar_url, "monitoring": s.monitoring, "notes": s.notes,
         "creator": creator(s.creator), "folder": folder(s.folder),
-        "authorized": s.connection is not None, "connection_status": s.connection.status if s.connection else None,
         "last_synced_at": _dt(s.last_synced_at), "next_check_at": _dt(s.next_check_at), "last_error": s.last_error,
         "watching_supported": s.platform in MONITORABLE, "baseline_done": s.baseline_done,
         "created_at": _dt(s.created_at), "route_count": route_count,
@@ -54,29 +42,18 @@ def source(s: SourceAccount, route_count: int = 0, creators_by_id: dict | None =
 
 
 def normalized_settings(raw: dict | None) -> dict:
-    """Older saved settings get any newly added options filled with defaults."""
-    from pydantic import ValidationError
+    """Saved settings from any version: new options get defaults, ones no longer used are dropped."""
+    from .schemas import DestinationSettings, lenient
 
-    from .schemas import DestinationSettings
-
-    try:
-        return DestinationSettings.model_validate(raw or {}).model_dump()
-    except ValidationError:
-        return raw or {}
+    return lenient(DestinationSettings, raw).model_dump()
 
 
 def destination(d: DestinationAccount, route_count: int = 0) -> dict[str, Any]:
-    if d.external_id.startswith(("draft:", "manual:")):
-        status = "manual"
-    elif not d.connection:
-        status = "disconnected"
-    else:
-        status = d.connection.status
     return {
         "id": d.id, "platform": d.platform, "external_id": None if d.external_id.startswith(("draft:", "manual:")) else d.external_id,
         "handle": d.handle, "display_name": d.display_name, "avatar_url": d.avatar_url,
         "creator": creator(d.creator), "settings": normalized_settings(d.settings), "enabled": d.enabled,
-        "status": status, "connection_id": d.connection_id, "last_error": d.connection.last_error if d.connection else None,
+        "status": "manual",  # you upload each clip yourself
         "route_count": route_count, "created_at": _dt(d.created_at),
     }
 

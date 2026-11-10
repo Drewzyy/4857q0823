@@ -3,11 +3,9 @@ from __future__ import annotations
 
 import hmac
 import html
-import json
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -15,18 +13,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api import accounts, analytics, clips, connections as connections_api, funnel, inbox, system, updates
+from .api import accounts, analytics, clips, funnel, inbox, system, updates
 from .api.system import load_settings
-from .fetch import YtDlpFetcher
-from .media.transcribe import WhisperTranscriber
+from .fetch import Fetcher, YtDlpFetcher
+from .media.transcribe import Transcriber, WhisperTranscriber
 from .api.deps import ApiError
 from .config import Config
-from .connections import CALLBACK_PAGE, ConnectionService
 from .db import Database
 from .jobs import JobQueue
 from .logging_setup import setup_logging
-from .platforms import CONNECTORS
-from .platforms.base import PlatformError
 from .secrets_store import SecretStore, make_store
 
 log = logging.getLogger("clippr.app")
@@ -41,36 +36,19 @@ class AppContext:
     db: Database
     secrets: SecretStore
     jobs: JobQueue
-    bundled_apps: dict[str, Any] = field(default_factory=dict)
-    connections: ConnectionService = None  # type: ignore[assignment]
-    fetcher: Any = None
-    transcriber: Any = None
+    fetcher: Fetcher = None  # type: ignore[assignment]
+    transcriber: Transcriber = None  # type: ignore[assignment]
     pipeline: Any = None
     inbox: Any = None
 
 
-def _load_bundled_apps(config: Config) -> dict[str, Any]:
-    """Optional platform_apps.json shipped with a build, so end users never see developer consoles."""
-    for p in (config.data_dir / "platform_apps.json", Path(__file__).parent / "platform_apps.json"):
-        if p.exists():
-            try:
-                data = json.loads(p.read_text())
-                return {k: v for k, v in data.items() if k in CONNECTORS and isinstance(v, dict)}
-            except ValueError:
-                log.warning("ignoring malformed %s", p.name)
-    return {}
-
-
-def build_context(config: Config, secrets: SecretStore | None = None, http_factory=None, fetcher=None, transcriber=None) -> AppContext:
+def build_context(config: Config, secrets: SecretStore | None = None, fetcher=None, transcriber=None) -> AppContext:
     config.ensure_dirs()
     setup_logging(config.data_dir / "logs")
     database = Database(f"sqlite:///{config.db_path}")
     database.migrate()
     ctx = AppContext(config=config, db=database, secrets=secrets or make_store(config.secret_backend, config.data_dir),
-                     jobs=JobQueue(database), bundled_apps=_load_bundled_apps(config))
-    ctx.connections = ConnectionService(ctx, http_factory)
-    ctx.jobs.register("connections.refresh_due", lambda jc, p: ctx.connections.refresh_due())
-    ctx.jobs.every("connections.refresh_due", 600)
+                     jobs=JobQueue(database))
     ctx.fetcher = fetcher or YtDlpFetcher()
     def caption_settings() -> tuple[str, str]:
         with database.session() as s:
@@ -153,27 +131,8 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         log.exception("unhandled error")
         return JSONResponse({"error": {"code": "internal", "message": "Something went wrong. Details are in the app log."}}, status_code=500)
 
-    for r in (accounts.router, funnel.router, system.router, connections_api.router, clips.router, updates.router, analytics.router, inbox.router):
+    for r in (accounts.router, funnel.router, system.router, clips.router, updates.router, analytics.router, inbox.router):
         app.include_router(r, prefix="/api")
-
-    def oauth_callback(platform: str, request: Request):
-        if platform not in CONNECTORS:
-            raise ApiError(404, "not_found", "Unknown platform")
-        params = {k: v for k, v in request.query_params.items()}
-        try:
-            attempt = ctx.connections.complete(platform, params)
-            ok, msg = attempt.status == "succeeded", attempt.message
-        except PlatformError as e:
-            ok, msg = False, str(e)
-        page = CALLBACK_PAGE.format(
-            color="#16a34a33" if ok else "#dc262633", icon="✓" if ok else "!",
-            title="Connected" if ok else "Couldn't connect",
-            message=html.escape(msg + (" You can close this tab and go back to Vyral." if ok else "")),
-        )
-        return HTMLResponse(page, headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"})
-
-    app.add_api_route("/oauth/callback/{platform}", oauth_callback, methods=["GET"], include_in_schema=False)
-    app.add_api_route("/oauth/callback/{platform}/", oauth_callback, methods=["GET"], include_in_schema=False)
 
     dist = cfg.frontend_dist
     if dist and (dist / "index.html").exists():
@@ -187,7 +146,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
 
         @app.get("/{full_path:path}", include_in_schema=False)
         def spa(full_path: str):
-            if full_path.startswith(("api/", "oauth/")):
+            if full_path.startswith("api/"):
                 raise ApiError(404, "not_found", "Not found")
             candidate = (dist / full_path).resolve()
             if full_path and candidate.is_file() and dist.resolve() in candidate.parents:

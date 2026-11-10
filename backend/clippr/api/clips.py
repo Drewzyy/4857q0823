@@ -22,8 +22,8 @@ from ..audit import audit
 from ..fetch import VIDEO_LINK, FetchError
 from ..media.ffmpeg import probe
 from ..media.overlay import Word, apply_text_edit
-from ..models import Clip, ClipOutput, Creator, ReferenceVideo, Setting, SourceAccount
-from ..schemas import ClipEdit, OverlaySettings
+from ..models import Clip, ClipOutput, Creator, Job, ReferenceVideo, Setting, SourceAccount
+from ..schemas import ClipEdit, OverlaySettings, deep_merge, lenient
 from .deps import ApiError, ctx, db, get_or_404
 from .system import load_settings
 
@@ -40,7 +40,7 @@ def _output(o: ClipOutput) -> dict:
             "destination": {"id": d.id, "display_name": d.display_name, "handle": d.handle} if d else None,
             "width": o.width, "height": o.height, "fps": o.fps, "size_bytes": o.size_bytes,
             "available": bool(o.file_path and Path(o.file_path).exists()), "uploaded_at": _dt(o.uploaded_at),
-            "video_title": o.video_title, "overlay": OverlaySettings.model_validate(o.overlay or {}).model_dump(),
+            "video_title": o.video_title, "overlay": lenient(OverlaySettings, o.overlay).model_dump(),
             "render_state": o.render_state, "render_error": o.render_error, "post_url": o.post_url,
             # Changes whenever the file is re-rendered, so the preview reloads.
             "version": Path(o.file_path).name if o.file_path else None}
@@ -177,7 +177,7 @@ def edit_video_text(oid: int, body: VideoTextIn, c=Depends(ctx), s: Session = De
     targets = [o]
     if body.overlay is not None:
         try:
-            ov = OverlaySettings.model_validate(_merge(OverlaySettings.model_validate(o.overlay or {}).model_dump(), body.overlay)).model_dump()
+            ov = OverlaySettings.model_validate(deep_merge(lenient(OverlaySettings, o.overlay).model_dump(), body.overlay)).model_dump()
         except ValidationError as e:
             first = e.errors()[0]
             raise ApiError(422, "validation", f"{'.'.join(str(x) for x in first['loc'])}: {first['msg']}")
@@ -245,13 +245,6 @@ def edit_captions(cid: int, body: CaptionsIn, c=Depends(ctx), s: Session = Depen
     return {"captions_text": " ".join(w["text"] for w in clip.words), "rendering": len(outs)}
 
 
-def _merge(base: dict, patch: dict) -> dict:
-    out = dict(base)
-    for k, v in patch.items():
-        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
-    return out
-
-
 @router.delete("/clips/{cid}", status_code=204)
 def delete_clip(cid: int, s: Session = Depends(db)):
     clip = get_or_404(s, Clip, cid, "Clip")
@@ -312,6 +305,18 @@ def intake(body: IntakeIn, c=Depends(ctx), s: Session = Depends(db)):
 
 class RetryIn(BaseModel):
     vod_url: str | None = Field(None, max_length=500)
+
+
+@router.post("/references/{rid}/stop")
+def stop_reference(rid: int, c=Depends(ctx), s: Session = Depends(db)):
+    """Stop working on a post (e.g. a long search). Retry starts it again."""
+    r = get_or_404(s, ReferenceVideo, rid, "Post")
+    for job in s.scalars(select(Job).where(Job.kind == "clip.build", Job.status.in_(("queued", "running")))):
+        if job.payload.get("reference_id") == rid:
+            job.status, job.finished_at = "cancelled", datetime.now(timezone.utc)
+    if r.status in ("new", "processing"):
+        r.status, r.status_detail = "failed", "Stopped. Press Retry to try again."
+    return _reference(r)
 
 
 @router.post("/references/{rid}/retry")

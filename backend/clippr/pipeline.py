@@ -11,7 +11,7 @@ import random
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 from sqlalchemy import delete, func, or_, select
@@ -28,7 +28,7 @@ from .media.render import OutputFormat, render
 from .media.transcribe import TranscribeError
 from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import resolve_destinations, source_creator_ids
-from .schemas import OverlaySettings
+from .schemas import OverlaySettings, lenient
 
 log = logging.getLogger("clippr.pipeline")
 POSTS_PER_CHECK = 12
@@ -236,7 +236,8 @@ class Pipeline:
 
         return [(v, cid, cname) for _, _, v, cid, cname in sorted(entries, key=likelihood)]
 
-    def build_clip(self, rid: int, vod_override: str | None = None, waits: int = 0) -> dict:
+    def build_clip(self, rid: int, vod_override: str | None = None, waits: int = 0,
+                   stop_requested: Callable[[], bool] = lambda: False) -> dict:
         with self.ctx.db.session() as s:
             ref = s.get(ReferenceVideo, rid)
             if not ref:
@@ -282,6 +283,8 @@ class Pipeline:
             found, searched, live = None, 0, []
             self._set(rid, "processing", "Finding the most likely streams")
             for v, cid, cname in self._search_order(candidates, f"{ref_title or ''} {account or ''}", posted_at, cfg.monitoring.streams_to_search):
+                if stop_requested():  # the user pressed Stop; the job is already marked cancelled
+                    return {"status": "stopped"}
                 if v.is_live:
                     live.append(cname)  # downloading a stream that's still going would never finish
                     continue
@@ -349,7 +352,7 @@ class Pipeline:
             planned = []
             for did, platform, name, handle, st in dest_info:
                 fmt_raw = dict(st.get("format") or {})
-                ov = OverlaySettings.model_validate(st.get("overlay") or {}).model_dump()
+                ov = lenient(OverlaySettings, st.get("overlay")).model_dump()
                 key = json.dumps([fmt_raw, ov], sort_keys=True)
                 if key not in renders:
                     renders[key] = self._render(source, clip_dir / f"render-{len(renders)}.mp4", fmt_raw, start, dur, ov, clean, words, work / f"ov{len(renders)}")
@@ -453,7 +456,7 @@ class Pipeline:
                        [Word.from_dict(w) for w in clip.words or []], clip.source_start or 0.0, clip.source_duration or 0.0, o.file_path,
                        dict(clip.edit) if clip.edit else None, self._render_inputs(o, clip))
             source, cdir, fmt_raw, ov, vtitle, words, start, dur, old, edit, inputs = job
-            ov = OverlaySettings.model_validate(ov or {}).model_dump()
+            ov = lenient(OverlaySettings, ov).model_dump()
             out = cdir / f"output-{oid}-{int(now().timestamp() * 1000)}.mp4"
             work = self._dir("tmp") / f"rerender-{oid}-{random.randrange(1 << 30)}"
             try:
@@ -549,7 +552,7 @@ def register(ctx: Any) -> Pipeline:
     q = ctx.jobs
     q.register("monitor.tick", lambda jc, pl: p.tick())
     q.register("source.check", lambda jc, pl: p.check_source(pl["source_id"]))
-    q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url"), pl.get("waits", 0)))
+    q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url"), pl.get("waits", 0), jc.cancelled))
     q.register("intake.link", lambda jc, pl: p.intake_link(pl["url"], pl.get("creator_id")))
     q.register("notify.discord", lambda jc, pl: p.send_discord(pl))
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())

@@ -121,8 +121,6 @@ class MatchResult:
     start: float  # seconds in the stream
     end: float
     confidence: float  # 0..1
-    segments_matched: int
-    segments_total: int
 
 
 def find_in_stream(ref: np.ndarray, hay: np.ndarray, *, seg_seconds: float = 6.0, min_score: float = 0.45,
@@ -153,7 +151,7 @@ def find_in_stream(ref: np.ndarray, hay: np.ndarray, *, seg_seconds: float = 6.0
     begin -= first_s / FPS
     end += (len(ref) - (last_s + seg)) / FPS
     conf = float(np.mean([sc for _, _, sc in near])) * len(near) / len(starts)
-    return MatchResult(max(0.0, begin - pad), min(len(hay) / FPS, end + pad), round(min(1.0, conf), 3), len(near), len(starts))
+    return MatchResult(max(0.0, begin - pad), min(len(hay) / FPS, end + pad), round(min(1.0, conf), 3))
 
 
 def save_features(feats: np.ndarray, path: Path) -> None:

@@ -1,7 +1,6 @@
 // Typed client for the local backend. Every request carries the per-launch app token.
 
 export type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "twitch";
-export type ConnectorKey = "youtube" | "tiktok" | "meta";
 
 export interface Creator { id: number; name: string; color: string; notes: string; vod_channels: string[]; clip_permission: boolean; sources?: number; destinations?: number }
 export interface Folder { id: number; name: string; sources?: number }
@@ -9,50 +8,31 @@ export interface Folder { id: number; name: string; sources?: number }
 export interface Source {
   id: number; platform: Platform; username: string; display_name: string; profile_url: string; avatar_url: string | null;
   monitoring: "active" | "paused"; notes: string; creator: Creator | null; creators: Creator[]; folder: Folder | null;
-  authorized: boolean; connection_status: string | null; last_synced_at: string | null; next_check_at: string | null;
+  last_synced_at: string | null; next_check_at: string | null;
   last_error: string | null; watching_supported: boolean; baseline_done: boolean; created_at: string;
   route_count: number; videos_discovered: number | null; videos_analyzed: number | null;
 }
 
-export interface PublishSlot { weekday: number; time: string }
 export type FontKey = "montserrat" | "anton" | "bebas" | "poppins";
 export interface TextStyle { enabled: boolean; font: FontKey; size: number; color: string; outline_color: string; outline: number; all_caps: boolean; y_percent: number }
 export interface Overlay { title: TextStyle & { duration: number }; captions: TextStyle & { words_per_caption: number } }
 export interface DestinationSettings {
   overlay: Overlay;
-  default_caption: string; hashtags: string[]; categories: string[]; approval_required: boolean;
-  visibility: "public" | "private" | "unlisted" | "friends"; schedule: PublishSlot[];
+  default_caption: string; hashtags: string[];
   format: { aspect: "9:16" | "16:9" | "1:1"; resolution: string; fps: number; codec: "h264" | "h265"; bitrate_mbps: number };
-  branding: { watermark_text: string; watermark_position: string };
-  caption_preset: string; title_style: string;
 }
 export interface Destination {
   id: number; platform: Platform; external_id: string | null; handle: string; display_name: string; avatar_url: string | null;
   creator: Creator | null; settings: DestinationSettings; enabled: boolean;
-  status: "manual" | "draft" | "disconnected" | "connected" | "expiring" | "expired" | "error" | "revoked";
-  connection_id: number | null; last_error: string | null; route_count: number; created_at: string;
+  status: "manual"; route_count: number; created_at: string;
 }
 export interface Route { id: number; source_id: number; destination_id: number; enabled: boolean; allow_cross_creator: boolean; blocked: boolean }
 export interface Funnel { sources: Source[]; destinations: Destination[]; routes: Route[]; layout: Record<string, { x: number; y: number }> }
 
-export interface SetupStep { title: string; detail: string; url: string | null; copy_value: string | null }
-export interface PlatformStatus {
-  key: ConnectorKey; label: string; configured: boolean; source: "user" | "bundled"; validated_at: string | null;
-  client_id_hint: string | null; custom_redirect: boolean; destination_platforms: Platform[]; supports_source: boolean; redirect_uri: string;
-  credential_fields: { name: string; label: string; secret: boolean; placeholder: string }[];
-  setup_steps: SetupStep[]; notes: string[]; connections: number;
-}
-export interface Connection {
-  id: number; platform: ConnectorKey; display_name: string; avatar_url: string | null; status: string; last_error: string | null;
-  scopes: string[]; access_expires_at: string | null; refresh_expires_at: string | null; last_checked_at: string | null; created_at: string;
-}
-export interface Attempt { id: string; platform: ConnectorKey; purpose: string; status: "pending" | "processing" | "succeeded" | "failed"; message: string; accounts_added: number }
 export interface Job { id: number; kind: string; status: string; attempts: number; max_attempts: number; error: string | null; created_at: string; finished_at: string | null }
 
 export interface Dashboard {
-  accounts: { sources_total: number; sources_monitoring: number; sources_authorized: number; destinations_total: number; destinations_connected: number; creators: number; routes: number };
-  connections: Connection[];
-  platforms: { key: ConnectorKey; label: string; configured: boolean }[];
+  accounts: { sources_total: number; sources_monitoring: number; destinations_total: number; creators: number; routes: number };
   pipeline: { posts_detected: number; in_progress: number; needs_attention: number; ready_to_upload: number; uploaded: number; clips_made: number };
   monitoring: { enabled: boolean; interval_minutes: number; watching: number; last_check: string | null; errors: number; retention_days: number };
   jobs: { by_status: Record<string, number>; recent: Job[] };
@@ -63,11 +43,8 @@ export interface Dashboard {
 export interface AppSettings {
   captions: { accuracy: "fast" | "accurate" | "best"; language: string };
   monitoring: { enabled: boolean; interval_minutes: number; streams_to_search: number; max_clip_seconds: number; twitch_min_views: number; twitch_clips_per_check: number };
-  storage: { retention_days: number; max_cache_gb: number; keep_original_imports: boolean };
-  ai: { prefer_local_models: boolean; monthly_budget_usd: number; hard_stop_at_budget: boolean; warn_at_percent: number; transcription: string; text_model_tier: string };
-  processing: { max_concurrent_jobs: number; quality: string };
-  publishing: { require_approval: boolean; allow_auto_publish_rules: boolean };
-  privacy: { allow_cloud_upload_of_footage: boolean };
+  storage: { retention_days: number };
+  processing: { max_concurrent_jobs: number };
   intake: { clipboard: boolean };
 }
 export interface RefPost {
@@ -153,13 +130,11 @@ export const api = {
   health: () => request<Health>("GET", "/health"),
   dashboard: () => request<Dashboard>("GET", "/dashboard"),
   creators: () => request<Creator[]>("GET", "/creators"),
-  createCreator: (b: { name: string; color?: string }) => request<Creator>("POST", "/creators", b),
   createCreatorFull: (b: { name: string; color?: string; vod_channels: string[]; clip_permission: boolean }) => request<Creator>("POST", "/creators", b),
   updateCreator: (id: number, b: Partial<Creator>) => request<Creator>("PATCH", `/creators/${id}`, b),
   deleteCreator: (id: number) => request<void>("DELETE", `/creators/${id}`),
   folders: () => request<Folder[]>("GET", "/folders"),
   createFolder: (name: string) => request<Folder>("POST", "/folders", { name }),
-  renameFolder: (id: number, name: string) => request<Folder>("PATCH", `/folders/${id}`, { name }),
   deleteFolder: (id: number) => request<void>("DELETE", `/folders/${id}`),
   sources: (f: { q?: string; creator_id?: number | null; folder_id?: number | null; monitoring?: string; platform?: string } = {}) =>
     request<Source[]>("GET", "/sources" + qs(f)),
@@ -184,21 +159,8 @@ export const api = {
   autoRoute: (creator_id?: number | null) => request<{ created: number }>("POST", "/funnel/auto-route", { creator_id: creator_id ?? null }),
   saveLayout: (positions: Record<string, { x: number; y: number }>) => request<{ saved: number }>("PUT", "/funnel/layout", { positions }),
   resolve: (sourceId: number) => request<(Destination & { route_id: number })[]>("GET", `/funnel/resolve/${sourceId}`),
-  platforms: () => request<PlatformStatus[]>("GET", "/platforms"),
-  setApp: (key: ConnectorKey, b: { client_id: string; client_secret: string; redirect_uri?: string | null }) => request<PlatformStatus>("PUT", `/platforms/${key}/app`, b),
-  uploadGoogleClient: (file: File) => { const fd = new FormData(); fd.append("file", file); return request<PlatformStatus>("POST", "/platforms/youtube/client-file", fd); },
-  removeApp: (key: ConnectorKey) => request<void>("DELETE", `/platforms/${key}/app`),
-  startConnect: (b: { platform: ConnectorKey; purpose?: "destination" | "source"; link_destination_id?: number | null }) =>
-    request<{ attempt: Attempt; authorize_url: string; opened_by_app: boolean }>("POST", "/connections/start", b),
-  attempt: (id: string) => request<Attempt>("GET", `/connections/attempts/${encodeURIComponent(id)}`),
-  connections: () => request<Connection[]>("GET", "/connections"),
-  refreshConnection: (id: number) => request<{ status: string }>("POST", `/connections/${id}/refresh`),
-  disconnect: (id: number) => request<void>("DELETE", `/connections/${id}`),
   settings: () => request<AppSettings>("GET", "/settings"),
   saveSettings: (b: Partial<{ [K in keyof AppSettings]: Partial<AppSettings[K]> }>) => request<AppSettings>("PUT", "/settings", b),
-  jobs: () => request<Job[]>("GET", "/jobs"),
-  cancelJob: (id: number) => request("POST", `/jobs/${id}/cancel`),
-  retryJob: (id: number) => request("POST", `/jobs/${id}/retry`),
   audit: () => request<AuditEntry[]>("GET", "/audit"),
   clips: (status: "ready" | "uploaded" | "expired" | "all") => request<ClipT[]>("GET", `/clips?status=${status}`),
   updateOutput: (id: number, b: Partial<{ title: string; description: string; status: "ready" | "uploaded" }>) => request<ClipOutputT>("PATCH", `/outputs/${id}`, b),
@@ -214,6 +176,7 @@ export const api = {
   references: () => request<RefPost[]>("GET", "/references"),
   intake: (urls: string[]) => request<{ queued: number; ignored: number }>("POST", "/intake", { urls }),
   addReference: (b: { url: string; creator_id?: number | null; source_id?: number | null }) => request<{ id: number }>("POST", "/references", b),
+  stopReference: (id: number) => request<RefPost>("POST", `/references/${id}/stop`),
   retryReference: (id: number, vod_url?: string) => request<RefPost>("POST", `/references/${id}/retry`, { vod_url: vod_url || null }),
   analytics: (f: { days: number; platform?: string; creator_id?: number | null }) => request<Analytics>("GET", "/analytics" + qs(f)),
   setPostLink: (id: number, post_url: string) => request<{ post_url: string; auto: boolean }>("PUT", `/outputs/${id}/post`, { post_url }),
@@ -236,6 +199,5 @@ export const api = {
 export interface ImportResult { added: number; skipped_duplicates: number; errors: { line: number; input: string; message: string }[] }
 
 export const PLATFORM_LABEL: Record<string, string> = {
-  tiktok: "TikTok", youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", twitch: "Twitch", kick: "Kick", meta: "Facebook & Instagram",
+  tiktok: "TikTok", youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", twitch: "Twitch", kick: "Kick",
 };
-export const CONNECTOR_FOR: Record<string, ConnectorKey> = { tiktok: "tiktok", youtube: "youtube", instagram: "meta", facebook: "meta" };

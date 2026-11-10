@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session
 from .. import __version__
 from .. import serialize as ser
 from ..audit import audit
-from ..models import AuditLog, Clip, ClipOutput, Connection, Creator, DestinationAccount, FunnelRoute, Job, ReferenceVideo, Setting, SourceAccount
-from ..schemas import AppSettings
+from ..models import AuditLog, Clip, ClipOutput, Creator, DestinationAccount, FunnelRoute, Job, ReferenceVideo, Setting, SourceAccount
+from ..fetch import MONITORABLE
+from ..schemas import AppSettings, lenient
 from .deps import ApiError, ctx, db
 
 router = APIRouter()
@@ -59,19 +60,14 @@ def dashboard(c=Depends(ctx), s: Session = Depends(db)):
     from datetime import datetime, timedelta, timezone
 
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-    real_dests = select(func.count()).select_from(DestinationAccount).where(~DestinationAccount.external_id.like("draft:%"))
     return {
         "accounts": {
             "sources_total": count(select(func.count()).select_from(SourceAccount)),
             "sources_monitoring": count(select(func.count()).select_from(SourceAccount).where(SourceAccount.monitoring == "active")),
-            "sources_authorized": count(select(func.count()).select_from(SourceAccount).where(SourceAccount.connection_id.is_not(None))),
             "destinations_total": count(select(func.count()).select_from(DestinationAccount)),
-            "destinations_connected": count(real_dests.where(DestinationAccount.connection_id.is_not(None))),
             "creators": count(select(func.count()).select_from(Creator)),
             "routes": count(select(func.count()).select_from(FunnelRoute).where(FunnelRoute.enabled.is_(True))),
         },
-        "connections": [ser.connection(x) for x in s.scalars(select(Connection).order_by(Connection.platform))],
-        "platforms": [{"key": p["key"], "label": p["label"], "configured": p["configured"]} for p in c.connections.platform_status()],
         "pipeline": {
             "posts_detected": count(select(func.count()).select_from(ReferenceVideo).where(ReferenceVideo.status != "baseline")),
             "in_progress": count(select(func.count()).select_from(ReferenceVideo).where(ReferenceVideo.status.in_(("new", "processing")))),
@@ -85,7 +81,7 @@ def dashboard(c=Depends(ctx), s: Session = Depends(db)):
             "enabled": load_settings(s).monitoring.enabled,
             "interval_minutes": load_settings(s).monitoring.interval_minutes,
             "watching": count(select(func.count()).select_from(SourceAccount).where(
-                SourceAccount.monitoring == "active", SourceAccount.platform.in_(("tiktok", "youtube")))),
+                SourceAccount.monitoring == "active", SourceAccount.platform.in_(MONITORABLE))),
             "last_check": max((x for x in s.scalars(select(SourceAccount.last_synced_at)) if x), default=None),
             "errors": count(select(func.count()).select_from(SourceAccount).where(SourceAccount.last_error.is_not(None))),
             "retention_days": load_settings(s).storage.retention_days,
@@ -100,10 +96,7 @@ def dashboard(c=Depends(ctx), s: Session = Depends(db)):
 
 def load_settings(s: Session) -> AppSettings:
     row = s.get(Setting, SETTINGS_KEY)
-    try:
-        return AppSettings.model_validate(row.value) if row else AppSettings()
-    except ValidationError:
-        return AppSettings()
+    return lenient(AppSettings, row.value if row else None)
 
 
 @router.get("/settings")

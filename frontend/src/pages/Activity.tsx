@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity as ActivityIcon, ExternalLink, Link2, RotateCw, Wand2 } from "lucide-react";
+import { Activity as ActivityIcon, ExternalLink, Link2, RotateCw, Square, Wand2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, type RefPost } from "../lib/api";
 import { Empty, ErrorNote, Loading, Modal, PlatformBadge, relTime, useToast } from "../components/ui";
@@ -82,6 +82,8 @@ export default function ActivityPage() {
                 <span className={`pill ${cls}`}>{label}</span>
                 <a className="btn ghost icon" href={r.url} target="_blank" rel="noopener noreferrer" aria-label="Open post"><ExternalLink size={14} /></a>
                 {r.status === "ready" ? <Link className="btn sm" to="/ready">Open</Link>
+                  : r.status === "processing" || r.status === "new" ?
+                    <button className="btn sm ghost" onClick={async () => { await api.stopReference(r.id); refresh(); }}><Square size={11} />Stop</button>
                   : (r.status === "no_match" || r.status === "needs_setup" || r.status === "failed") &&
                     <button className="btn sm" onClick={() => setRetry(r)}><RotateCw size={12} />Retry</button>}
               </div>

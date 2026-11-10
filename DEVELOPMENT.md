@@ -8,14 +8,13 @@ Python 3.11+, Node 20+, FFmpeg. For the Mac app: Rust (stable), Xcode Command Li
 
 ```
 backend/clippr/        FastAPI app, models, connectors, job queue
-  api/                 HTTP routes (accounts, funnel, connections, system)
+  api/                 HTTP routes (accounts, funnel, clips, analytics, inbox, system, updates)
   platforms/           youtube.py, tiktok.py, meta.py, urls.py, base.py
   migrations/          Alembic (runs automatically at startup)
 backend/tests/         pytest
 frontend/src/          React UI (pages/, components/, lib/api.ts, styles/app.css)
 frontend/e2e/          Playwright tests
 desktop/src-tauri/     macOS shell
-relay/                 optional HTTPS OAuth relay page (Meta fallback)
 scripts/               build scripts
 ```
 

@@ -100,20 +100,20 @@ def test_funnel_rules(client):
 
 def test_settings_validation_and_persistence(client):
     s = client.get("/api/settings").json()
-    assert s["publishing"]["require_approval"] is True
-    r = client.put("/api/settings", json={"ai": {"monthly_budget_usd": 40}})
-    assert r.status_code == 200 and r.json()["ai"]["monthly_budget_usd"] == 40
-    assert r.json()["ai"]["prefer_local_models"] is True
-    assert client.put("/api/settings", json={"ai": {"monthly_budget_usd": -1}}).status_code == 422
+    assert s["intake"]["clipboard"] is True and "ai" not in s
+    r = client.put("/api/settings", json={"monitoring": {"twitch_min_views": 40}})
+    assert r.status_code == 200 and r.json()["monitoring"]["twitch_min_views"] == 40
+    assert r.json()["monitoring"]["interval_minutes"] == 10  # other options in the section are kept
+    assert client.put("/api/settings", json={"monitoring": {"twitch_min_views": -1}}).status_code == 422
     assert client.put("/api/settings", json={"bogus": {}}).status_code == 422
-    assert client.get("/api/settings").json()["ai"]["monthly_budget_usd"] == 40
+    assert client.get("/api/settings").json()["monitoring"]["twitch_min_views"] == 40
 
 
 def test_dashboard_real_counts(client):
     _setup(client)
     d = client.get("/api/dashboard").json()
     assert d["accounts"]["sources_total"] == 3 and d["accounts"]["destinations_total"] == 4
-    assert d["accounts"]["destinations_connected"] == 0
+    assert "connections" not in d and "destinations_connected" not in d["accounts"]  # account logins were removed
     assert d["pipeline"]["ready_to_upload"] == 0 and d["monitoring"]["watching"] == 3 and d["monitoring"]["retention_days"] == 30
     assert d["storage"]["used_bytes"] > 0
     assert len(client.get("/api/audit").json()) > 0

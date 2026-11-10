@@ -38,7 +38,6 @@ Status key: **Tested** (works, covered by automated tests) · **Implemented** (w
 | Persistent settings (budgets, models, privacy, processing, storage) | Tested |
 | Persistent job queue: retries, backoff, idempotency, cancel, crash recovery | Tested |
 | Keychain secret store (encrypted file fallback) | Implemented (Keychain path untested: no Mac in CI) |
-| YouTube connect (Google OAuth, PKCE, loopback) | Tested against mocked Google; **needs your authorization** to verify live |
 | TikTok connect (Login Kit Desktop, hex PKCE) as destination or owned source | Tested against mocked TikTok; **needs your authorization** |
 | Facebook + Instagram connect (one login, all Pages + linked IG) | Tested against mocked Graph API; **needs your authorization** |
 | Token refresh job, expiry warnings, disconnect with revoke | Tested |

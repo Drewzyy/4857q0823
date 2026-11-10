@@ -3,7 +3,7 @@
 - Jobs survive crashes: anything left 'running' at boot is re-queued (handlers must be idempotent).
 - Retries use exponential backoff (2^attempt * 5s, capped at 1h).
 - `idempotency_key` makes enqueueing the same logical job twice a no-op.
-- Cancellation: queued jobs are cancelled at once; running handlers poll `ctx.cancelled()`.
+- Cancellation: queued jobs are cancelled at once; long handlers check `ctx.cancelled()` and stop early.
 """
 from __future__ import annotations
 
@@ -21,10 +21,6 @@ from .models import Job
 log = logging.getLogger("clippr.jobs")
 
 
-class JobCancelled(Exception):
-    pass
-
-
 class PermanentJobError(Exception):
     """Raise from a handler to fail without retrying."""
 
@@ -36,10 +32,6 @@ class JobContext:
     def cancelled(self) -> bool:
         with self.queue.db.session() as s:
             return s.get(Job, self.job_id).status == "cancelled"
-
-    def check(self) -> None:
-        if self.cancelled():
-            raise JobCancelled()
 
 
 Handler = Callable[[JobContext, dict[str, Any]], dict[str, Any] | None]
@@ -140,8 +132,6 @@ class JobQueue:
                 raise PermanentJobError(f"No handler registered for '{kind}'")
             result = handler(JobContext(self, job_id), payload) or {}
             self._finish(job_id, "succeeded", result=result)
-        except JobCancelled:
-            self._finish(job_id, "cancelled")
         except PermanentJobError as e:
             self._finish(job_id, "failed", error=str(e))
         except Exception as e:  # retryable

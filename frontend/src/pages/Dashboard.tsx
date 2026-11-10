@@ -6,7 +6,7 @@ import { bytes, ErrorNote, Loading, relTime, StatusPill } from "../components/ui
 
 const JOB_LABEL: Record<string, string> = {
   "clip.build": "Making a clip", "source.check": "Checking an account for new posts", "notify.discord": "Discord ping",
-  "storage.cleanup": "Deleting expired clips", "connections.refresh_due": "Housekeeping",
+  "storage.cleanup": "Deleting expired clips",
 };
 
 function Stat({ label, value, sub, to, accent }: { label: string; value: number; sub?: string; to?: string; accent?: boolean }) {

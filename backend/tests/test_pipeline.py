@@ -480,3 +480,20 @@ def test_a_stream_still_live_is_skipped_not_downloaded_forever(env):
     # The stream ends; the scheduled retry finds the moment.
     fake.live = set()
     assert ctx.pipeline.build_clip(ref["id"], None, 1)["status"] == "ready"
+
+
+def test_stop_ends_a_long_search(env):
+    """Stop works while Vyral is searching streams, not just before it starts."""
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("st1", "https://www.tiktok.com/@a.clips/video/st1", "stop me")]
+    ctx.pipeline.check_source(sid)
+    rid = c.get("/api/references").json()[0]["id"]
+    assert ctx.pipeline.build_clip(rid, stop_requested=lambda: True) == {"status": "stopped"}
+    assert not any(call[0] == "audio" and "twitch" in call[1] for call in fake.calls)  # no stream was downloaded
+    r = c.post(f"/api/references/{rid}/stop").json()
+    assert r["status"] == "failed" and "Stopped" in r["status_detail"]
+    jobs = c.get("/api/jobs").json()
+    assert all(j["status"] != "queued" for j in jobs if j["kind"] == "clip.build")

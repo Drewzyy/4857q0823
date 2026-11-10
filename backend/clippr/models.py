@@ -56,30 +56,6 @@ class Folder(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
-class Connection(Base):
-    """One authorized login with a platform. Tokens live in the keychain under `secret_key`."""
-
-    __tablename__ = "connections"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    platform: Mapped[str] = mapped_column(String(20))  # youtube | tiktok | meta
-    external_user_id: Mapped[str] = mapped_column(String(200))
-    display_name: Mapped[str] = mapped_column(String(200), default="")
-    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scopes: Mapped[list[Any]] = mapped_column(default=list)
-    status: Mapped[str] = mapped_column(String(20), default="connected")  # connected|expired|error|revoked
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    access_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    refresh_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    last_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
-    __table_args__ = (UniqueConstraint("platform", "external_user_id"),)
-
-    @property
-    def secret_key(self) -> str:
-        return f"oauth:{self.platform}:{self.external_user_id}"
-
-
 class SourceAccount(Base):
     __tablename__ = "source_accounts"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -91,7 +67,6 @@ class SourceAccount(Base):
     creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)  # first of creator_ids
     creator_ids: Mapped[list[Any]] = mapped_column(default=list)  # every streamer this account clips
     folder_id: Mapped[int | None] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
-    connection_id: Mapped[int | None] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"), nullable=True)
     monitoring: Mapped[str] = mapped_column(String(10), default="active")  # active | paused
     notes: Mapped[str] = mapped_column(Text, default="")
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
@@ -105,7 +80,6 @@ class SourceAccount(Base):
 
     creator: Mapped[Creator | None] = relationship(lazy="joined")
     folder: Mapped[Folder | None] = relationship(lazy="joined")
-    connection: Mapped[Connection | None] = relationship(lazy="joined")
 
 
 class DestinationAccount(Base):
@@ -116,7 +90,6 @@ class DestinationAccount(Base):
     handle: Mapped[str] = mapped_column(String(200), default="")
     display_name: Mapped[str] = mapped_column(String(200))
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    connection_id: Mapped[int | None] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"), nullable=True)
     creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)
     settings: Mapped[dict[str, Any]] = mapped_column(default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -124,7 +97,6 @@ class DestinationAccount(Base):
     __table_args__ = (UniqueConstraint("platform", "external_id"),)
 
     creator: Mapped[Creator | None] = relationship(lazy="joined")
-    connection: Mapped[Connection | None] = relationship(lazy="joined")
 
 
 class FunnelRoute(Base):

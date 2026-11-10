@@ -1,13 +1,46 @@
 """Validated shapes for settings blobs stored as JSON."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+M = TypeVar("M", bound=BaseModel)
 
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+def lenient(model: type[M], data: Any) -> M:
+    """Load settings saved by an older or newer Vyral. Options this version doesn't know are dropped and an
+    invalid value falls back to its default, so one bad value never resets the rest. (What the user sends is
+    still validated strictly.)"""
+    if isinstance(data, model):
+        return data
+    if not isinstance(data, dict):
+        return model()
+    values: dict[str, Any] = {}
+    for name, field in model.model_fields.items():
+        if name not in data:
+            continue
+        sub = field.annotation
+        values[name] = lenient(sub, data[name]) if isinstance(sub, type) and issubclass(sub, BaseModel) else data[name]
+    good: dict[str, Any] = {}
+    for name, value in values.items():
+        try:
+            model.model_validate({**good, name: value})
+            good[name] = value
+        except ValidationError:
+            pass
+    return model.model_validate(good)
+
+
+def deep_merge(base: dict, patch: dict) -> dict:
+    out = dict(base)
+    for k, v in patch.items():
+        out[k] = deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
 
 
 class ExportFormat(Strict):
@@ -16,16 +49,6 @@ class ExportFormat(Strict):
     fps: Literal[24, 25, 30, 50, 60] = 60  # upper limit; output keeps the stream's own frame rate up to this
     codec: Literal["h264", "h265"] = "h264"
     bitrate_mbps: float = Field(12, ge=1, le=80)
-
-
-class Branding(Strict):
-    watermark_text: str = Field("", max_length=60)
-    watermark_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "bottom-right"
-
-
-class PublishSlot(Strict):
-    weekday: int = Field(ge=0, le=6)  # 0 = Monday
-    time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 FontName = Literal["montserrat", "anton", "bebas", "poppins"]
@@ -64,15 +87,8 @@ class OverlaySettings(Strict):
 class DestinationSettings(Strict):
     default_caption: str = Field("", max_length=2200)
     hashtags: list[str] = Field(default_factory=list, max_length=30)
-    categories: list[str] = Field(default_factory=list, max_length=20)
-    approval_required: bool = True
-    visibility: Literal["public", "private", "unlisted", "friends"] = "public"
-    schedule: list[PublishSlot] = Field(default_factory=list, max_length=50)
     format: ExportFormat = Field(default_factory=ExportFormat)
-    branding: Branding = Field(default_factory=Branding)
     overlay: OverlaySettings = Field(default_factory=OverlaySettings)
-    caption_preset: str = Field("bold-orange", max_length=60)
-    title_style: Literal["curiosity", "reaction", "funny", "dramatic", "question"] = "curiosity"
 
 
 def default_destination_settings(platform: str) -> dict:
@@ -83,8 +99,6 @@ def default_destination_settings(platform: str) -> dict:
 
 class StorageSettings(Strict):
     retention_days: int = Field(30, ge=1, le=365)  # clips and cached media are deleted after this
-    max_cache_gb: float = Field(50, ge=1, le=10000)
-    keep_original_imports: bool = True
 
 
 class MonitoringSettings(Strict):
@@ -101,27 +115,8 @@ class CaptionEngineSettings(Strict):
     language: str = Field("auto", pattern=r"^(auto|[a-z]{2})$")
 
 
-class AISettings(Strict):
-    prefer_local_models: bool = True
-    monthly_budget_usd: float = Field(25, ge=0, le=100000)
-    hard_stop_at_budget: bool = True
-    warn_at_percent: int = Field(80, ge=10, le=100)
-    transcription: Literal["local-whisper", "cloud"] = "local-whisper"
-    text_model_tier: Literal["economy", "balanced", "best"] = "economy"
-
-
 class ProcessingSettings(Strict):
     max_concurrent_jobs: int = Field(2, ge=1, le=16)
-    quality: Literal["fast", "balanced", "best"] = "balanced"
-
-
-class PublishingSettings(Strict):
-    require_approval: bool = True
-    allow_auto_publish_rules: bool = False
-
-
-class PrivacySettings(Strict):
-    allow_cloud_upload_of_footage: bool = False
 
 
 class IntakeSettings(Strict):
@@ -132,10 +127,7 @@ class AppSettings(Strict):
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
     captions: CaptionEngineSettings = Field(default_factory=CaptionEngineSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
-    ai: AISettings = Field(default_factory=AISettings)
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
-    publishing: PublishingSettings = Field(default_factory=PublishingSettings)
-    privacy: PrivacySettings = Field(default_factory=PrivacySettings)
     intake: IntakeSettings = Field(default_factory=IntakeSettings)
 
 

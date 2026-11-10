@@ -159,7 +159,7 @@ function SourceRow({ s, creators, folders, selected, onSelect, onUpdate, onDelet
       <td><div className="row" style={{ minWidth: 200 }}>
         <Avatar url={s.avatar_url} platform={s.platform} />
         <div style={{ minWidth: 0 }}>
-          <div className="row" style={{ gap: 6 }}><strong className="ellipsis">@{s.username}</strong>{s.authorized && <span className="pill ok nodot" title="You authorized this account">Authorized</span>}</div>
+          <div className="row" style={{ gap: 6 }}><strong className="ellipsis">@{s.username}</strong></div>
           <div className="small faint ellipsis">{s.display_name || s.platform}</div>
           {!s.watching_supported && <div className="small faint">Vyral can't watch {s.platform} accounts yet</div>}
           {s.creators.filter((c) => !c.clip_permission || c.vod_channels.length === 0).map((c) => (

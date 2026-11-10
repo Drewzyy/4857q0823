@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Check, CheckCircle2, Copy, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, X } from "lucide-react";
 import { siFacebook, siInstagram, siKick, siTiktok, siTwitch, siYoutube } from "simple-icons";
 import { PLATFORM_LABEL, type Creator } from "../lib/api";
 
@@ -122,19 +122,6 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
       <input type="checkbox" role="switch" aria-label={label} checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       <span />
     </span>
-  );
-}
-
-export function CopyBox({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="copybox">
-      <code>{value}</code>
-      <button className="btn sm" onClick={async () => {
-        try { await navigator.clipboard.writeText(value); } catch { /* clipboard blocked; text is still selectable */ }
-        setCopied(true); setTimeout(() => setCopied(false), 1500);
-      }}>{copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "Copied" : "Copy"}</button>
-    </div>
   );
 }
 

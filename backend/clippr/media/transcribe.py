@@ -23,7 +23,6 @@ from .overlay import Word
 
 log = logging.getLogger("clippr.transcribe")
 MODELS = {"fast": "base", "accurate": "small", "best": "large-v3-turbo"}
-MODEL_SIZES = {"fast": "about 145 MB", "accurate": "about 480 MB", "best": "about 1.6 GB"}
 
 
 class TranscribeError(Exception):
