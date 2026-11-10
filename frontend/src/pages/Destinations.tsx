@@ -16,7 +16,7 @@ export default function Destinations() {
   const [editing, setEditing] = useState<Destination | null>(null);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Destination | null>(null);
-  const refresh = () => ["destinations", "dashboard", "funnel"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const refresh = () => ["destinations", "dashboard", "sources"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   const err = (e: unknown) => toast("err", e instanceof Error ? e.message : String(e));
   const quick = useMutation({ mutationFn: ({ id, b }: { id: number; b: Parameters<typeof api.updateDestination>[1] }) => api.updateDestination(id, b), onSuccess: refresh, onError: err });
 
@@ -45,7 +45,6 @@ export default function Destinations() {
                 <div className="row wrap small" style={{ marginTop: 12, gap: 10 }}>
                   {d.creator_ids.length === 0 ? <span className="faint small">Any streamer</span>
                     : d.creator_ids.map((id) => <CreatorChip key={id} creator={(creators.data ?? []).find((c) => c.id === id) ?? null} />)}
-                  <span className="faint">{d.route_count} source{d.route_count === 1 ? "" : "s"} feeding it</span>
                   <span className="faint">{d.settings.format.resolution} · {d.settings.format.fps} fps max</span>
                 </div>
                 <div className="row" style={{ marginTop: 14 }}>

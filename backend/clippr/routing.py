@@ -1,27 +1,16 @@
-"""Account funnel rules: which destinations a source's clips may flow to.
-
-Invariant: a route between accounts of two different creators exists only if the user
-explicitly confirmed it (`allow_cross_creator`). Accounts without a creator can be wired freely.
+"""Which pages a clip goes to. There's nothing to wire: each page lists the streamers whose clips it takes
+(none listed = every streamer), and a clip goes to every enabled page that takes its streamer.
 """
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .audit import audit
-from .models import DestinationAccount, FunnelRoute, SourceAccount
-
-
-class RouteError(Exception):
-    def __init__(self, message: str, code: str):
-        super().__init__(message)
-        self.code = code
+from .models import DestinationAccount, SourceAccount
 
 
 def source_creator_ids(src: SourceAccount) -> list[int]:
-    """All streamers a clipping account covers (most cover one; general accounts cover several)."""
+    """All streamers a watched account covers (most cover one; general clipping accounts cover several)."""
     ids = [int(i) for i in (src.creator_ids or [])]
     if not ids and src.creator_id:
         ids = [src.creator_id]
@@ -36,67 +25,12 @@ def destination_creator_ids(dest: DestinationAccount) -> list[int]:
     return ids
 
 
-def creators_conflict(src: SourceAccount, dest: DestinationAccount) -> bool:
-    ids, mine = source_creator_ids(src), destination_creator_ids(dest)
-    return bool(ids) and bool(mine) and not set(ids) & set(mine)
+def takes(dest: DestinationAccount, creator_ids: set[int]) -> bool:
+    """Whether a page takes clips of any of these streamers."""
+    mine = destination_creator_ids(dest)
+    return not mine or bool(set(mine) & creator_ids)
 
 
-def create_route(s: Session, source_id: int, destination_id: int, allow_cross_creator: bool = False) -> FunnelRoute:
-    src, dest = s.get(SourceAccount, source_id), s.get(DestinationAccount, destination_id)
-    if not src or not dest:
-        raise RouteError("Source or destination not found", "not_found")
-    if s.scalar(select(FunnelRoute).where(FunnelRoute.source_id == source_id, FunnelRoute.destination_id == destination_id)):
-        raise RouteError(f"{src.username} already feeds {dest.display_name}", "duplicate")
-    if creators_conflict(src, dest) and not allow_cross_creator:
-        raise RouteError(
-            f"{src.username} doesn't clip any streamer {dest.display_name} is set to. Confirm to mix creators.",
-            "cross_creator",
-        )
-    route = FunnelRoute(source_id=source_id, destination_id=destination_id, allow_cross_creator=creators_conflict(src, dest))
-    s.add(route)
-    s.flush()
-    audit(s, "route.created", "route", route.id, {"source": src.username, "destination": dest.display_name, "cross_creator": route.allow_cross_creator})
-    return route
-
-
-def auto_route_by_creator(s: Session, creator_id: int | None = None) -> int:
-    """IF creator = X THEN route every X source to every X destination. Returns routes created."""
-    created = 0
-    for src in s.scalars(select(SourceAccount)).unique():
-        ids = source_creator_ids(src)
-        if creator_id:
-            ids = [i for i in ids if i == creator_id]
-        if not ids:
-            continue
-        for dest in [d for d in s.scalars(select(DestinationAccount)).unique() if set(destination_creator_ids(d)) & set(ids)]:
-            exists = s.scalar(select(FunnelRoute).where(FunnelRoute.source_id == src.id, FunnelRoute.destination_id == dest.id))
-            if not exists:
-                s.add(FunnelRoute(source_id=src.id, destination_id=dest.id))
-                created += 1
-    s.flush()
-    if created:
-        audit(s, "route.auto_created", "creator", creator_id or "", {"count": created})
-    return created
-
-
-@dataclass
-class ResolvedDestination:
-    destination: DestinationAccount
-    route_id: int
-
-
-def resolve_destinations(s: Session, source_id: int) -> list[ResolvedDestination]:
-    """Destinations a new clip from this source would be offered to. Disabled routes,
-    disabled destinations and unconfirmed creator mismatches are excluded."""
-    src = s.get(SourceAccount, source_id)
-    if not src:
-        return []
-    out = []
-    for r in s.scalars(select(FunnelRoute).where(FunnelRoute.source_id == source_id, FunnelRoute.enabled.is_(True))):
-        dest = s.get(DestinationAccount, r.destination_id)
-        if not dest or not dest.enabled:
-            continue
-        if creators_conflict(src, dest) and not r.allow_cross_creator:
-            continue  # creator was reassigned after the route was made; don't silently mix
-        out.append(ResolvedDestination(dest, r.id))
-    return out
+def pages_for(s: Session, creator_ids: set[int]) -> list[DestinationAccount]:
+    """Enabled pages that take clips of any of these streamers."""
+    return [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique() if takes(d, creator_ids)]

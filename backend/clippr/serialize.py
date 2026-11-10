@@ -23,7 +23,7 @@ def folder(f: Folder | None) -> dict[str, Any] | None:
     return {"id": f.id, "name": f.name} if f else None
 
 
-def source(s: SourceAccount, route_count: int = 0, creators_by_id: dict | None = None) -> dict[str, Any]:
+def source(s: SourceAccount, page_count: int = 0, creators_by_id: dict | None = None) -> dict[str, Any]:
     from .routing import source_creator_ids
 
     ids = source_creator_ids(s)
@@ -36,7 +36,7 @@ def source(s: SourceAccount, route_count: int = 0, creators_by_id: dict | None =
         "creator": creator(s.creator), "folder": folder(s.folder),
         "last_synced_at": _dt(s.last_synced_at), "next_check_at": _dt(s.next_check_at), "last_error": s.last_error,
         "watching_supported": s.platform in MONITORABLE, "baseline_done": s.baseline_done,
-        "created_at": _dt(s.created_at), "route_count": route_count,
+        "created_at": _dt(s.created_at), "page_count": page_count,
         # Filled in by the accounts list endpoint; None means not counted, not zero.
         "videos_discovered": None, "videos_analyzed": None,
     }
@@ -49,14 +49,14 @@ def normalized_settings(raw: dict | None) -> dict:
     return lenient(DestinationSettings, raw).model_dump()
 
 
-def destination(d: DestinationAccount, route_count: int = 0) -> dict[str, Any]:
+def destination(d: DestinationAccount) -> dict[str, Any]:
     return {
         "id": d.id, "platform": d.platform, "external_id": None if d.external_id.startswith(("draft:", "manual:")) else d.external_id,
         "handle": d.handle, "display_name": d.display_name, "avatar_url": d.avatar_url,
         "creator": creator(d.creator), "creator_ids": [int(i) for i in (d.creator_ids or [])] or ([d.creator_id] if d.creator_id else []),
         "settings": normalized_settings(d.settings), "enabled": d.enabled,
         "status": "manual",  # you upload each clip yourself
-        "route_count": route_count, "created_at": _dt(d.created_at),
+        "created_at": _dt(d.created_at),
     }
 
 

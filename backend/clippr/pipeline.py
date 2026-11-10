@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, select
 
 from . import describe, events, identify, notify
 from .api.system import load_settings
@@ -24,8 +24,8 @@ from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
 from .media.render import OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
-from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
-from .routing import destination_creator_ids, resolve_destinations, source_creator_ids
+from .models import Clip, ClipOutput, Creator, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
+from .routing import destination_creator_ids, pages_for, source_creator_ids
 from .schemas import ClipEdit, OverlaySettings, lenient
 
 log = logging.getLogger("clippr.pipeline")
@@ -290,15 +290,17 @@ class Pipeline:
             candidates = identify.rank_candidates(
                 [(c.id, c.name, [vod_override] if vod_override else list(c.vod_channels or [])) for c in usable],
                 f"{ref.title or ''} {account or ''}")  # a Twitch clip's own channel, or a page named after a streamer, counts too
-            if src:
-                dests = [r.destination for r in resolve_destinations(s, src.id)]
-            else:  # a pasted link goes to the matched streamer's pages and to pages not tied to any streamer
-                wanted = {c.id for c in usable}
-                dests = [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()
-                         if not destination_creator_ids(d) or wanted & set(destination_creator_ids(d))]
+            # Streamers whose channels overlap are one family: a group (The Core) and its members. A page for any of
+            # them takes the others' clips too.
+            handles = {c.id: {identify.channel_handle(ch).lower() for ch in c.vod_channels or []} - {""} for c in s.scalars(select(Creator))}
+            def family(ids: set[int]) -> set[int]:
+                mine = set().union(*(handles.get(i, set()) for i in ids))
+                return ids | {cid for cid, h in handles.items() if h & mine}
+            # Every enabled page that takes one of these streamers (pages with none listed take everyone).
+            dests = pages_for(s, family({c.id for c in usable}))
             if not dests:
-                where = f"@{account}" if account else usable[0].name
-                return self._stop(rid, "needs_setup", f"Route {where} to at least one destination in the Account Funnel.", account, ref.url)
+                return self._stop(rid, "needs_setup", f"No page takes {usable[0].name}'s clips yet. Under Destinations, add one "
+                                  f"or set a page to {usable[0].name} or Any streamer.", account, ref.url)
             all_dests = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {}), frozenset(destination_creator_ids(d))) for d in dests]
             from_twitch = ref.platform == "twitch"
             ref_url, ref_title, posted_at = ref.url, ref.title, ref.posted_at
@@ -317,7 +319,6 @@ class Pipeline:
                 spoken = self._spoken(ref_audio, [n for _, n, _ in candidates])
                 pointed = identify.named(candidates, spoken)
                 clue = f"{clue} {spoken}"
-            covering = candidates  # every streamer the account covers, for picking pages below
             if pointed:
                 candidates = identify.rank_candidates(pointed, clue)
 
@@ -359,20 +360,11 @@ class Pipeline:
                     if overlap > 0.5 * min(c.vod_end - c.vod_start, m.end - m.start):
                         self._set(rid, "duplicate", f"Same moment as \"{c.title}\", which Vyral already made")
                         return {"status": "duplicate", "clip_id": c.id}
-            # A page tied to another streamer this account also covers doesn't get the clip (B's moment
-            # isn't A's content). Every other routed page does: pages tied to this streamer or to nobody,
-            # and pages the user routed this account to on purpose, like a group page for its members.
-            covered = {cid for cid, _, _ in covering} if src else set()
-            # A group's page (e.g. The Core) also takes clips of its members: their channels overlap.
-            chans = {cid: {identify.channel_handle(c).lower() for c in chs} - {""} for cid, _, chs in covering}
-            group = {cid for cid, ch in chans.items() if ch & chans.get(matched_id, set())}
-            # A page set to several streamers takes a clip of any of them; a page set to none takes everyone's.
-            dest_info = [d[:5] for d in all_dests if not d[5] or matched_id in d[5] or d[5] & group or (src and not d[5] & covered)]
+            # A page takes the clip if it lists this streamer, no one, or this streamer's group or members.
+            dest_info = [d[:5] for d in all_dests if not d[5] or d[5] & family({matched_id})]
             if not dest_info:
-                others = ", ".join(d[2] for d in all_dests)
-                where = (f"@{account}'s pages ({others}) are each set to another streamer it covers. Under Destinations, set one to "
-                         f"{creator_name} or to Any streamer" if account else f"there's no {creator_name} page under Destinations")
-                return self._stop(rid, "needs_setup", f"This is a {creator_name} clip, but {where}.", account, ref_url)
+                return self._stop(rid, "needs_setup", f"This is a {creator_name} clip, but no page takes {creator_name}'s clips. "
+                                  f"Under Destinations, set a page to {creator_name} or to Any streamer.", account, ref_url)
             with self.ctx.db.session() as s:
                 s.get(ReferenceVideo, rid).creator_id = matched_id
             if m.end - m.start > cfg.monitoring.max_clip_seconds:

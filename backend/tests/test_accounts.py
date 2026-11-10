@@ -58,44 +58,15 @@ def _setup(client):
     return a, b, sa, sa2, sb, dests
 
 
-def test_funnel_rules(client):
-    a, b, sa, _sa2, sb, d = _setup(client)
-    r = client.post("/api/funnel/routes", json={"source_id": sa, "destination_id": d["A TikTok"]})
-    assert r.status_code == 201
-    dup = client.post("/api/funnel/routes", json={"source_id": sa, "destination_id": d["A TikTok"]})
-    assert dup.status_code == 409 and dup.json()["error"]["code"] == "duplicate"
-
-    cross = client.post("/api/funnel/routes", json={"source_id": sb, "destination_id": d["A TikTok"]})
-    assert cross.status_code == 409 and cross.json()["error"]["code"] == "cross_creator"
-    ok = client.post("/api/funnel/routes", json={"source_id": sb, "destination_id": d["A TikTok"], "allow_cross_creator": True})
-    assert ok.status_code == 201 and ok.json()["allow_cross_creator"] is True
-
-    created = client.post("/api/funnel/auto-route", json={"creator_id": a}).json()["created"]
-    assert created == 5  # 2 A-sources x 3 A-destinations, minus the one already present
-    assert client.post("/api/funnel/auto-route", json={}).json()["created"] == 1  # B -> B TikTok
-
-    resolved = {x["display_name"] for x in client.get(f"/api/funnel/resolve/{sa}").json()}
-    assert resolved == {"A TikTok", "A Insta", "A YT"}
-    resolved_b = {x["display_name"] for x in client.get(f"/api/funnel/resolve/{sb}").json()}
-    assert resolved_b == {"B TikTok", "A TikTok"}
-
-    # Disabled route is excluded
-    route_id = next(x for x in client.get("/api/funnel").json()["routes"] if x["source_id"] == sa and x["destination_id"] == d["A YT"])["id"]
-    client.patch(f"/api/funnel/routes/{route_id}", json={"enabled": False})
-    assert "A YT" not in {x["display_name"] for x in client.get(f"/api/funnel/resolve/{sa}").json()}
-
-    # Reassigning a destination to another creator blocks unconfirmed routes instead of mixing silently
-    client.patch(f"/api/destinations/{d['A Insta']}", json={"creator_id": b})
-    assert "A Insta" not in {x["display_name"] for x in client.get(f"/api/funnel/resolve/{sa}").json()}
-    assert any(x["blocked"] for x in client.get("/api/funnel").json()["routes"])
-
-    # Layout persists
-    client.put("/api/funnel/layout", json={"positions": {f"s-{sa}": {"x": 10, "y": 20}}})
-    assert client.get("/api/funnel").json()["layout"][f"s-{sa}"] == {"x": 10.0, "y": 20.0}
-
-    # Deleting a source cascades its routes
-    client.delete(f"/api/sources/{sa}")
-    assert all(x["source_id"] != sa for x in client.get("/api/funnel").json()["routes"])
+def test_pages_take_their_streamers_clips(client):
+    """No wiring: a watched account's clips go to every enabled page set to its streamer, or to any streamer."""
+    a, b, sa, sa2, sb, d = _setup(client)
+    counts = {x["id"]: x["page_count"] for x in client.get("/api/sources").json()}
+    assert counts[sa] == counts[sa2] == 3 and counts[sb] == 1  # A has three pages, B one
+    client.post("/api/destinations", json={"platform": "tiktok", "display_name": "Everyone"})  # no streamer: takes all
+    assert next(x["page_count"] for x in client.get("/api/sources").json() if x["id"] == sb) == 2
+    client.patch(f"/api/destinations/{d['A YT']}", json={"enabled": False})
+    assert next(x["page_count"] for x in client.get("/api/sources").json() if x["id"] == sa) == 3  # A TikTok, A Insta, Everyone
 
 
 def test_settings_validation_and_persistence(client):

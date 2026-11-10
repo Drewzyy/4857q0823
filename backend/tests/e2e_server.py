@@ -37,7 +37,6 @@ with TestClient(app, base_url=f"http://127.0.0.1:{port}", headers=h) as c:
     tt = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "Streamer A TikTok", "handle": "@streamera.tt", "creator_id": cr["id"]}).json()
     c.patch(f"/api/destinations/{tt['id']}", json={"settings": {"hashtags": ["#gaming"]}})
     c.post("/api/destinations", json={"platform": "youtube", "display_name": "Streamer A YouTube", "handle": "@streameraYT", "creator_id": cr["id"]})
-    c.post("/api/funnel/auto-route", json={})
     fake.posts = []
     ctx.pipeline.check_source(sid)
     fake.posts = [RemotePost("v1", "https://www.tiktok.com/@streamera.clips/video/v1", "He did NOT just say that #fyp")]

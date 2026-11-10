@@ -48,7 +48,7 @@ def setup_accounts(c, *, permission=True, channels=("https://www.twitch.tv/strea
     c.patch(f"/api/destinations/{tt['id']}", json={"settings": {"hashtags": ["gaming", "#clips"], "default_caption": "Follow for more"}})
     yt = c.post("/api/destinations", json={"platform": "youtube", "display_name": "Streamer A YouTube", "handle": "@streameraYT", "creator_id": cid}).json()
     c.patch(f"/api/destinations/{yt['id']}", json={"settings": {"format": {"aspect": "9:16", "resolution": "720x1280", "fps": 30}}})
-    assert c.post("/api/funnel/auto-route", json={}).json()["created"] == 2
+    assert next(x["page_count"] for x in c.get("/api/sources").json() if x["id"] == sid) == 2  # its clips go to both of the streamer's pages
     return cid, sid, tt["id"], yt["id"]
 
 
@@ -251,7 +251,7 @@ def test_one_clipping_account_covering_several_streamers(env):
     assert [x["name"] for x in src["creators"]] == ["Streamer A", "Streamer B"]
     c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": a})
     c.post("/api/destinations", json={"platform": "tiktok", "display_name": "B page", "creator_id": b})
-    assert c.post("/api/funnel/auto-route", json={}).json()["created"] == 2  # one account feeds both streamers' pages
+    assert c.get("/api/sources").json()[0]["page_count"] == 2  # one account feeds both streamers' pages
     assert len(c.get("/api/sources", params={"creator_id": b}).json()) == 1
     # Streamer A's channel listing has no match; Streamer B's (Kick) does.
     orig = fake.recent_vods
@@ -388,7 +388,6 @@ def test_twitch_channel_clips_become_videos(env):
     sid = src.json()["id"]
     assert src.json()["watching_supported"] is True
     c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": cid})
-    c.post("/api/funnel/auto-route", json={})
     soon = datetime.now(timezone.utc) + timedelta(seconds=5)
     clip = lambda i, views: RemotePost(i, f"https://www.twitch.tv/streamera/clip/{i}", f"clip {i}", posted_at=soon, views=views)
     fake.posts = [clip("Top1", 900), clip("Top2", 400), clip("Quiet", 3)]  # most-viewed first, like Twitch's list
@@ -455,7 +454,6 @@ def test_group_page_gets_clips_from_each_members_account(env):
     silky = c.post("/api/creators", json={"name": "Silky", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/silky"]}).json()["id"]
     page = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "vyralc0re", "creator_id": core}).json()["id"]
     sid = c.post("/api/sources", json={"input": "twitch.tv/silky", "platform": "twitch", "creator_ids": [silky]}).json()["id"]
-    assert c.post("/api/funnel/routes", json={"source_id": sid, "destination_id": page, "allow_cross_creator": True}).status_code in (200, 201)
     fake.posts = [RemotePost("S1", "https://www.twitch.tv/silky/clip/S1", "silky moment", posted_at=datetime.now(timezone.utc) + timedelta(seconds=5), views=500)]
     assert ctx.pipeline.check_source(sid)["new"] == 1
     drain(ctx)
@@ -548,7 +546,6 @@ def test_member_clip_goes_to_the_group_page(env):
     jason = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
     c.post("/api/destinations", json={"platform": "tiktok", "display_name": "vyralc0re", "creator_id": core})
     sid = c.post("/api/sources", json={"input": "@a.clips", "creator_ids": [jason, core]}).json()["id"]
-    c.post("/api/funnel/auto-route", json={})
     fake.posts = []
     ctx.pipeline.check_source(sid)
     fake.posts = [RemotePost("g1", "https://www.tiktok.com/@a.clips/video/g1", "#streamera moment")]
@@ -604,7 +601,6 @@ def test_twitch_clip_goes_straight_to_its_own_stream(env):
     cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
     sid = c.post("/api/sources", json={"input": "twitch.tv/streamera", "platform": "twitch", "creator_ids": [cid]}).json()["id"]
     c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": cid})
-    c.post("/api/funnel/auto-route", json={})
     url = "https://www.twitch.tv/streamera/clip/Exact1"
     fake.origins[url] = ("https://www.twitch.tv/videos/7", 131.0)
     fake.posts = [RemotePost("Exact1", url, "clip", posted_at=datetime.now(timezone.utc) + timedelta(seconds=5), views=900)]
@@ -617,17 +613,16 @@ def test_twitch_clip_goes_straight_to_its_own_stream(env):
 
 
 def test_a_page_can_take_several_streamers(env):
-    """One page set to two streamers takes clips of either, and auto-route connects both streamers' accounts."""
+    """One page set to two streamers takes clips of either; a third streamer's account doesn't feed it."""
     ctx, c, fake = env
     a = c.post("/api/creators", json={"name": "Jason", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/jasontheween"]}).json()["id"]
     b = c.post("/api/creators", json={"name": "Silky", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/silky"]}).json()["id"]
     other = c.post("/api/creators", json={"name": "Other", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/other"]}).json()["id"]
     page = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "core page", "creator_ids": [a, b]}).json()
     assert page["creator_ids"] == [a, b]
-    sa = c.post("/api/sources", json={"input": "twitch.tv/jasontheween", "platform": "twitch", "creator_ids": [a]}).json()["id"]
-    sb = c.post("/api/sources", json={"input": "twitch.tv/silky", "platform": "twitch", "creator_ids": [b]}).json()["id"]
-    so = c.post("/api/sources", json={"input": "twitch.tv/other", "platform": "twitch", "creator_ids": [other]}).json()["id"]
-    assert c.post("/api/funnel/auto-route", json={}).json()["created"] == 2  # Other's account isn't connected
+    for handle, cid in (("jasontheween", a), ("silky", b), ("other", other)):
+        c.post("/api/sources", json={"input": f"twitch.tv/{handle}", "platform": "twitch", "creator_ids": [cid]})
+    assert {x["username"]: x["page_count"] for x in c.get("/api/sources").json()} == {"jasontheween": 1, "silky": 1, "other": 0}
     assert [d["id"] for d in c.get(f"/api/destinations?creator_id={b}").json()] == [page["id"]]
     counts = {x["id"]: x["destinations"] for x in c.get("/api/creators").json()}
     assert counts[a] == counts[b] == 1 and counts[other] == 0
@@ -644,7 +639,6 @@ def test_a_streamers_saved_facecam_spot_is_used_for_new_clips(env):
     c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_ids": [cid]})
     url = "https://www.twitch.tv/streamera/clip/Cam1"
     sid = c.post("/api/sources", json={"input": "twitch.tv/streamera", "platform": "twitch", "creator_ids": [cid]}).json()["id"]
-    c.post("/api/funnel/auto-route", json={})
     fake.origins[url] = ("https://www.twitch.tv/videos/7", 131.0)
     fake.posts = [RemotePost("Cam1", url, "clip", posted_at=datetime.now(timezone.utc) + timedelta(seconds=5), views=900)]
     ctx.pipeline.check_source(sid)

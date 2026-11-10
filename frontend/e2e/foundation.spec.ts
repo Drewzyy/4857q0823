@@ -2,17 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 const nav = (page: Page, name: string) => page.getByRole("navigation").getByRole("link", { name }).click();
 
-async function dragRoute(page: Page, from: string, to: string) {
-  const handle = page.locator(".react-flow__node", { hasText: from }).locator(".react-flow__handle-right");
-  const target = page.locator(".react-flow__node", { hasText: to }).locator(".react-flow__handle-left");
-  const a = (await handle.boundingBox())!;
-  const b = (await target.boundingBox())!;
-  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 15 });
-  await page.mouse.up();
-}
-
 test("a clip made automatically is ready to upload with captions per page", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".brand")).toHaveText("Vyral");
@@ -108,11 +97,6 @@ test("creators carry their stream channels and permission, sources show watch st
   await expect(picker).toContainText("Streamer A");
   await expect(picker).toContainText("Streamer B");
 
-  // Funnel: dragging B's source onto A's page asks first.
-  await nav(page, "Account Funnel");
-  // It clips Streamer A too, so routing it to A's page is allowed without the mix warning.
-  await dragRoute(page, "@streamerb.clips", "Streamer A YouTube");
-  await expect(page.getByRole("heading", { name: "Mix creators?" })).toHaveCount(0);
 });
 
 test("discord and storage settings", async ({ page }) => {
@@ -259,9 +243,10 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
 
 test("paste several links at once, and switch clipboard pickup off", async ({ page }) => {
   await page.goto("/activity");
-  await page.getByLabel("Video link").fill("https://www.tiktok.com/@clipper/video/111 https://www.youtube.com/shorts/abc_1\nnot-a-link");
+  // Two links glued together on one line, plus text and another site's link.
+  await page.getByLabel("Video links").fill("https://www.tiktok.com/@clipper/video/111https://www.youtube.com/shorts/abc_1\nnotes https://example.com/x");
   await page.getByRole("button", { name: "Make clip" }).click();
-  await expect(page.getByText("Queued 2 links. Skipped 1 that weren't video links.")).toBeVisible();
+  await expect(page.getByText("Working on 2 links. They'll show up below. Skipped 1 other link.")).toBeVisible();
   await page.goto("/settings");
   await page.getByRole("tab", { name: "Monitoring & storage" }).click();
   const pickup = page.getByRole("switch", { name: "Clip copied links" });
@@ -274,17 +259,11 @@ test("paste several links at once, and switch clipboard pickup off", async ({ pa
   await expect(page.getByRole("switch", { name: "Clip copied links" })).not.toBeChecked();
 });
 
-test("agents page shows real agents and what needs you", async ({ page }) => {
-  await page.goto("/agents");
-  await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
-  for (const name of ["Source Monitor", "Link Intake", "Video Production", "Performance Analyst", "Notifications", "Housekeeping"]) {
-    await expect(page.getByText(name, { exact: true }).first()).toBeVisible();
-  }
-  await expect(page.getByRole("heading", { name: "Needs you" })).toBeVisible();
-  await expect(page.getByRole("cell", { name: "Video Production" }).first()).toBeVisible();  // it made the seed clip
+test("the sidebar has no Agents or Account Funnel", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "Details" }).click();  // the dashboard's agents card leads here
-  await expect(page).toHaveURL(/\/agents$/);
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Agents" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Account Funnel" })).toHaveCount(0);
 });
 
 test("video editor: facecam on bottom with a hand-drawn box", async ({ page }) => {

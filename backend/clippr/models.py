@@ -101,20 +101,6 @@ class DestinationAccount(Base):
     creator: Mapped[Creator | None] = relationship(lazy="joined")
 
 
-class FunnelRoute(Base):
-    """Edge in the account funnel: clips from a source flow to a destination."""
-
-    __tablename__ = "funnel_routes"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    source_id: Mapped[int] = mapped_column(ForeignKey("source_accounts.id", ondelete="CASCADE"))
-    destination_id: Mapped[int] = mapped_column(ForeignKey("destination_accounts.id", ondelete="CASCADE"))
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    # Set only when the user explicitly confirmed routing one creator's clips to another creator's page.
-    allow_cross_creator: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
-    __table_args__ = (UniqueConstraint("source_id", "destination_id"),)
-
-
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(120), primary_key=True)

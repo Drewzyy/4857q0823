@@ -10,7 +10,7 @@ export interface Source {
   monitoring: "active" | "paused"; notes: string; creator: Creator | null; creators: Creator[]; folder: Folder | null;
   last_synced_at: string | null; next_check_at: string | null;
   last_error: string | null; watching_supported: boolean; baseline_done: boolean; created_at: string;
-  route_count: number; videos_discovered: number | null; videos_analyzed: number | null;
+  page_count: number; videos_discovered: number | null; videos_analyzed: number | null;
 }
 
 export type FontKey = "montserrat" | "anton" | "bebas" | "poppins";
@@ -24,14 +24,12 @@ export interface DestinationSettings {
 export interface Destination {
   id: number; platform: Platform; external_id: string | null; handle: string; display_name: string; avatar_url: string | null;
   creator: Creator | null; creator_ids: number[]; settings: DestinationSettings; enabled: boolean;
-  status: "manual"; route_count: number; created_at: string;
+  status: "manual"; created_at: string;
 }
-export interface Route { id: number; source_id: number; destination_id: number; enabled: boolean; allow_cross_creator: boolean; blocked: boolean }
-export interface Funnel { sources: Source[]; destinations: Destination[]; routes: Route[]; layout: Record<string, { x: number; y: number }> }
 
 
 export interface Dashboard {
-  accounts: { sources_total: number; sources_monitoring: number; destinations_total: number; creators: number; routes: number };
+  accounts: { sources_total: number; sources_monitoring: number; destinations_total: number; creators: number };
   pipeline: { posts_detected: number; in_progress: number; needs_attention: number; ready_to_upload: number; uploaded: number; clips_made: number };
   monitoring: { enabled: boolean; interval_minutes: number; watching: number; last_check: string | null; errors: number; retention_days: number };
   storage: { data_dir: string; used_bytes: number; disk_free_bytes: number; disk_total_bytes: number };
@@ -78,10 +76,7 @@ export interface NotifyState {
   min_priority: Priority; quiet_start: string | null; quiet_end: string | null;
 }
 export interface VyralEvent { id: number; ts: string; category: string; priority: Priority; title: string; body: string; link: string | null; delivery: string; delivery_error: string | null }
-export interface AgentJob { id: number; agent: string; kind: string; status: string; detail: string; error: string | null; attempts: number; created_at: string; started_at: string | null; finished_at: string | null }
-export interface Agent { key: string; name: string; does: string; state: "working" | "waiting" | "idle"; running: AgentJob[]; queued: number; done_24h: number; failed_24h: number }
 export interface NeedsYou { kind: string; count: number; title: string; link: string }
-export interface Intelligence { agents: Agent[]; recent: AgentJob[]; needs_you: NeedsYou[] }
 
 export interface AppUpdate {
   available: boolean; state: "idle" | "checking" | "none" | "downloading" | "ready" | "installing" | "error";
@@ -161,13 +156,6 @@ export const api = {
   updateDestination: (id: number, b: Partial<{ display_name: string; handle: string; creator_ids: number[]; enabled: boolean; settings: Partial<DestinationSettings> }>) =>
     request<Destination>("PATCH", `/destinations/${id}`, b),
   deleteDestination: (id: number) => request<void>("DELETE", `/destinations/${id}`),
-  funnel: () => request<Funnel>("GET", "/funnel"),
-  addRoute: (b: { source_id: number; destination_id: number; allow_cross_creator?: boolean }) => request<Route>("POST", "/funnel/routes", b),
-  updateRoute: (id: number, b: Partial<{ enabled: boolean; allow_cross_creator: boolean }>) => request<Route>("PATCH", `/funnel/routes/${id}`, b),
-  deleteRoute: (id: number) => request<void>("DELETE", `/funnel/routes/${id}`),
-  autoRoute: (creator_id?: number | null) => request<{ created: number }>("POST", "/funnel/auto-route", { creator_id: creator_id ?? null }),
-  saveLayout: (positions: Record<string, { x: number; y: number }>) => request<{ saved: number }>("PUT", "/funnel/layout", { positions }),
-  resolve: (sourceId: number) => request<(Destination & { route_id: number })[]>("GET", `/funnel/resolve/${sourceId}`),
   settings: () => request<AppSettings>("GET", "/settings"),
   saveSettings: (b: Partial<{ [K in keyof AppSettings]: Partial<AppSettings[K]> }>) => request<AppSettings>("PUT", "/settings", b),
   audit: () => request<AuditEntry[]>("GET", "/audit"),
@@ -201,7 +189,7 @@ export const api = {
   saveNotifications: (b: Partial<{ webhook_url: string; category_webhooks: Record<string, string>; categories: Record<string, boolean>;
     min_priority: Priority; quiet_start: string; quiet_end: string }>) => request<NotifyState>("PUT", "/notifications", b),
   events: (category?: string) => request<VyralEvent[]>("GET", "/events" + qs({ category, limit: 60 })),
-  intelligence: () => request<Intelligence>("GET", "/intelligence"),
+  needsYou: () => request<NeedsYou[]>("GET", "/needs-you"),
   discordInbox: () => request<DiscordInbox>("GET", "/discord-inbox"),
   discordInboxChannels: () => request<{ id: string; name: string; server: string }[]>("GET", "/discord-inbox/channels"),
   setDiscordInbox: (b: { token?: string; channel_id?: string }) => request<DiscordInbox>("PUT", "/discord-inbox", b),

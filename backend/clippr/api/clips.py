@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import audit
-from ..fetch import VIDEO_LINK, FetchError, find_links
+from ..fetch import FetchError, count_links
 from ..media.ffmpeg import probe
 from ..media.overlay import Word, apply_text_edit
 from ..models import Clip, ClipOutput, Creator, Job, ReferenceVideo, SourceAccount
@@ -329,7 +329,7 @@ def intake(body: IntakeIn, c=Depends(ctx), s: Session = Depends(db)):
     links = list(found)[:50]
     for url in links:  # a link Vyral already has (or is making) is skipped when the job runs
         c.jobs.enqueue("intake.link", {"url": url, "creator_id": found[url]}, max_attempts=3, session=s)
-    others = sum(len(re.findall(r"https?://\S+", p)) for p in pieces) - len(links)
+    others = sum(count_links(p) for p in pieces) - len(links)
     return {"queued": len(links), "ignored": max(others, 0)}
 
 

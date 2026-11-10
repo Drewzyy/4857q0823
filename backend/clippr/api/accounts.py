@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from .. import serialize as ser
 from ..audit import audit
-from ..models import Creator, DestinationAccount, Folder, FunnelRoute, ReferenceVideo, SourceAccount
+from ..models import Creator, DestinationAccount, Folder, ReferenceVideo, SourceAccount
 from ..platforms import DESTINATION_PLATFORMS
 from ..platforms.urls import SUPPORTED_SOURCE_PLATFORMS, SourceInputError, parse_source_input
 from ..schemas import DestinationSettings, deep_merge, default_destination_settings
@@ -178,8 +178,13 @@ def delete_folder(fid: int, s: Session = Depends(db)):
 
 
 # ---------------- source accounts ----------------
-def _route_counts(s: Session, col) -> dict[int, int]:
-    return dict(s.execute(select(col, func.count()).group_by(col)).all())
+def _page_count(s: Session, src: SourceAccount, pages: list[DestinationAccount] | None = None) -> int:
+    """How many enabled pages this account's clips go to."""
+    from ..routing import source_creator_ids, takes
+
+    ids = set(source_creator_ids(src))
+    pages = pages if pages is not None else list(s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique())
+    return sum(1 for d in pages if not ids or takes(d, ids))
 
 
 class SourceIn(BaseModel):
@@ -215,7 +220,7 @@ def list_sources(q: str = "", creator_id: int | None = None, folder_id: int | No
         stmt = stmt.where(SourceAccount.monitoring == monitoring)
     if platform:
         stmt = stmt.where(SourceAccount.platform == platform)
-    counts = _route_counts(s, FunnelRoute.source_id)
+    pages = list(s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique())
     seen = dict(s.execute(select(ReferenceVideo.source_id, func.count()).group_by(ReferenceVideo.source_id)).all())
     clipped = dict(s.execute(select(ReferenceVideo.source_id, func.count()).where(ReferenceVideo.status == "ready").group_by(ReferenceVideo.source_id)).all())
     from ..routing import source_creator_ids
@@ -226,7 +231,7 @@ def list_sources(q: str = "", creator_id: int | None = None, folder_id: int | No
         ids = source_creator_ids(x)
         if want_creator is not None and ((want_creator and want_creator not in ids) or (not want_creator and ids)):
             continue
-        d = ser.source(x, counts.get(x.id, 0), by_id)
+        d = ser.source(x, _page_count(s, x, pages), by_id)
         if x.baseline_done:
             d["videos_discovered"], d["videos_analyzed"] = seen.get(x.id, 0), clipped.get(x.id, 0)
         out.append(d)
@@ -366,7 +371,7 @@ def update_source(sid: int, body: SourcePatch, s: Session = Depends(db)):
     s.refresh(src)
     if "monitoring" in data:
         audit(s, f"source.{'resumed' if src.monitoring == 'active' else 'paused'}", "source", sid)
-    return ser.source(src, _route_counts(s, FunnelRoute.source_id).get(sid, 0), {c.id: c for c in s.scalars(select(Creator))})
+    return ser.source(src, _page_count(s, src), {c.id: c for c in s.scalars(select(Creator))})
 
 
 class BulkSource(BaseModel):
@@ -442,8 +447,7 @@ def list_destinations(platform: str | None = None, creator_id: int | None = None
     if platform:
         stmt = stmt.where(DestinationAccount.platform == platform)
     from ..routing import destination_creator_ids
-    counts = _route_counts(s, FunnelRoute.destination_id)
-    return [ser.destination(d, counts.get(d.id, 0)) for d in s.scalars(stmt).unique()
+    return [ser.destination(d) for d in s.scalars(stmt).unique()
             if not creator_id or creator_id in destination_creator_ids(d)]
 
 
@@ -488,7 +492,7 @@ def update_destination(did: int, body: DestinationPatch, s: Session = Depends(db
     s.flush()
     s.refresh(d)
     audit(s, "destination.updated", "destination", did, {"fields": list(body.model_dump(exclude_unset=True).keys())})
-    return ser.destination(d, _route_counts(s, FunnelRoute.destination_id).get(did, 0))
+    return ser.destination(d)
 
 
 @router.delete("/destinations/{did}", status_code=204)

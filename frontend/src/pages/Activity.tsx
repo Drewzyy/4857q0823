@@ -104,7 +104,7 @@ function RetryModal({ post, onClose, onDone }: { post: RefPost; onClose: () => v
   return (
     <Modal open onClose={onClose} title="Try again" footer={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" onClick={go}>Retry</button></>}>
       <p className="muted small">{post.status_detail}</p>
-      {post.status === "needs_setup" && <p className="small">Fix the setup above first (Source Accounts, Creators or Account Funnel), then retry.</p>}
+      {post.status === "needs_setup" && <p className="small">Fix the setup above first (Source Accounts, Creators or Destinations), then retry.</p>}
       <div className="field"><label htmlFor="vod">Specific stream link (optional)</label>
         <div className="row"><Link2 size={14} /><input id="vod" className="input" placeholder="https://www.twitch.tv/videos/… or a YouTube video link" value={vod} onChange={(e) => setVod(e.target.value)} /></div>
         <span className="hint">If you know which stream the moment is from, paste it and Vyral searches only that one.</span></div>

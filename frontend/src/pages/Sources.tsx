@@ -29,7 +29,7 @@ export default function Sources() {
   const folders = useQuery({ queryKey: ["folders"], queryFn: api.folders });
   const allCount = useQuery({ queryKey: ["sources", {}], queryFn: () => api.sources() });
 
-  const refresh = () => ["sources", "creators", "folders", "dashboard", "funnel"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const refresh = () => ["sources", "creators", "folders", "dashboard"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   const onErr = (e: unknown) => toast("err", e instanceof Error ? e.message : String(e));
   const update = useMutation({ mutationFn: ({ id, b }: { id: number; b: Parameters<typeof api.updateSource>[1] }) => api.updateSource(id, b), onSuccess: refresh, onError: onErr });
   const bulk = useMutation({ mutationFn: api.bulkSources, onSuccess: (r) => { toast("ok", `Updated ${r.updated} account(s)`); setSelected(new Set()); refresh(); }, onError: onErr });
@@ -107,7 +107,7 @@ export default function Sources() {
                 <thead><tr>
                   <th style={{ width: 32 }}><input type="checkbox" aria-label="Select all" checked={allSelected}
                     onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))} /></th>
-                  <th>Account</th><th>Streamers</th><th>Folder</th><th title="New posts seen / clips made">Posts · clips</th><th>Routes</th><th>Last check</th><th>Watch</th><th />
+                  <th>Account</th><th>Streamers</th><th>Folder</th><th title="New posts seen / clips made">Posts · clips</th><th>Pages</th><th>Last check</th><th>Watch</th><th />
                 </tr></thead>
                 <tbody>
                   {rows.map((s) => <SourceRow key={s.id} s={s} creators={creators.data ?? []} folders={folders.data ?? []}
@@ -172,7 +172,7 @@ function SourceRow({ s, creators, folders, selected, onSelect, onUpdate, onDelet
       <td><select className="select" style={{ minWidth: 110 }} aria-label={`Folder for @${s.username}`} value={s.folder?.id ?? ""} onChange={(e) => onUpdate({ folder_id: e.target.value ? Number(e.target.value) : null })}>
         <option value="">None</option>{folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></td>
       <td title={s.baseline_done ? "" : "Not checked yet"}>{s.videos_discovered === null ? <span className="faint">—</span> : `${s.videos_discovered} · ${s.videos_analyzed}`}</td>
-      <td>{s.route_count}</td>
+      <td title="Pages its clips go to (each page picks its streamers under Destinations)">{s.page_count}</td>
       <td className="small muted" title={s.next_check_at ? `Next check ${relTime(s.next_check_at)}` : ""}>{relTime(s.last_synced_at)}</td>
       <td><div className="row"><Toggle label={`Monitor ${s.username}`} checked={s.monitoring === "active"} onChange={(v) => onUpdate({ monitoring: v ? "active" : "paused" })} /></div></td>
       <td><div className="row" style={{ justifyContent: "flex-end" }}>

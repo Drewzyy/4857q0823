@@ -58,18 +58,24 @@ class Fetcher(Protocol):
 MONITORABLE = ("tiktok", "youtube", "twitch")
 
 # Single TikTok videos (full links and the short share links the app copies: vm./vt.tiktok.com/x and
-# tiktok.com/t/x) and YouTube Shorts.
-VIDEO_LINK = re.compile(r"^https://(?:(?:www\.|m\.)?tiktok\.com/(?:@[\w.-]+/video/\d+|t/\w+)|(?:vm|vt)\.tiktok\.com/\w+"
-                        r"|(?:www\.|m\.)?youtube\.com/shorts/[\w-]+)/?(?:\?\S*)?$")
-
+# tiktok.com/t/x) and YouTube Shorts, found anywhere in pasted text.
 _FIND_LINK = re.compile(r"https?://(?:(?:www\.|m\.)?tiktok\.com/(?:@[\w.-]+/video/\d+|t/\w+)|(?:vm|vt)\.tiktok\.com/\w+"
                         r"|(?:www\.|m\.)?youtube\.com/shorts/[\w-]+)/?(?:\?[^\s<>\"']*)?", re.I)
+
+
+def _unglue(text: str) -> str:
+    return re.sub(r"(?<!\s)(https?://)", r" \1", text)  # split links pasted back to back
+
+
+def count_links(text: str) -> int:
+    """Every link of any kind in pasted text."""
+    return len(re.findall(r"https?://\S+", _unglue(text)))
 
 
 def find_links(text: str) -> list[str]:
     """Every TikTok / YouTube Shorts video link in pasted text, in order, without repeats. Links can be glued
     together (a multi-line paste into a one-line box), wrapped in <> or followed by punctuation."""
-    text = re.sub(r"(?<!\s)(https?://)", r" \1", text)  # split links pasted back to back
+    text = _unglue(text)
     out = []
     for m in _FIND_LINK.finditer(text):
         link = m.group(0).rstrip(".,;:!?)]}")

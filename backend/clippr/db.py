@@ -42,8 +42,8 @@ def run_migrations(engine: Engine) -> None:
         current = MigrationContext.configure(conn).get_current_revision()
         known = {sc.revision for sc in ScriptDirectory.from_config(cfg).walk_revisions()}
         if current and current not in known:
-            # A newer Vyral already upgraded this data (e.g. an older copy was reopened). Every
-            # migration only adds tables and columns, so this version runs fine on it as it is.
+            # A newer Vyral already upgraded this data (e.g. an older copy was reopened). Leave it as it is:
+            # migrations only go forward.
             log.warning("data is from a newer Vyral (schema %s); leaving it as is", current)
             return
         cfg.attributes["connection"] = conn

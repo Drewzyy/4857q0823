@@ -339,7 +339,7 @@ function Security() {
 
 function Shortcuts() {
   const mod = navigator.userAgent.includes("Mac") ? "⌘" : "Ctrl+";
-  const rows = [[`${mod}1 … ${mod}9`, "Jump to sidebar sections"], [`${mod},`, "Settings"], ["Esc", "Close a dialog"], ["Delete / Backspace", "Remove the selected route in the funnel"], ["Enter", "Submit the open form"]];
+  const rows = [[`${mod}1 … ${mod}9`, "Jump to sidebar sections"], [`${mod},`, "Settings"], ["Esc", "Close a dialog"], ["Enter", "Submit the open form"]];
   return (
     <div className="card" style={{ maxWidth: 520 }}>
       {rows.map(([k, d]) => <div key={k} className="list-row"><span className="kbd">{k}</span><span className="muted">{d}</span></div>)}

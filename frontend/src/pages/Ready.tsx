@@ -37,7 +37,7 @@ export default function Ready() {
     <div className="page">
       <div className="page-head">
         <div><h1>Ready to Upload</h1>
-          <p>Every clip Vyral made, with a caption ready for each page it's routed to. Save the video in full quality, paste the caption, upload it yourself, then mark it uploaded.</p></div>
+          <p>Every clip Vyral made, with a caption ready for each page that takes it. Save the video in full quality, paste the caption, upload it yourself, then mark it uploaded.</p></div>
       </div>
       <div className="tabs" role="tablist">
         {([["ready", "Ready"], ["uploaded", "Uploaded"], ["expired", "Expired"]] as const).map(([k, l]) => (

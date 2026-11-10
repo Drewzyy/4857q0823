@@ -6,7 +6,6 @@ import { MODULES } from "./lib/modules";
 import Dashboard from "./pages/Dashboard";
 import Sources from "./pages/Sources";
 import Destinations from "./pages/Destinations";
-import FunnelPage from "./pages/Funnel";
 import SettingsPage from "./pages/Settings";
 import Planned from "./pages/Planned";
 import Ready from "./pages/Ready";
@@ -14,11 +13,10 @@ import ActivityPage from "./pages/Activity";
 import UpdateBanner from "./components/UpdateBanner";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import EditorPage from "./pages/Editor";
-import AgentsPage from "./pages/Agents";
 
 const PAGES: Record<string, JSX.Element> = {
   "/": <Dashboard />, "/ready": <Ready />, "/activity": <ActivityPage />, "/sources": <Sources />, "/destinations": <Destinations />,
-  "/funnel": <FunnelPage />, "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />, "/editor": <EditorPage />, "/agents": <AgentsPage />,
+  "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />, "/editor": <EditorPage />,
 };
 
 export default function App() {

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .. import __version__
 from .. import serialize as ser
 from ..audit import audit
-from ..models import AuditLog, Clip, ClipOutput, Creator, DestinationAccount, FunnelRoute, Job, ReferenceVideo, Setting, SourceAccount
+from ..models import AuditLog, Clip, ClipOutput, Creator, DestinationAccount, Job, ReferenceVideo, Setting, SourceAccount
 from ..fetch import MONITORABLE
 from ..schemas import AppSettings, lenient
 from .deps import ApiError, ctx, db
@@ -65,7 +65,6 @@ def dashboard(c=Depends(ctx), s: Session = Depends(db)):
             "sources_monitoring": count(select(func.count()).select_from(SourceAccount).where(SourceAccount.monitoring == "active")),
             "destinations_total": count(select(func.count()).select_from(DestinationAccount)),
             "creators": count(select(func.count()).select_from(Creator)),
-            "routes": count(select(func.count()).select_from(FunnelRoute).where(FunnelRoute.enabled.is_(True))),
         },
         "pipeline": {
             "posts_detected": count(select(func.count()).select_from(ReferenceVideo).where(ReferenceVideo.status != "baseline")),
@@ -96,16 +95,16 @@ def load_settings(s: Session) -> AppSettings:
     return lenient(AppSettings, row.value if row else None)
 
 
-@router.get("/intelligence")
-def intelligence_overview(c=Depends(ctx), s: Session = Depends(db)):
-    """What every agent is doing, what it finished recently, and what's waiting on the user."""
-    from .. import intelligence
+@router.get("/needs-you")
+def needs_you(c=Depends(ctx), s: Session = Depends(db)):
+    """What's waiting on the user, most important first, each with where it's handled."""
+    from ..attention import needs_you as waiting
 
-    needs = intelligence.needs_you(s)
+    items = waiting(s)
     inbox_error = c.inbox.state(s).get("last_error")
     if inbox_error:
-        needs.append({"kind": "inbox", "count": 1, "title": f"Discord inbox: {inbox_error}", "link": "/settings?tab=notifications"})
-    return {**intelligence.activity(s), "needs_you": needs}
+        items.append({"kind": "inbox", "count": 1, "title": f"Discord inbox: {inbox_error}", "link": "/settings?tab=notifications"})
+    return items
 
 
 @router.get("/settings")

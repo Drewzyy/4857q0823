@@ -13,27 +13,19 @@ def _setup(c):
     cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
     sid = c.post("/api/sources", json={"input": "@a.clips", "creator_id": cid}).json()["id"]
     c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": cid})
-    c.post("/api/funnel/auto-route", json={})
     return sid
 
 
-def test_agents_show_real_work_and_what_needs_you(env):
+def test_what_needs_you(env):
     ctx, c, fake = env
     sid = _setup(c)
-    idle = c.get("/api/intelligence").json()
-    assert {a["key"]: a["state"] for a in idle["agents"]}["production"] == "idle" and idle["needs_you"] == []
+    assert c.get("/api/needs-you").json() == []
     fake.posts = []
     ctx.pipeline.check_source(sid)
-    fake.posts = [RemotePost("i1", "https://www.tiktok.com/@a.clips/video/i1", "agent test")]
+    fake.posts = [RemotePost("i1", "https://www.tiktok.com/@a.clips/video/i1", "needs you test")]
     ctx.pipeline.check_source(sid)
-    waiting = {a["key"]: a for a in c.get("/api/intelligence").json()["agents"]}
-    assert waiting["production"]["state"] == "waiting" and waiting["production"]["queued"] == 1
     drain(ctx)
-    after = c.get("/api/intelligence").json()
-    prod = {a["key"]: a for a in after["agents"]}["production"]
-    assert prod["state"] == "idle" and prod["done_24h"] == 1
-    assert any(j["agent"] == "production" and "agent test" in j["detail"] for j in after["recent"])
-    assert after["needs_you"][0] == {"kind": "upload", "count": 1, "title": "1 video ready to upload", "link": "/ready"}
+    assert c.get("/api/needs-you").json()[0] == {"kind": "upload", "count": 1, "title": "1 video ready to upload", "link": "/ready"}
 
 
 @respx.mock
