@@ -55,7 +55,7 @@ class Fetcher(Protocol):
     def twitch_clip_origin(self, url: str) -> tuple[str, float] | None: ...
 
 
-MONITORABLE = ("tiktok", "youtube", "twitch")
+MONITORABLE = ("tiktok", "youtube", "twitch", "kick")
 
 # Single TikTok videos (full links and the short share links the app copies: vm./vt.tiktok.com/x and
 # tiktok.com/t/x) and YouTube Shorts, found anywhere in pasted text.
@@ -196,6 +196,8 @@ class YtDlpFetcher:
             url = profile_url.rstrip("/") + "/shorts"
         elif platform == "twitch":
             url = f"https://www.twitch.tv/{username}/clips?filter=clips&range=24hr"  # the day's most-viewed clips first
+        elif platform == "kick":
+            url = f"https://kick.com/{username}/clips?sort=view&range=day"  # same for Kick
         else:
             raise FetchError(f"Watching {platform} accounts isn't supported")
         info = self._extract(url, extract_flat="in_playlist", playlistend=limit)

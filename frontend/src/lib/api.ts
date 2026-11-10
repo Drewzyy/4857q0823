@@ -1,6 +1,6 @@
 // Typed client for the local backend. Every request carries the per-launch app token.
 
-export type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "twitch";
+export type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "twitch" | "kick";
 
 export interface Creator { id: number; name: string; color: string; notes: string; vod_channels: string[]; clip_permission: boolean; sources?: number; destinations?: number }
 export interface Folder { id: number; name: string; sources?: number }

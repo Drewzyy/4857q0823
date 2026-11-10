@@ -772,3 +772,19 @@ def test_cutting_a_part_out_shortens_the_clip(env):
         path = Path(s.get(ClipOutput, out["id"]).file_path)
     expect = (e["end"] - e["start"]) - 4  # the overlapping cuts remove 2..6 s
     assert abs(probe(path).duration - expect) < 0.4, (probe(path).duration, expect)
+
+
+def test_kick_channel_clips_become_videos(env):
+    """A Kick channel is watched like a Twitch one: its most-watched new clips are matched and rendered."""
+    ctx, c, fake = env
+    cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://kick.com/streamera"]}).json()["id"]
+    src = c.post("/api/sources", json={"input": "https://kick.com/StreamerA", "platform": "tiktok", "creator_ids": [cid]})
+    assert src.status_code == 201, src.text
+    assert src.json()["platform"] == "kick" and src.json()["username"] == "streamera" and src.json()["watching_supported"]
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_ids": [cid]})
+    soon = datetime.now(timezone.utc) + timedelta(seconds=5)
+    fake.posts = [RemotePost("k1", "https://kick.com/streamera/clips/clip_k1", "kick moment", posted_at=soon, views=500),
+                  RemotePost("k2", "https://kick.com/streamera/clips/clip_k2", "quiet", posted_at=soon, views=2)]
+    assert ctx.pipeline.check_source(src.json()["id"])["new"] == 1  # the barely watched clip waits
+    drain(ctx)
+    assert [r["status"] for r in c.get("/api/references").json()] == ["ready"]

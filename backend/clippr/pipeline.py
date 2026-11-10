@@ -31,6 +31,7 @@ from .schemas import ClipEdit, OverlaySettings, lenient
 log = logging.getLogger("clippr.pipeline")
 POSTS_PER_CHECK = 12
 LIVE_RETRY_SECONDS = 1800
+STREAM_CLIP_PLATFORMS = ("twitch", "kick")  # sources whose posts are viewers' clips of a stream
 MAX_STREAMS_SEARCHED = 20  # past this many streams, give up instead of searching on for hours
 LIVE_WAITS = 24  # a still-live stream is looked at again every 30 minutes, for up to 12 hours
 
@@ -95,7 +96,7 @@ class Pipeline:
             known = set(s.scalars(select(ReferenceVideo.external_id).where(ReferenceVideo.platform == platform,
                                                                             ReferenceVideo.external_id.in_([p.id for p in posts]))))
             fresh = [p for p in posts if p.id not in known]
-            if platform == "twitch":
+            if platform in STREAM_CLIP_PLATFORMS:
                 # Viewers clip the best moments; take the most-watched few. Clips below the bar aren't stored,
                 # so they're looked at again on the next check once more people have seen them.
                 fresh = [p for p in fresh if (p.views or 0) >= mon.twitch_min_views][:mon.twitch_clips_per_check]
@@ -303,6 +304,7 @@ class Pipeline:
                                   f"or set a page to {usable[0].name} or Any streamer.", account, ref.url)
             all_dests = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {}), frozenset(destination_creator_ids(d))) for d in dests]
             from_twitch = ref.platform == "twitch"
+            from_stream_clip = ref.platform in STREAM_CLIP_PLATFORMS
             ref_url, ref_title, posted_at = ref.url, ref.title, ref.posted_at
         self._set(rid, "processing", "Listening to the post")
         work = self._dir("tmp") / f"build-{rid}-{random.randrange(1 << 30)}"
@@ -355,7 +357,7 @@ class Pipeline:
             vod, m, matched_id, creator_name = found
             # Many viewers clip the same Twitch moment: make it once.
             with self.ctx.db.session() as s:
-                for c in s.scalars(select(Clip).where(Clip.vod_url == vod.url, Clip.vod_start.is_not(None))) if from_twitch else []:
+                for c in s.scalars(select(Clip).where(Clip.vod_url == vod.url, Clip.vod_start.is_not(None))) if from_stream_clip else []:
                     overlap = min(c.vod_end, m.end) - max(c.vod_start, m.start)
                     if overlap > 0.5 * min(c.vod_end - c.vod_start, m.end - m.start):
                         self._set(rid, "duplicate", f"Same moment as \"{c.title}\", which Vyral already made")

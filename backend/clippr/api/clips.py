@@ -380,7 +380,7 @@ def check_now(sid: int, c=Depends(ctx), s: Session = Depends(db)):
     from ..fetch import MONITORABLE
 
     if src.platform not in MONITORABLE:
-        raise ApiError(422, "unsupported", f"Vyral can't watch {src.platform} accounts yet. TikTok and YouTube are supported.")
+        raise ApiError(422, "unsupported", f"Vyral can't watch {src.platform} accounts yet. TikTok, YouTube, Twitch and Kick are supported.")
     c.jobs.enqueue("source.check", {"source_id": sid}, max_attempts=1, session=s)
     return {"queued": True}
 

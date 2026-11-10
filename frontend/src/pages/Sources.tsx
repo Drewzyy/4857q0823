@@ -5,7 +5,7 @@ import { api, type Creator, type Folder, type ImportResult, type Platform, type 
 import CreatorPicker from "../components/CreatorPicker";
 import { Avatar, ConfirmModal, CREATOR_COLORS, Empty, ErrorNote, Loading, Modal, relTime, Toggle, useToast } from "../components/ui";
 
-const SOURCE_PLATFORMS: Platform[] = ["tiktok", "youtube", "twitch", "instagram"];
+const SOURCE_PLATFORMS: Platform[] = ["tiktok", "youtube", "twitch", "kick", "instagram"];
 type Filter = { kind: "all" } | { kind: "creator"; id: number } | { kind: "folder"; id: number } | { kind: "nocreator" };
 
 export default function Sources() {
@@ -194,7 +194,7 @@ function AddSourceModal({ creators, folders, defaults, onClose, onDone }: { crea
   const [busy, setBusy] = useState(false);
   // Detect the platform from pasted links so the user doesn't have to.
   const detected = useMemo(() => {
-    const m = input.match(/(tiktok|youtube|youtu\.be|twitch|instagram)\./i);
+    const m = input.match(/(tiktok|youtube|youtu\.be|twitch|kick|instagram)\./i);
     return m ? (m[1].toLowerCase().startsWith("you") ? "youtube" : m[1].toLowerCase()) as Platform : null;
   }, [input]);
   const submit = async (keepOpen: boolean) => {

@@ -189,7 +189,7 @@ def _page_count(s: Session, src: SourceAccount, pages: list[DestinationAccount] 
 
 class SourceIn(BaseModel):
     input: str = Field(min_length=1, max_length=300, description="username, @username or profile URL")
-    platform: Literal["tiktok", "youtube", "twitch", "instagram"] = "tiktok"
+    platform: Literal["tiktok", "youtube", "twitch", "kick", "instagram"] = "tiktok"
     creator_id: int | None = None
     creator_ids: list[int] | None = Field(None, max_length=50)
     folder_id: int | None = None
@@ -292,7 +292,7 @@ async def import_sources(file: UploadFile = File(...), s: Session = Depends(db))
 
 class ImportText(BaseModel):
     text: str = Field(max_length=MAX_IMPORT_BYTES)
-    platform: Literal["tiktok", "youtube", "twitch", "instagram"] = "tiktok"
+    platform: Literal["tiktok", "youtube", "twitch", "kick", "instagram"] = "tiktok"
     creator_id: int | None = None
     folder_id: int | None = None
 

@@ -8,12 +8,13 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-SUPPORTED_SOURCE_PLATFORMS = ("tiktok", "youtube", "twitch", "instagram")
+SUPPORTED_SOURCE_PLATFORMS = ("tiktok", "youtube", "twitch", "kick", "instagram")
 
 _USERNAME_RE = {
     "tiktok": re.compile(r"^[A-Za-z0-9_.]{2,24}$"),
     "instagram": re.compile(r"^[A-Za-z0-9_.]{1,30}$"),
     "twitch": re.compile(r"^[A-Za-z0-9_]{3,25}$"),
+    "kick": re.compile(r"^[A-Za-z0-9_-]{2,40}$"),
     "youtube": re.compile(r"^[A-Za-z0-9_.\-]{3,30}$"),
 }
 
@@ -22,6 +23,7 @@ _HOSTS = {
     "youtube.com": "youtube",
     "youtu.be": "youtube",
     "twitch.tv": "twitch",
+    "kick.com": "kick",
     "instagram.com": "instagram",
 }
 
@@ -44,6 +46,8 @@ def profile_url(platform: str, username: str) -> str:
         return f"https://www.youtube.com/channel/{username}" if username.startswith("UC") and len(username) == 24 else f"https://www.youtube.com/@{username}"
     if platform == "twitch":
         return f"https://www.twitch.tv/{username}"
+    if platform == "kick":
+        return f"https://kick.com/{username}"
     if platform == "instagram":
         return f"https://www.instagram.com/{username}/"
     raise SourceInputError(f"Unsupported platform: {platform}")
@@ -63,7 +67,7 @@ def _validate(platform: str, username: str) -> str:
         return username
     if not _USERNAME_RE[platform].match(username):
         raise SourceInputError(f"'{username}' is not a valid {platform} username")
-    return username.lower() if platform in ("tiktok", "instagram", "twitch") else username
+    return username.lower() if platform in ("tiktok", "instagram", "twitch", "kick") else username
 
 
 def parse_source_input(text: str, default_platform: str = "tiktok") -> ParsedSource:
@@ -85,7 +89,7 @@ def parse_source_input(text: str, default_platform: str = "tiktok") -> ParsedSou
         raise SourceInputError("Only http(s) links are supported")
     platform = _host_platform(url.netloc)
     if not platform:
-        raise SourceInputError("Unrecognised link. Supported: TikTok, YouTube, Twitch, Instagram profile links")
+        raise SourceInputError("Unrecognised link. Supported: TikTok, YouTube, Twitch, Kick, Instagram profile links")
     host = url.netloc.lower()
     parts = [p for p in url.path.split("/") if p]
 
@@ -108,6 +112,10 @@ def parse_source_input(text: str, default_platform: str = "tiktok") -> ParsedSou
         if not parts or parts[0] in ("videos", "directory", "settings"):
             raise SourceInputError("Paste a Twitch channel link like twitch.tv/name")
         name = _validate("twitch", parts[0])
+    elif platform == "kick":
+        if not parts or parts[0] in ("video", "categories", "search", "auth"):
+            raise SourceInputError("Paste a Kick channel link like kick.com/name")
+        name = _validate("kick", parts[0])
     else:  # instagram
         if not parts or parts[0] in ("p", "reel", "reels", "stories", "explore"):
             raise SourceInputError("Paste an Instagram profile link like instagram.com/name")

@@ -54,10 +54,10 @@ function General() {
             <span className="hint">Each stream is analysed once and remembered, so searching more mostly costs time on the first clip.</span></div>
           <div className="field"><label htmlFor="maxlen">Longest clip: {s.monitoring.max_clip_seconds} seconds</label>
             <input id="maxlen" type="range" min={15} max={300} step={15} value={s.monitoring.max_clip_seconds} onChange={(e) => up("monitoring", { max_clip_seconds: Number(e.target.value) })} /></div>
-          <div className="field"><label htmlFor="tw-views">Twitch clips: make a video once {s.monitoring.twitch_min_views} people watched it</label>
+          <div className="field"><label htmlFor="tw-views">Twitch and Kick clips: make a video once {s.monitoring.twitch_min_views} people watched it</label>
             <input id="tw-views" type="range" min={0} max={1000} step={10} value={s.monitoring.twitch_min_views} onChange={(e) => up("monitoring", { twitch_min_views: Number(e.target.value) })} />
             <span className="hint">For Twitch channels added under Source Accounts: Vyral turns their most-watched new clips into videos.</span></div>
-          <div className="field"><label htmlFor="tw-max">Up to {s.monitoring.twitch_clips_per_check} new Twitch clip{s.monitoring.twitch_clips_per_check === 1 ? "" : "s"} per channel each check</label>
+          <div className="field"><label htmlFor="tw-max">Up to {s.monitoring.twitch_clips_per_check} new Twitch or Kick clip{s.monitoring.twitch_clips_per_check === 1 ? "" : "s"} per channel each check</label>
             <input id="tw-max" type="range" min={1} max={10} value={s.monitoring.twitch_clips_per_check} onChange={(e) => up("monitoring", { twitch_clips_per_check: Number(e.target.value) })} /></div>
           <div className="field"><label htmlFor="conc">Clips rendered at the same time: {s.processing.max_concurrent_jobs}</label>
             <input id="conc" type="range" min={1} max={4} value={s.processing.max_concurrent_jobs} onChange={(e) => up("processing", { max_concurrent_jobs: Number(e.target.value) })} />
