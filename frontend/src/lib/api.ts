@@ -65,7 +65,7 @@ export interface ClipT {
   reference: RefPost | null; outputs: ClipOutputT[];
 }
 export interface TextOverlayT { text: string; start: number; end: number; y_percent: number; size: number; color: string; font: FontKey; all_caps: boolean; outline: number }
-export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; texts: TextOverlayT[] }
+export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked"; cam: number[] | null; texts: TextOverlayT[] }
 export interface EditorData {
   id: number; title: string; section_duration: number; original_start: number; original_duration: number;
   edit: ClipEditT; default_video_height: number; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];

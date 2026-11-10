@@ -1,0 +1,92 @@
+"""Find a streamer's facecam: a small face that stays in one corner or edge while other content fills the screen.
+
+When one is found the clip is laid out stacked: the content on top, the facecam scaled up underneath. A face in
+the middle of the frame or filling much of it is the streamer just talking to camera, so the normal framing stays.
+Detection is OpenCV's bundled face model on a handful of frames; no network, a fraction of a second per clip.
+"""
+from __future__ import annotations
+
+import logging
+import tempfile
+from pathlib import Path
+
+from .ffmpeg import FFmpegError, run
+
+log = logging.getLogger("clippr.facecam")
+
+SAMPLES = 8
+SAMPLE_WIDTH = 640
+CAM_SHARE = 0.4  # share of the output height the facecam panel takes in the stacked layout
+
+
+def _faces(img) -> list[tuple[int, int, int, int]]:
+    import cv2
+    model = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    gray = cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+    h = gray.shape[0]
+    found = model.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(max(20, h // 25),) * 2)
+    return [tuple(int(v) for v in f) for f in found]
+
+
+def pick(frames: list[list[tuple[int, int, int, int]]], width: int, height: int) -> tuple[float, float, float] | None:
+    """The facecam's face as (center x, center y, face width), all as shares of the frame, or None.
+
+    It counts only if the same small, off-center face shows up in at least half of the sampled frames."""
+    cands = []
+    for faces in frames:
+        for x, y, w, h in faces:
+            cx, cy, fw = (x + w / 2) / width, (y + h / 2) / height, w / width
+            small = fw < 0.2
+            off_center = abs(cx - 0.5) > 0.22 or abs(cy - 0.5) > 0.25
+            if small and off_center:
+                cands.append((cx, cy, fw))
+    best, support = None, 0
+    for c in cands:
+        near = [d for d in cands if abs(d[0] - c[0]) < 0.06 and abs(d[1] - c[1]) < 0.08]
+        if len(near) > support:
+            best, support = near, len(near)
+    if not best or support < max(2, len(frames) / 2):
+        return None
+    n = len(best)
+    return sum(d[0] for d in best) / n, sum(d[1] for d in best) / n, sum(d[2] for d in best) / n
+
+
+def cam_box(face: tuple[float, float, float], stream_aspect: float, panel_aspect: float) -> list[float]:
+    """The area of the source (x, y, w, h as shares) shown in the facecam panel: the face with room around it,
+    shaped like the panel and kept inside the frame."""
+    cx, cy, fw = face
+    w = min(1.0, fw * 3.2)
+    h = w * stream_aspect / panel_aspect
+    if h > 1:
+        h, w = 1.0, panel_aspect / stream_aspect
+    x = min(max(cx - w / 2, 0), 1 - w)
+    y = min(max(cy - h * 0.45, 0), 1 - h)
+    return [round(x, 4), round(y, 4), round(w, 4), round(h, 4)]
+
+
+def detect(src: Path, start: float, dur: float, stream_aspect: float, panel_aspect: float) -> list[float] | None:
+    """The facecam's box in the source for this cut, or None if there isn't one (or it couldn't be checked)."""
+    try:
+        import cv2
+    except ImportError:
+        return None
+    frames = []
+    size = None
+    with tempfile.TemporaryDirectory() as tmp:
+        for i in range(SAMPLES):
+            t = start + dur * (i + 0.5) / SAMPLES
+            out = Path(tmp) / f"f{i}.jpg"
+            try:
+                run(["-ss", f"{t:.3f}", "-i", str(src), "-frames:v", "1", "-vf", f"scale={SAMPLE_WIDTH}:-2", "-q:v", "3", str(out)], timeout=60)
+            except FFmpegError:
+                continue
+            img = cv2.imread(str(out))
+            if img is None:
+                continue
+            size = img.shape[1], img.shape[0]
+            frames.append(_faces(img))
+    if not frames or not size:
+        return None
+    face = pick(frames, *size)
+    log.info("facecam %s in %d frames", "found" if face else "not found", len(frames))
+    return cam_box(face, stream_aspect, panel_aspect) if face else None

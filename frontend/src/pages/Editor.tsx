@@ -96,6 +96,7 @@ function EditorBody({ data }: { data: EditorData }) {
   const fullWidth = Math.round((9 / 16 / aspect) * 100) / 100;
   // video_height 0 is "fit to frame": the whole stream across the full width, as clips used to look.
   const zoomedIn = e.video_height > 0;
+  const stacked = e.layout === "stacked" && !!e.cam;
   const boxHeight = zoomedIn ? Math.max(e.video_height, fullWidth) : fullWidth;
   const total = data.section_duration;
   const first = data.outputs[0];
@@ -287,16 +288,18 @@ function EditorBody({ data }: { data: EditorData }) {
 
           <div className="card stack">
             <div className="row"><h2>Framing, zoom and speed</h2><span className="spacer" />
-              <button className="btn ghost sm" onClick={() => patch({ video_height: data.default_video_height, zoom: 1, pan_x: 0.5, pan_y: 0.5 })}>
+              <button className="btn ghost sm" onClick={() => patch({ video_height: data.default_video_height, zoom: 1, pan_x: 0.5, pan_y: 0.5, layout: data.edit.cam ? "stacked" : "normal" })}>
                 <RotateCcw size={12} />Reset to default</button></div>
             <div className="field"><span className="label-text">Framing</span>
               <div className="seg" role="group" aria-label="Framing" style={{ alignSelf: "flex-start" }}>
-                <button className={zoomedIn ? "on" : ""} onClick={() => !zoomedIn && patch({ video_height: data.default_video_height })}>Zoomed in</button>
-                <button className={zoomedIn ? "" : "on"} onClick={() => zoomedIn && patch({ video_height: 0 })}>Fit to frame</button>
+                <button className={!stacked && zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: zoomedIn ? e.video_height : data.default_video_height })}>Zoomed in</button>
+                <button className={!stacked && !zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: 0 })}>Fit to frame</button>
+                {e.cam && <button className={stacked ? "on" : ""} onClick={() => patch({ layout: "stacked" })}>Facecam on bottom</button>}
               </div>
-              <span className="hint">{zoomedIn ? "The stream is scaled up and its sides trimmed so the speaker is bigger on a phone. Left / right picks what stays in view."
+              <span className="hint">{stacked ? "Vyral found the streamer's facecam: the content fills the top and the facecam is scaled up underneath. The preview here shows the normal framing; the rendered video uses this layout. Left / right picks which part of the content stays in view."
+                : zoomedIn ? "The stream is scaled up and its sides trimmed so the speaker is bigger on a phone. Left / right picks what stays in view."
                 : "The whole stream across the width of the frame, with blurred footage above and below."}</span></div>
-            {zoomedIn && (
+            {zoomedIn && !stacked && (
               <div className="field"><label htmlFor="ed-size">Video size: {Math.round(boxHeight * 100)}% of the frame's height</label>
                 <input id="ed-size" type="range" min={Math.min(1, fullWidth + 0.01)} max={1} step={0.01} value={boxHeight}
                   onChange={(ev) => patch({ video_height: Number(ev.target.value) }, "size")} /></div>

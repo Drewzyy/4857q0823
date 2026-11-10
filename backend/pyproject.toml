@@ -17,6 +17,7 @@ dependencies = [
   "imageio-ffmpeg>=0.6",
   "yt-dlp[default,curl-cffi]>=2026.10.26",  # curl-cffi: TikTok only answers browser-like requests
   "faster-whisper>=1.1",
+  "opencv-python-headless>=4.10,<5",  # facecam detection (5.x dropped the bundled face model)
 ]
 
 [project.optional-dependencies]

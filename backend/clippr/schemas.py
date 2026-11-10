@@ -163,4 +163,7 @@ class ClipEdit(Strict):
     pan_x: float = Field(0.5, ge=0, le=1)  # which part stays in view when zoomed (0 left, 1 right)
     pan_y: float = Field(0.5, ge=0, le=1)
     speed: float = Field(1.0, ge=0.5, le=2.0)
+    # "stacked": content on top, the streamer's facecam (cam: x, y, w, h as shares of the source) underneath.
+    layout: Literal["normal", "stacked"] = "normal"
+    cam: list[float] | None = Field(None, min_length=4, max_length=4)
     texts: list[TextOverlay] = Field(default_factory=list, max_length=20)
