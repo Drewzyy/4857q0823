@@ -269,7 +269,7 @@ class Pipeline:
         return [(v, cid, cname) for _, _, v, cid, cname in sorted(entries, key=likelihood)]
 
     def build_clip(self, rid: int, vod_override: str | None = None, waits: int = 0,
-                   stop_requested: Callable[[], bool] = lambda: False) -> dict:
+                   stop_requested: Callable[[], bool] = lambda: False, allow_duplicate: bool = False) -> dict:
         with self.ctx.db.session() as s:
             ref = s.get(ReferenceVideo, rid)
             if not ref:
@@ -358,12 +358,15 @@ class Pipeline:
                 return self._stop(rid, "no_match", f"Couldn't find this moment in {names}'s last {searched} stream(s). "
                                   "If it's from an older stream, paste that stream's link with Retry.", account, ref_url)
             vod, m, matched_id, creator_name = found
-            # Many viewers clip the same Twitch moment: make it once.
+            # Many viewers clip the same Twitch moment: make it once (unless the user pressed Retry to make it anyway).
+            # A clip that has expired doesn't count: the moment can be made again.
             with self.ctx.db.session() as s:
-                for c in s.scalars(select(Clip).where(Clip.vod_url == vod.url, Clip.vod_start.is_not(None))) if from_stream_clip else []:
+                same = select(Clip).where(Clip.vod_url == vod.url, Clip.vod_start.is_not(None), Clip.status == "ready")
+                for c in s.scalars(same) if from_stream_clip and not allow_duplicate else []:
                     overlap = min(c.vod_end, m.end) - max(c.vod_start, m.start)
                     if overlap > 0.5 * min(c.vod_end - c.vod_start, m.end - m.start):
-                        self._set(rid, "duplicate", f"Same moment as \"{c.title}\", which Vyral already made")
+                        self._set(rid, "duplicate", f"Another clip of this same moment was already made: \"{c.title}\" "
+                                  f"(in Ready to Upload). Nothing was posted. Press Retry to make this one too.")
                         return {"status": "duplicate", "clip_id": c.id}
             # A page takes the clip if it lists this streamer, no one, or this streamer's group or members.
             dest_info = [d[:5] for d in all_dests if not d[5] or d[5] & family({matched_id})]
@@ -706,9 +709,9 @@ class Pipeline:
         length = (facts["dur"] - sum(b - a for a, b in facts["rel"])) / facts["speed"]
         if abs(facts["speed"] - 1) > 1e-3:  # speed changes the clip's timing, not its loudness
             db = db[np.round(np.arange(0, len(db), facts["speed"])).astype(int).clip(0, len(db) - 1)] if len(db) else db
-        mo = grade.motion(facts["source"], facts["start"], facts["dur"])
+        mo, loop = grade.picture(facts["source"], facts["start"], facts["dur"])
         lift = grade.voice_lift(facts["source"], facts["start"], facts["dur"])
-        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"], motion=mo, lift=lift,
+        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"], motion=mo, lift=lift, loop=loop,
                              views=facts["views"], likes=facts["likes"], shares=facts["shares"], posted_at=facts["posted_at"],
                              stream_clip=facts["stream_clip"]).to_dict()
         with self.ctx.db.session() as s:
@@ -897,7 +900,8 @@ def register(ctx: Any) -> Pipeline:
     q = ctx.jobs
     q.register("monitor.tick", lambda jc, pl: p.tick())
     q.register("source.check", lambda jc, pl: p.check_source(pl["source_id"]))
-    q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url"), pl.get("waits", 0), jc.cancelled))
+    q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url"), pl.get("waits", 0), jc.cancelled,
+                                                         pl.get("allow_duplicate", False)))
     q.register("intake.link", lambda jc, pl: p.intake_link(pl["url"], pl.get("creator_id")))
     # Jobs queued by versions before the events log carry a raw message; they're dropped rather than resent.
     q.register("notify.discord", lambda jc, pl: events.deliver(ctx, pl["event_id"]) if "event_id" in pl else {"skipped": "old format"})

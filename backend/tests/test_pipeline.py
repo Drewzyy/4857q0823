@@ -860,3 +860,20 @@ def test_hashtags_are_few_specific_and_the_pages_own_first():
                     {"hashtags": ["#streamera", "gaming"]})
     tags = desc.rsplit("\n\n", 1)[-1].split()
     assert tags == ["#streamera", "#gaming", "#warzone", "#clutch", "#vyralclips"]
+
+
+def test_retry_makes_a_clip_of_a_moment_that_was_already_made(env):
+    ctx, c, fake = env
+    cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    sid = c.post("/api/sources", json={"input": "twitch.tv/streamera", "platform": "twitch", "creator_ids": [cid]}).json()["id"]
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_ids": [cid]})
+    soon = datetime.now(timezone.utc) + timedelta(seconds=5)
+    fake.posts = [RemotePost(i, f"https://www.twitch.tv/streamera/clip/{i}", f"clip {i}", posted_at=soon, views=900) for i in ("D1", "D2")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    dup = next(r for r in c.get("/api/references").json() if r["status"] == "duplicate")
+    assert "Nothing was posted" in dup["status_detail"]
+    c.post(f"/api/references/{dup['id']}/retry", json={})
+    drain(ctx)
+    assert next(r for r in c.get("/api/references").json() if r["id"] == dup["id"])["status"] == "ready"
+    assert len(c.get("/api/clips").json()) == 2

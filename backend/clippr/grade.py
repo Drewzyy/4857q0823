@@ -12,6 +12,8 @@ short-form analytics consistently report):
 - The hook also counts a question or "watch this" in the opening: a curiosity gap viewers stay to close.
 - Pacing: steady talking and little dead air keep people watching to the end.
 - Length: 20 to 45 seconds for stream and gaming clips; shorter lacks setup, longer loses viewers.
+- Loops: when the last frame flows back into the first, the clip gets replayed, which platforms count as a
+  rewatch (YouTube Shorts and TikTok creator guidance).
 - Visual pace: the first frame is already moving and the picture keeps changing; the most-viewed clips are
   the fastest, not the best looking.
 - Captions and a title: table stakes now (most people watch muted), so they count, but less.
@@ -131,8 +133,9 @@ def pitch_lift(x: np.ndarray, sr: int) -> float | None:
     return float((f0 > 1.25 * np.median(f0)).mean())
 
 
-def motion(path: Path, start: float, dur: float) -> np.ndarray | None:
-    """How much the picture changes every 0.5 s (0 still .. 1 completely new), from tiny grey frames: cheap."""
+def picture(path: Path, start: float, dur: float) -> tuple[np.ndarray | None, float | None]:
+    """From tiny grey frames twice a second (cheap): how much the picture changes between frames (0 still .. 1
+    all new), and how closely the last frame matches the first (1 = a seamless loop)."""
     import subprocess
 
     w, h = 64, 36
@@ -140,11 +143,12 @@ def motion(path: Path, start: float, dur: float) -> np.ndarray | None:
         raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path), "-an",
                               "-vf", f"fps=2,scale={w}:{h},format=gray", "-f", "rawvideo", "-"], capture_output=True, timeout=120, check=True).stdout
     except (subprocess.SubprocessError, OSError):
-        return None
+        return None, None
     frames = np.frombuffer(raw, dtype=np.uint8)[: len(raw) // (w * h) * w * h].reshape(-1, h, w).astype(np.float32) / 255
     if len(frames) < 2:
-        return None
-    return np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
+        return None, None
+    loop = 1 - min(1.0, float(np.abs(frames[-1] - frames[0]).mean()) / 0.15)
+    return np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2)), loop
 
 
 def _tier(score: int) -> str:
@@ -171,7 +175,8 @@ def _proof(views: int | None, likes: int | None, shares: int | None, posted_at: 
 
 def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: float, has_captions: bool, has_title: bool,
           views: int | None = None, likes: int | None = None, shares: int | None = None, posted_at: datetime | None = None,
-          stream_clip: bool = False, motion: np.ndarray | None = None, lift: float | None = None) -> Grade:
+          stream_clip: bool = False, motion: np.ndarray | None = None, lift: float | None = None,
+          loop: float | None = None) -> Grade:
     """db: loudness every 100 ms of the finished clip. words: (start, end, text) in finished-clip seconds.
     motion: how much the picture changes, 0..1, every 0.5 s of the finished clip (None if it couldn't be read)."""
     parts, tips = [], []
@@ -247,7 +252,11 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
 
     tail = db[int(len(db) * 0.75):] if len(db) else db
     payoff = min(1.0, max(0.0, (float(np.percentile(tail, 90)) - base + 2) / 8)) if len(tail) else 0.0
-    add("Ends on the payoff", payoff, 5, "The last quarter is " + ("as strong as the rest." if payoff >= 0.6 else "quieter than the rest."),
+    # A clip whose last frame flows back into its first gets replayed, and replays count as rewatches.
+    loops = loop is not None and loop >= 0.8
+    add("Ends on the payoff", min(1.0, payoff + (0.4 if loops else 0.0)), 5,
+        "The last quarter is " + ("as strong as the rest" if payoff >= 0.6 else "quieter than the rest")
+        + ("; it loops cleanly back to the start." if loops else "."),
         "End the clip right after the big moment instead of letting it trail off.")
 
     score = sum(p["points"] for p in parts)

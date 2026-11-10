@@ -25,7 +25,7 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   // TikTok tab: post text, streamer + stream date, original hashtags + page hashtags + #vyralclips.
   await card.getByRole("tab", { name: /Streamer A TikTok/ }).click();
   const caption = card.getByLabel("Caption");
-  await expect(caption).toHaveValue(/^He did NOT just say that\n\nStreamer: Streamer A\nStreamed Nov [78], 2026\n\n#fyp #gaming #vyralclips$/);
+  await expect(caption).toHaveValue(/^He did NOT just say that\n\nStreamer: Streamer A\nStreamed Nov [78], 2026\n\n#gaming #vyralclips$/);  // the page's own tag first; generic #fyp dropped
   await expect(card.getByText(/Streamed Nov [78], 2026/).first()).toBeVisible();
   await card.getByRole("button", { name: "Save to computer" }).click();
   await expect(page.getByText(/Saved to .*Downloads.Vyral.*Streamer A TikTok - He did NOT just say that\.mp4/)).toBeVisible();
@@ -40,7 +40,7 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   // YouTube tab has a separate title and #shorts.
   await page.getByRole("tab", { name: /Streamer A YouTube/ }).click();
   await expect(page.getByLabel("Title")).toHaveValue("He did NOT just say that");
-  await expect(page.getByLabel("Description")).toHaveValue(/#fyp #vyralclips #shorts$/);
+  await expect(page.getByLabel("Description")).toHaveValue(/\n\n#vyralclips #shorts$/);
 
   // Mark TikTok uploaded -> it moves to the Uploaded tab, YouTube stays Ready.
   await page.getByRole("tab", { name: /Streamer A TikTok/ }).click();

@@ -363,6 +363,8 @@ def retry_reference(rid: int, body: RetryIn, c=Depends(ctx), s: Session = Depend
         c.jobs.enqueue("intake.link", {"url": r.url, "creator_id": r.creator_id}, max_attempts=3, session=s)
         return _reference(r)
     payload: dict = {"reference_id": rid}
+    if r.status == "duplicate":  # the user wants this one even though the moment was already clipped
+        payload["allow_duplicate"] = True
     if body.vod_url:
         from ..fetch import is_single_video
 

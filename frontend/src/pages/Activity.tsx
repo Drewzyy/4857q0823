@@ -7,7 +7,7 @@ import { Empty, ErrorNote, Loading, Modal, PlatformBadge, relTime, useToast } fr
 import { hms } from "./Ready";
 
 const STATUS: Record<RefPost["status"], [string, string]> = {
-  new: ["", "Queued"], processing: ["accent", "Working"], ready: ["ok", "Clip ready"], no_match: ["warn", "Moment not found"], duplicate: ["", "Already clipped"],
+  new: ["", "Queued"], processing: ["accent", "Working"], ready: ["ok", "Clip ready"], no_match: ["warn", "Moment not found"], duplicate: ["", "Same moment as another clip"],
   needs_setup: ["warn", "Needs setup"], failed: ["err", "Failed"], baseline: ["", "Existing post"],
 };
 
@@ -82,7 +82,7 @@ export default function ActivityPage() {
                 {r.status === "ready" ? <Link className="btn sm" to="/ready">Open</Link>
                   : r.status === "processing" || r.status === "new" ?
                     <button className="btn sm ghost" onClick={async () => { await api.stopReference(r.id); refresh(); }}><Square size={11} />Stop</button>
-                  : (r.status === "no_match" || r.status === "needs_setup" || r.status === "failed") &&
+                  : (r.status === "no_match" || r.status === "needs_setup" || r.status === "failed" || r.status === "duplicate") &&
                     <button className="btn sm" onClick={() => setRetry(r)}><RotateCw size={12} />Retry</button>}
               </div>
             );
