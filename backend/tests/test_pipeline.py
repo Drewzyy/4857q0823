@@ -654,3 +654,32 @@ def test_a_streamers_saved_facecam_spot_is_used_for_new_clips(env):
     assert ed["edit"]["layout"] == "stacked" and ed["edit"]["cam"] == [0.7, 0.6, 0.28, 0.35]
     assert ed["creator"]["facecam"] == [0.7, 0.6, 0.28, 0.35]
     assert c.put(f"/api/creators/{cid}/facecam", json={"cam": None}).json()["facecam"] is None
+
+
+def test_a_streamer_named_in_the_paste_is_the_only_one_searched(env):
+    ctx, c, fake = env
+    jason = c.post("/api/creators", json={"name": "Jason", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/jasontheween"]}).json()["id"]
+    silky = c.post("/api/creators", json={"name": "Silky", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/silky"]}).json()["id"]
+    text = ("https://www.tiktok.com/@a/video/1 jasontheween\n"
+            "https://www.tiktok.com/@a/video/2 silky\n"
+            "https://www.tiktok.com/@a/video/3")
+    assert c.post("/api/intake", json={"text": text}).json()["queued"] == 3
+    from clippr.models import Job
+    with ctx.db.session() as s:
+        got = {j.payload["url"][-1]: j.payload["creator_id"] for j in s.query(Job).filter(Job.kind == "intake.link")}
+    assert got == {"1": jason, "2": silky, "3": None}
+    # The streamer goes onto the post itself, which limits the stream search to them.
+    ctx.pipeline.intake_link("https://www.tiktok.com/@a/video/1", jason)
+    from clippr.models import ReferenceVideo
+    with ctx.db.session() as s:
+        assert s.query(ReferenceVideo).filter(ReferenceVideo.external_id == "1").one().creator_id == jason
+
+
+def test_one_name_covers_a_whole_paste(env):
+    ctx, c, fake = env
+    jason = c.post("/api/creators", json={"name": "Jason", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/jasontheween"]}).json()["id"]
+    c.post("/api/creators", json={"name": "Silky", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/silky"]})
+    c.post("/api/intake", json={"text": "jasontheween\nhttps://www.tiktok.com/@a/video/1\nhttps://www.tiktok.com/@a/video/2"})
+    from clippr.models import Job
+    with ctx.db.session() as s:
+        assert {j.payload["creator_id"] for j in s.query(Job).filter(Job.kind == "intake.link")} == {jason}

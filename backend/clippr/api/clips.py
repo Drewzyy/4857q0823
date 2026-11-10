@@ -319,10 +319,16 @@ def intake(body: IntakeIn, c=Depends(ctx), s: Session = Depends(db)):
         return {"queued": 0, "ignored": len(body.urls)}
     if body.creator_id and not s.get(Creator, body.creator_id):
         raise ApiError(422, "validation", "Creator not found")
+    from ..discord_inbox import parse
     pieces = [*body.urls, body.text or ""]
-    links = list(dict.fromkeys(l for piece in pieces for l in find_links(piece)))[:50]
+    creators = [(x.id, x.name, list(x.vod_channels or [])) for x in s.scalars(select(Creator))]
+    found: dict[str, int | None] = {}
+    for piece in pieces:  # a streamer named next to a link (e.g. "jasontheween") means only their streams are searched
+        for link, named in parse(piece, creators):
+            found.setdefault(link, body.creator_id or named)
+    links = list(found)[:50]
     for url in links:  # a link Vyral already has (or is making) is skipped when the job runs
-        c.jobs.enqueue("intake.link", {"url": url, "creator_id": body.creator_id}, max_attempts=3, session=s)
+        c.jobs.enqueue("intake.link", {"url": url, "creator_id": found[url]}, max_attempts=3, session=s)
     others = sum(len(re.findall(r"https?://\S+", p)) for p in pieces) - len(links)
     return {"queued": len(links), "ignored": max(others, 0)}
 

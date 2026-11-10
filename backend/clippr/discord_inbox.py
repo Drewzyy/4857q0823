@@ -60,17 +60,31 @@ def bot_channels(http: httpx.Client, token: str) -> dict:
     return {"bot": me.get("username", "bot"), "channels": channels}
 
 
-def parse(content: str, creators: list[tuple[int, str, list[str]]]) -> list[tuple[str, int | None]]:
-    """Video links in a message, each with the streamer the rest of the message names (if any)."""
-    words = content.replace("<", " ").replace(">", " ").split()  # Discord wraps links in <> to hide previews
-    links = find_links(content)
-    hint = " ".join(w for w in words if not w.startswith("http"))
+def _named(text: str, creators: list[tuple[int, str, list[str]]]) -> int | None:
+    """The streamer the non-link words name (their name or a channel handle), if any."""
+    hint = " ".join(w for w in text.replace("<", " ").replace(">", " ").split() if "://" not in w)
     best, best_score = None, 0
-    for cid, name, channels in (creators if hint else []):
+    for cid, name, channels in (creators if hint.strip() else []):
         score = max([identify.mention_score(name, hint)] + [identify.mention_score(identify.channel_handle(ch), hint) for ch in channels])
         if score > best_score:
             best, best_score = cid, score
-    return [(link, best) for link in links]
+    return best
+
+
+def parse(content: str, creators: list[tuple[int, str, list[str]]]) -> list[tuple[str, int | None]]:
+    """Video links in a message or paste, each with the streamer named next to it (same line), or the one streamer
+    the whole text names. Only that streamer's streams are then searched."""
+    per_line = [(find_links(line), _named(line, creators)) for line in content.splitlines() or [content]]
+    # One name for the whole paste ("jasontheween" then a list of links) covers every link; once lines name their
+    # own streamers, a line without one stays open to everyone.
+    overall = None if any(links and named for links, named in per_line) else _named(content, creators)
+    out: dict[str, int | None] = {}
+    for links, here in per_line:
+        for link in links:
+            out.setdefault(link, here or overall)
+    for link in find_links(content):  # links split across lines by a glued paste
+        out.setdefault(link, overall)
+    return list(out.items())
 
 
 class DiscordInbox:
