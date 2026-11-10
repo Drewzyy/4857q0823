@@ -280,6 +280,6 @@ test("video editor: facecam on bottom with a hand-drawn box", async ({ page }) =
   await page.mouse.up();
   await page.getByRole("button", { name: /Use this spot for every/ }).click();
   await expect(page.getByText(/clips will use this spot/)).toBeVisible();
-  await page.screenshot({ path: process.env.SHOT ?? "facecam.png", fullPage: true });
+  if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT, fullPage: true });
   await page.getByRole("button", { name: "Save & render" }).click();
 });
