@@ -189,6 +189,7 @@ class ClipEdit(Strict):
     cut_dead_air: bool = False
     thumb_at: float | None = Field(None, ge=0)  # cover frame, in source seconds; None picks one a second in
     gaps: list[list[float]] = Field(default_factory=list, max_length=200)  # silent stretches, in source seconds
+    cuts: list[list[float]] = Field(default_factory=list, max_length=50)  # stretches the user cut out, in source seconds
     texts: list[TextOverlay] = Field(default_factory=list, max_length=20)
     layers: list[LayerEdit] = Field(default_factory=list, max_length=20)
 

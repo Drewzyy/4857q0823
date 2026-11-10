@@ -751,3 +751,24 @@ def test_gameplay_split_stickers_and_presets(env, tmp_path):
     assert c.get("/api/clips").json()[0]["outputs"][0]["render_state"] == "ready"
     c.delete(f"/api/presets/{pid}")
     assert c.get("/api/presets").json() == []
+
+
+def test_cutting_a_part_out_shortens_the_clip(env):
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("cut1", "https://www.tiktok.com/@a.clips/video/cut1", "cut me")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    clip = c.get("/api/clips").json()[0]
+    e = c.get(f"/api/clips/{clip['id']}/editor").json()["edit"]
+    s0 = e["start"]
+    assert c.put(f"/api/clips/{clip['id']}/edit", json={**e, "cuts": [[e["start"], e["end"] - 0.5]]}).status_code == 422  # nothing left
+    assert c.put(f"/api/clips/{clip['id']}/edit", json={**e, "cut_dead_air": False, "cuts": [[s0 + 2, s0 + 5], [s0 + 4, s0 + 6]]}).status_code == 200
+    drain(ctx)
+    out = c.get("/api/clips").json()[0]["outputs"][0]
+    with ctx.db.session() as s:
+        path = Path(s.get(ClipOutput, out["id"]).file_path)
+    expect = (e["end"] - e["start"]) - 4  # the overlapping cuts remove 2..6 s
+    assert abs(probe(path).duration - expect) < 0.4, (probe(path).duration, expect)

@@ -67,7 +67,7 @@ export interface LayerT { media_id: number; start: number; end: number; x: numbe
 export interface MediaItemT { id: number; name: string; kind: "video" | "image"; width: number | null; height: number | null; duration: number | null; available: boolean }
 export interface PresetData { texts: TextOverlayT[]; layers: LayerT[]; bottom_media: number | null }
 export interface PresetT { id: number; name: string; data: PresetData }
-export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked" | "split"; cam: number[] | null; bottom_media: number | null; cut_dead_air: boolean; gaps: number[][]; thumb_at: number | null; layers: LayerT[]; texts: TextOverlayT[] }
+export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked" | "split"; cam: number[] | null; bottom_media: number | null; cut_dead_air: boolean; gaps: number[][]; cuts: number[][]; thumb_at: number | null; layers: LayerT[]; texts: TextOverlayT[] }
 export interface EditorData {
   id: number; title: string; section_duration: number; original_start: number; original_duration: number;
   edit: ClipEditT; default_video_height: number; creator: { id: number; name: string; facecam: number[] | null } | null; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];

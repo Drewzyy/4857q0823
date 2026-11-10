@@ -26,3 +26,8 @@ def test_never_cut_too_short():
     rel = [(1.0, 3.0)]
     assert deadair.removed_before(5, rel) == 2 and deadair.removed_before(2, rel) == 1
     assert deadair.inside(2, rel) and not deadair.inside(3, rel)
+
+
+def test_cuts_and_dead_air_merge():
+    rel = deadair.relative([[2, 5], [4, 6], [10, 11]], 1, 8)
+    assert rel == [(1.0, 5.0)]  # [2,5] and [4,6] merge; [10,11] is past the 8 s cut

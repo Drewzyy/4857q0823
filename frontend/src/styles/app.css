@@ -260,6 +260,8 @@ input[type=range] { accent-color: var(--accent); }
 .ed-keep { position: absolute; top: 3px; bottom: 3px; background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 5px; pointer-events: none; }
 .ed-handle { position: absolute; top: -2px; bottom: -2px; width: 12px; margin-left: -6px; background: var(--accent); border-radius: 4px; cursor: ew-resize; z-index: 2; }
 .ed-handle::after { content: ""; position: absolute; left: 5px; top: 30%; bottom: 30%; width: 2px; background: rgba(255,255,255,.7); border-radius: 1px; }
+.ed-cut { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, rgba(229,72,77,.55) 0 6px, rgba(229,72,77,.25) 6px 12px); pointer-events: none; }
+.ed-cut.pending { background: rgba(229,72,77,.3); outline: 1px dashed #e5484d; }
 .ed-head { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: #fff; pointer-events: none; z-index: 3; }
 .ed-track { position: relative; height: 18px; background: var(--bg-2); border-radius: 5px; overflow: hidden; }
 .ed-chip { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; font-size: 10px; line-height: 14px; padding: 0 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

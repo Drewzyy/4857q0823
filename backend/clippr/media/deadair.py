@@ -41,11 +41,15 @@ def detect(src: Path, start: float, dur: float) -> list[list[float]]:
 
 
 def relative(gaps: list[list[float]] | None, start: float, dur: float) -> list[tuple[float, float]]:
-    """Gaps inside the cut, as seconds from its start."""
-    out = []
-    for a, b in gaps or []:
-        a, b = max(a - start, 0.0), min(b - start, dur)
-        if b - a > 0.05:
+    """Gaps inside the cut, as seconds from its start, sorted and with overlaps merged (dead air and the user's
+    own cuts can overlap)."""
+    out: list[tuple[float, float]] = []
+    for a, b in sorted((max(a - start, 0.0), min(b - start, dur)) for a, b in gaps or []):
+        if b - a <= 0.05:
+            continue
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
             out.append((a, b))
     return out
 

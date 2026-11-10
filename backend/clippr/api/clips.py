@@ -232,6 +232,10 @@ def save_edit(cid: int, body: ClipEdit, c=Depends(ctx), s: Session = Depends(db)
     clip = get_or_404(s, Clip, cid, "Clip")
     if body.end > _footage_seconds(clip) + 0.05 or body.end - body.start < 1:
         raise ApiError(422, "validation", "The clip must be at least 1 second long and inside the downloaded footage")
+    from ..media.deadair import relative
+    kept = body.end - body.start - sum(b - a for a, b in relative(body.cuts, body.start, body.end - body.start))
+    if kept < 1:
+        raise ApiError(422, "validation", "Your cuts leave less than 1 second of clip")
     clip.edit = body.model_dump()
     outs = _live_outputs(s, cid)
     for o in outs:

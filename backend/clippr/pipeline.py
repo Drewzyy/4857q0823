@@ -519,8 +519,8 @@ class Pipeline:
                 bottom = files[edit["bottom_media"]][0]
             layers = [Layer(files[ly["media_id"]][0], ly["start"], ly["end"], ly["x"], ly["y"], ly["width"], files[ly["media_id"]][1])
                       for ly in edit.get("layers") or [] if ly["media_id"] in files]  # a file removed from the library is skipped
-            if edit.get("cut_dead_air"):
-                rel = deadair.relative(edit.get("gaps"), start, dur)
+            removed = (edit.get("gaps") or [] if edit.get("cut_dead_air") else []) + (edit.get("cuts") or [])
+            rel = deadair.relative(removed, start, dur)
 
             def at(t: float) -> float:  # source time from the cut's start to finished-clip time
                 return (t - deadair.removed_before(t, rel)) / speed

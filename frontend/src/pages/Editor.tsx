@@ -95,6 +95,7 @@ function EditorBody({ data }: { data: EditorData }) {
   const stk = useRef<HTMLCanvasElement>(null); // stacked layout preview: content on top, facecam below
   const pick = useRef<HTMLCanvasElement>(null); // the whole stream frame, to draw the facecam box on
   const [draft, setDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [cutFrom, setCutFrom] = useState<number | null>(null); // the start of a cut being marked
   const [savedCam, setSavedCam] = useState<number[] | null>(data.creator?.facecam ?? null);
   const [aspect, setAspect] = useState(16 / 9);
   // Share of the 9:16 frame's height the stream fills when it spans the full width (about 32% for 16:9).
@@ -127,6 +128,8 @@ function EditorBody({ data }: { data: EditorData }) {
       const v = video.current;
       if (v) {
         if (!v.paused && v.currentTime >= e.end) { v.pause(); v.currentTime = e.start; }
+        const inCut = !v.paused && eRef.current.cuts.find(([a, b]) => v.currentTime >= a && v.currentTime < b - 0.05);
+        if (inCut) v.currentTime = inCut[1];  // the preview plays the clip as it will render
         setT(v.currentTime);
         const c = bg.current?.getContext("2d");
         if (c && v.readyState >= 2 && v.currentTime !== drawn) {
@@ -182,6 +185,7 @@ function EditorBody({ data }: { data: EditorData }) {
     else if (key === " ") { ev.preventDefault(); toggle(); }
     else if (key === "[") setStart(t);
     else if (key === "]") setEnd(t);
+    else if (key === "c") { if (cutFrom === null) setCutFrom(t); else finishCut(); }
   };
   useEffect(() => {
     const listener = (ev: KeyboardEvent) => onKey.current(ev);
@@ -229,6 +233,13 @@ function EditorBody({ data }: { data: EditorData }) {
   // Timeline: the whole downloaded section, with the kept part highlighted.
   const bar = useRef<HTMLDivElement>(null);
   const pct = (s: number) => `${(s / total) * 100}%`;
+  const cutLen = e.cuts.reduce((n, [a, b]) => n + Math.max(0, Math.min(b, e.end) - Math.max(a, e.start)), 0);
+  const finishCut = () => {
+    if (cutFrom === null) return;
+    const a = r1(Math.max(e.start, Math.min(cutFrom, t))), b = r1(Math.min(e.end, Math.max(cutFrom, t)));
+    setCutFrom(null);
+    if (b - a >= 0.1) patch({ cuts: [...e.cuts, [a, b]].sort((x, y) => x[0] - y[0]) });
+  };
   const atX = (x: number) => { const r = bar.current!.getBoundingClientRect(); return clamp(((x - r.left) / r.width) * total, 0, total); };
   const drag = (which: "start" | "end") => (ev: React.PointerEvent) => {
     ev.preventDefault(); ev.stopPropagation();
@@ -301,6 +312,8 @@ function EditorBody({ data }: { data: EditorData }) {
               <div className="ed-keep" style={{ left: pct(e.start), width: pct(len) }} />
               <div className="ed-handle" style={{ left: pct(e.start) }} onPointerDown={drag("start")} title="Drag to change the start" />
               <div className="ed-handle" style={{ left: pct(e.end) }} onPointerDown={drag("end")} title="Drag to change the end" />
+              {e.cuts.map(([a, b], i) => <div key={i} className="ed-cut" style={{ left: pct(a), width: pct(b - a) }} title="Cut out" />)}
+              {cutFrom !== null && <div className="ed-cut pending" style={{ left: pct(Math.min(cutFrom, t)), width: pct(Math.abs(t - cutFrom)) }} />}
               <div className="ed-head" style={{ left: pct(t) }} />
             </div>
             <div className="ed-track" aria-label="Captions">
@@ -317,8 +330,21 @@ function EditorBody({ data }: { data: EditorData }) {
                 <NumField id="ed-end" max={r1(total)} value={e.end} onCommit={setEnd} /></div>
               <div className="field"><span className="label-text">At the playhead</span>
                 <div className="row"><button className="btn sm" onClick={() => setStart(t)}>Set start</button><button className="btn sm" onClick={() => setEnd(t)}>Set end</button></div></div>
+              <div className="field"><span className="label-text">Cut out a part</span>
+                <div className="row">{cutFrom === null
+                  ? <button className="btn sm" onClick={() => setCutFrom(t)} title="Or press C">Start cut here</button>
+                  : <><button className="btn sm primary" onClick={finishCut} title="Or press C again">End cut here</button>
+                    <button className="btn sm ghost" onClick={() => setCutFrom(null)}>Cancel</button></>}</div></div>
             </div>
-            <p className="small faint">Kept {len.toFixed(1)} s of the {total.toFixed(0)} s that was downloaded. The shaded band is the part Vyral matched to the post.</p>
+            {e.cuts.length > 0 && (
+              <div className="row wrap small" style={{ gap: 6 }}>
+                {e.cuts.map(([a, b], i) => (
+                  <span key={i} className="chip">Cut {fmt(a - e.start)} to {fmt(b - e.start)}
+                    <button className="btn ghost icon" aria-label={`Put back cut ${i + 1}`} onClick={() => patch({ cuts: e.cuts.filter((_, j) => j !== i) })}><Undo2 size={12} /></button></span>
+                ))}
+              </div>
+            )}
+            <p className="small faint">Kept {(len - cutLen).toFixed(1)} s of the {total.toFixed(0)} s that was downloaded. The shaded band is the part Vyral matched to the post; red parts are cut out. The preview skips them.</p>
           </div>
 
           <div className="card stack">
