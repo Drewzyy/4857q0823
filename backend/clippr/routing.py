@@ -1,5 +1,6 @@
-"""Which pages a clip goes to. There's nothing to wire: each page lists the streamers whose clips it takes
-(none listed = every streamer), and a clip goes to every enabled page that takes its streamer.
+"""Which pages a clip goes to: each page lists the streamers whose clips it takes (set from either side: a
+streamer's "Post to" list or a page's streamer list), and a clip goes to every enabled page that lists its
+streamer. A page with no streamers listed gets no streamer's clips.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ def source_creator_ids(src: SourceAccount) -> list[int]:
 
 
 def destination_creator_ids(dest: DestinationAccount) -> list[int]:
-    """Every streamer whose clips a page takes. Empty means any streamer."""
+    """Every streamer whose clips a page takes."""
     ids = [int(i) for i in (dest.creator_ids or [])]
     if not ids and dest.creator_id:
         ids = [dest.creator_id]
@@ -27,8 +28,7 @@ def destination_creator_ids(dest: DestinationAccount) -> list[int]:
 
 def takes(dest: DestinationAccount, creator_ids: set[int]) -> bool:
     """Whether a page takes clips of any of these streamers."""
-    mine = destination_creator_ids(dest)
-    return not mine or bool(set(mine) & creator_ids)
+    return bool(set(destination_creator_ids(dest)) & creator_ids)
 
 
 def pages_for(s: Session, creator_ids: set[int]) -> list[DestinationAccount]:

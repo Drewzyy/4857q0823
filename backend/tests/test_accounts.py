@@ -59,14 +59,14 @@ def _setup(client):
 
 
 def test_pages_take_their_streamers_clips(client):
-    """No wiring: a watched account's clips go to every enabled page set to its streamer, or to any streamer."""
+    """A watched account's clips go to every enabled page that lists its streamer; a page listing none gets none."""
     a, b, sa, sa2, sb, d = _setup(client)
     counts = {x["id"]: x["page_count"] for x in client.get("/api/sources").json()}
     assert counts[sa] == counts[sa2] == 3 and counts[sb] == 1  # A has three pages, B one
-    client.post("/api/destinations", json={"platform": "tiktok", "display_name": "Everyone"})  # no streamer: takes all
-    assert next(x["page_count"] for x in client.get("/api/sources").json() if x["id"] == sb) == 2
+    client.post("/api/destinations", json={"platform": "tiktok", "display_name": "Nobody yet"})  # no streamers: takes none
+    assert next(x["page_count"] for x in client.get("/api/sources").json() if x["id"] == sb) == 1
     client.patch(f"/api/destinations/{d['A YT']}", json={"enabled": False})
-    assert next(x["page_count"] for x in client.get("/api/sources").json() if x["id"] == sa) == 3  # A TikTok, A Insta, Everyone
+    assert next(x["page_count"] for x in client.get("/api/sources").json() if x["id"] == sa) == 2  # A TikTok, A Insta
 
 
 def test_settings_validation_and_persistence(client):

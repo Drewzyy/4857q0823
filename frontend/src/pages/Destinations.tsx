@@ -43,7 +43,7 @@ export default function Destinations() {
               <div className="card" key={d.id} style={{ opacity: d.enabled ? 1 : 0.6 }}>
                 <InlineNames d={d} onSave={(b) => quick.mutateAsync({ id: d.id, b })} />
                 <div className="row wrap small" style={{ marginTop: 12, gap: 10 }}>
-                  {d.creator_ids.length === 0 ? <span className="faint small">Any streamer</span>
+                  {d.creator_ids.length === 0 ? <span className="faint small">No streamers yet</span>
                     : d.creator_ids.map((id) => <CreatorChip key={id} creator={(creators.data ?? []).find((c) => c.id === id) ?? null} />)}
                   <span className="faint">{d.settings.format.resolution} · {d.settings.format.fps} fps max</span>
                 </div>
@@ -116,7 +116,7 @@ function AddModal({ creators, onClose, onDone }: { creators: Creator[]; onClose:
           <select id="ad-plat" className="select" value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}>
             {DEST_PLATFORMS.map((p) => <option key={p} value={p}>{PLATFORM_LABEL[p]}</option>)}</select></div>
         <div className="field"><span className="label-text">Streamers whose clips go here</span>
-          <CreatorPicker label="Streamers for this page" creators={creators} value={creatorIds} onChange={setCreatorIds} empty="Any streamer" hint="Clips of any streamer picked here go to this page. Pick none to take every streamer's clips." /></div>
+          <CreatorPicker label="Streamers for this page" creators={creators} value={creatorIds} onChange={setCreatorIds} empty="None yet" hint="Clips of every streamer picked here go to this page. You can also set this from each streamer under Source Accounts." /></div>
         <div className="field"><label htmlFor="ad-name">Name</label><input id="ad-name" className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Streamer A TikTok" /></div>
         <div className="field"><label htmlFor="ad-handle">Handle</label><input id="ad-handle" className="input" value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="@streamera.clips" /></div>
       </form>
@@ -145,7 +145,7 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
     <Modal open wide onClose={onClose} title={<span className="row"><PlatformBadge platform={dest.platform} />{dest.display_name}</span>}
       footer={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy && <span className="spinner" />}Save</button></>}>
       <div className="field"><span className="label-text">Streamers whose clips go here</span>
-        <CreatorPicker label="Streamers for this page" creators={creators} value={creatorIds} onChange={setCreatorIds} empty="Any streamer" hint="Clips of any streamer picked here go to this page. Pick none to take every streamer's clips." /></div>
+        <CreatorPicker label="Streamers for this page" creators={creators} value={creatorIds} onChange={setCreatorIds} empty="None yet" hint="Clips of every streamer picked here go to this page. You can also set this from each streamer under Source Accounts." /></div>
       <h3>Caption added to every clip</h3>
       <div className="field"><label htmlFor="ds-cap">Extra caption text</label>
         <textarea id="ds-cap" className="textarea" rows={2} maxLength={2200} value={s.default_caption} onChange={(e) => setS({ ...s, default_caption: e.target.value })} placeholder="Follow for daily clips" /></div>

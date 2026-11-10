@@ -60,7 +60,7 @@ export default function LongformPage() {
           <span className="small faint">or drop it anywhere in this box</span><span className="spacer" />
           <label className="small" htmlFor="lf-streamer">Streamer</label>
           <select id="lf-streamer" className="select" style={{ width: 200 }} value={creatorId ?? ""} onChange={(e) => setCreatorId(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">None (pages set to Any streamer)</option>{(creators.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+            <option value="">None (post to all my pages)</option>{(creators.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
           <label className="small" htmlFor="lf-count">Clips: {count}</label>
           <input id="lf-count" type="range" min={1} max={20} value={count} onChange={(e) => setCount(Number(e.target.value))} style={{ width: 120 }} />
         </div>

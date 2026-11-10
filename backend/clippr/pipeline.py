@@ -300,11 +300,11 @@ class Pipeline:
             def family(ids: set[int]) -> set[int]:
                 mine = set().union(*(handles.get(i, set()) for i in ids))
                 return ids | {cid for cid, h in handles.items() if h & mine}
-            # Every enabled page that takes one of these streamers (pages with none listed take everyone).
+            # Every enabled page that takes one of these streamers.
             dests = pages_for(s, family({c.id for c in usable}))
             if not dests:
-                return self._stop(rid, "needs_setup", f"No page takes {usable[0].name}'s clips yet. Under Destinations, add one "
-                                  f"or set a page to {usable[0].name} or Any streamer.", account, ref.url)
+                return self._stop(rid, "needs_setup", f"No page takes {usable[0].name}'s clips yet. Under Source Accounts, pick pages "
+                                  f"in {usable[0].name}'s Post to list.", account, ref.url)
             all_dests = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {}), frozenset(destination_creator_ids(d))) for d in dests]
             from_twitch = ref.platform == "twitch"
             from_stream_clip = ref.platform in STREAM_CLIP_PLATFORMS
@@ -368,11 +368,11 @@ class Pipeline:
                         self._set(rid, "duplicate", f"Another clip of this same moment was already made: \"{c.title}\" "
                                   f"(in Ready to Upload). Nothing was posted. Press Retry to make this one too.")
                         return {"status": "duplicate", "clip_id": c.id}
-            # A page takes the clip if it lists this streamer, no one, or this streamer's group or members.
-            dest_info = [d[:5] for d in all_dests if not d[5] or d[5] & family({matched_id})]
+            # A page takes the clip if it lists this streamer, or this streamer's group or members.
+            dest_info = [d[:5] for d in all_dests if d[5] & family({matched_id})]
             if not dest_info:
                 return self._stop(rid, "needs_setup", f"This is a {creator_name} clip, but no page takes {creator_name}'s clips. "
-                                  f"Under Destinations, set a page to {creator_name} or to Any streamer.", account, ref_url)
+                                  f"Under Source Accounts, pick pages in {creator_name}'s Post to list.", account, ref_url)
             with self.ctx.db.session() as s:
                 s.get(ReferenceVideo, rid).creator_id = matched_id
             if m.end - m.start > cfg.monitoring.max_clip_seconds:
@@ -455,14 +455,14 @@ class Pipeline:
             creator = s.get(Creator, creator_id) if creator_id else None
             creator_name = creator.name if creator else ""
             hints = [creator.name, *filter(None, map(identify.channel_handle, creator.vod_channels or []))] if creator else []
+            # With no streamer picked, the clips go to every enabled page.
             dests = pages_for(s, {creator_id}) if creator_id else \
-                [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique() if not destination_creator_ids(d)]
+                list(s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique())
             dest_info = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {})) for d in dests]
             cfg = load_settings(s)
         if not dest_info:
-            who = f"{creator_name}'s clips" if creator_name else "clips of any streamer"
-            self._lf(lid, "failed", f"No page takes {who}. Under Destinations, add one or set a page to "
-                     f"{creator_name or 'Any streamer'}, then press Retry.")
+            where = f"pick pages in {creator_name}'s Post to list under Source Accounts" if creator_name else "add a page under Destinations"
+            self._lf(lid, "failed", f"No page to post these to yet: {where}, then press Retry.")
             return {"status": "needs_setup"}
         work = self._dir("tmp") / f"longform-{lid}-{random.randrange(1 << 30)}"
         work.mkdir(parents=True, exist_ok=True)

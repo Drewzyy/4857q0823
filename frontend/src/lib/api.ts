@@ -3,6 +3,11 @@
 export type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "twitch" | "kick";
 
 export interface Creator { id: number; name: string; color: string; notes: string; vod_channels: string[]; clip_permission: boolean; sources?: number; destinations?: number }
+export interface StreamerT {
+  id: number; name: string; color: string; links: string[]; destination_ids: number[]; watching: boolean;
+  channels: { id: number; platform: Platform; username: string; monitoring: "active" | "paused"; last_check: string | null; next_check: string | null; error: string | null }[];
+  posts: number; clips: number;
+}
 export interface Folder { id: number; name: string; sources?: number }
 
 export interface Source {
@@ -142,25 +147,19 @@ const qs = (p: Record<string, string | number | undefined | null>) => {
 export const api = {
   health: () => request<Health>("GET", "/health"),
   dashboard: () => request<Dashboard>("GET", "/dashboard"),
+  streamers: () => request<StreamerT[]>("GET", "/streamers"),
+  addStreamer: (b: { name: string; links: string[]; destination_ids: number[]; permission: boolean }) => request<StreamerT>("POST", "/streamers", b),
+  updateStreamer: (id: number, b: Partial<{ name: string; links: string[]; destination_ids: number[]; watching: boolean }>) => request<StreamerT>("PATCH", `/streamers/${id}`, b),
+  removeStreamer: (id: number) => request<void>("DELETE", `/streamers/${id}`),
   creators: () => request<Creator[]>("GET", "/creators"),
-  createCreatorFull: (b: { name: string; color?: string; vod_channels: string[]; clip_permission: boolean }) => request<Creator>("POST", "/creators", b),
-  updateCreator: (id: number, b: Partial<Creator>) => request<Creator>("PATCH", `/creators/${id}`, b),
   setCreatorFacecam: (id: number, cam: number[] | null) => request<Creator>("PUT", `/creators/${id}/facecam`, { cam }),
-  deleteCreator: (id: number) => request<void>("DELETE", `/creators/${id}`),
-  folders: () => request<Folder[]>("GET", "/folders"),
   createFolder: (name: string) => request<Folder>("POST", "/folders", { name }),
   deleteFolder: (id: number) => request<void>("DELETE", `/folders/${id}`),
   sources: (f: { q?: string; creator_id?: number | null; folder_id?: number | null; monitoring?: string; platform?: string } = {}) =>
     request<Source[]>("GET", "/sources" + qs(f)),
-  addSource: (b: { input: string; platform: Platform; creator_ids?: number[]; folder_id?: number | null }) => request<Source>("POST", "/sources", b),
   updateSource: (id: number, b: Partial<{ creator_id: number | null; creator_ids: number[]; folder_id: number | null; monitoring: string; notes: string }>) =>
     request<Source>("PATCH", `/sources/${id}`, b),
   deleteSource: (id: number) => request<void>("DELETE", `/sources/${id}`),
-  bulkSources: (b: { ids: number[]; action: "pause" | "resume" | "delete" | "assign"; creator_id?: number | null; folder_id?: number | null }) =>
-    request<{ updated: number }>("POST", "/sources/bulk", b),
-  importSourcesFile: (file: File) => { const fd = new FormData(); fd.append("file", file); return request<ImportResult>("POST", "/sources/import", fd); },
-  importSourcesText: (b: { text: string; platform: Platform; creator_id?: number | null; folder_id?: number | null }) =>
-    request<ImportResult>("POST", "/sources/import-text", b),
   destinations: () => request<Destination[]>("GET", "/destinations"),
   addDestination: (b: { platform: Platform; display_name: string; handle?: string; creator_ids?: number[] }) => request<Destination>("POST", "/destinations", b),
   updateDestination: (id: number, b: Partial<{ display_name: string; handle: string; creator_ids: number[]; enabled: boolean; settings: Partial<DestinationSettings> }>) =>
@@ -225,7 +224,6 @@ export const api = {
   testNotification: (category?: string) => request<{ sent: boolean }>("POST", "/notifications/test", category ? { category } : {}),
 };
 
-export interface ImportResult { added: number; skipped_duplicates: number; errors: { line: number; input: string; message: string }[] }
 
 export const PLATFORM_LABEL: Record<string, string> = {
   tiktok: "TikTok", youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", twitch: "Twitch", kick: "Kick",

@@ -73,30 +73,30 @@ test("destinations are just names and handles you can edit", async ({ page }) =>
   await expect(page.getByRole("button", { name: /Connect/ })).toHaveCount(0);
 });
 
-test("creators carry their stream channels and permission, sources show watch status", async ({ page }) => {
+test("source accounts: add a streamer with their stream link and the pages to post to", async ({ page }) => {
   await page.goto("/sources");
-  await expect(page.getByRole("button", { name: "Check @streamera.clips now" })).toBeVisible();
-  await page.getByRole("button", { name: "New creator" }).click();
-  await page.getByLabel("Streamer / creator name").fill("Streamer B");
-  await page.getByLabel(/Where their full streams are/).fill("https://evil.example/x");
-  await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText(/evil.example/)).toBeVisible();
-  await page.getByLabel(/Where their full streams are/).fill("twitch.tv/streamerb");
-  await page.getByLabel(/I have permission to clip/).check();
-  await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.locator(".filter-btn", { hasText: "Streamer B" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Add account" }).first().click();
-  await page.getByLabel("Username or profile link").fill("@streamerb.clips");
-  await page.getByRole("button", { name: "Creator", exact: true }).click();
-  await page.getByRole("checkbox", { name: "Streamer B" }).check();
-  await page.getByRole("checkbox", { name: "Streamer A" }).check();  // one account clipping two streamers
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Check @streamerb.clips now" })).toBeVisible();
-  const picker = page.getByRole("button", { name: "Creators for @streamerb.clips" });
-  await expect(picker).toContainText("Streamer A");
-  await expect(picker).toContainText("Streamer B");
-
+  await expect(page.getByRole("button", { name: "Add account" })).toHaveCount(0);  // no clipping-account step
+  await page.getByRole("button", { name: "Add streamer" }).first().click();
+  await page.getByLabel("Name").fill("Valkyrae");
+  await page.getByLabel("Stream link").fill("https://www.twitch.tv/valkyrae");
+  await page.getByRole("button", { name: "Pages for this streamer" }).click();
+  const firstPage = page.getByRole("dialog").getByRole("checkbox").first();
+  await firstPage.check();
+  await page.getByLabel("Name").click();  // closes the page list
+  const add = page.getByRole("dialog").getByRole("button", { name: "Add streamer" });
+  await expect(add).toBeDisabled();  // permission first
+  await page.getByLabel("I have permission to clip this streamer's content").check();
+  await add.click();
+  await expect(page.getByText("Valkyrae added. Vyral is watching their channel.")).toBeVisible();
+  const row = page.getByRole("row", { name: /Valkyrae/ });
+  await expect(row.getByRole("button", { name: "Pages for Valkyrae" })).not.toContainText("No pages yet");
+  await expect(row.getByRole("switch", { name: "Watch Valkyrae" })).toBeChecked();
+  if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
+  await row.getByRole("switch", { name: "Watch Valkyrae" }).click();
+  await expect(row.getByRole("switch", { name: "Watch Valkyrae" })).not.toBeChecked();
+  await row.getByRole("button", { name: "Remove Valkyrae" }).click();
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(page.getByRole("row", { name: /Valkyrae/ })).toHaveCount(0);
 });
 
 test("discord and storage settings", async ({ page }) => {
