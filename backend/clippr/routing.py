@@ -28,9 +28,17 @@ def source_creator_ids(src: SourceAccount) -> list[int]:
     return ids
 
 
+def destination_creator_ids(dest: DestinationAccount) -> list[int]:
+    """Every streamer whose clips a page takes. Empty means any streamer."""
+    ids = [int(i) for i in (dest.creator_ids or [])]
+    if not ids and dest.creator_id:
+        ids = [dest.creator_id]
+    return ids
+
+
 def creators_conflict(src: SourceAccount, dest: DestinationAccount) -> bool:
-    ids = source_creator_ids(src)
-    return bool(ids) and dest.creator_id is not None and dest.creator_id not in ids
+    ids, mine = source_creator_ids(src), destination_creator_ids(dest)
+    return bool(ids) and bool(mine) and not set(ids) & set(mine)
 
 
 def create_route(s: Session, source_id: int, destination_id: int, allow_cross_creator: bool = False) -> FunnelRoute:
@@ -41,7 +49,7 @@ def create_route(s: Session, source_id: int, destination_id: int, allow_cross_cr
         raise RouteError(f"{src.username} already feeds {dest.display_name}", "duplicate")
     if creators_conflict(src, dest) and not allow_cross_creator:
         raise RouteError(
-            f"{src.username} doesn't clip {dest.creator.name}, but {dest.display_name} belongs to {dest.creator.name}. Confirm to mix creators.",
+            f"{src.username} doesn't clip any streamer {dest.display_name} is set to. Confirm to mix creators.",
             "cross_creator",
         )
     route = FunnelRoute(source_id=source_id, destination_id=destination_id, allow_cross_creator=creators_conflict(src, dest))
@@ -60,7 +68,7 @@ def auto_route_by_creator(s: Session, creator_id: int | None = None) -> int:
             ids = [i for i in ids if i == creator_id]
         if not ids:
             continue
-        for dest in s.scalars(select(DestinationAccount).where(DestinationAccount.creator_id.in_(ids))).unique():
+        for dest in [d for d in s.scalars(select(DestinationAccount)).unique() if set(destination_creator_ids(d)) & set(ids)]:
             exists = s.scalar(select(FunnelRoute).where(FunnelRoute.source_id == src.id, FunnelRoute.destination_id == dest.id))
             if not exists:
                 s.add(FunnelRoute(source_id=src.id, destination_id=dest.id))

@@ -52,6 +52,7 @@ class Fetcher(Protocol):
     def recent_vods(self, channel_url: str, limit: int) -> list[RemoteVod]: ...
     def vod_details(self, url: str) -> RemoteVod: ...
     def download_section(self, url: str, start: float, end: float, dest_dir: Path) -> Path: ...
+    def twitch_clip_origin(self, url: str) -> tuple[str, float] | None: ...
 
 
 MONITORABLE = ("tiktok", "youtube", "twitch")
@@ -210,6 +211,30 @@ class YtDlpFetcher:
             if e and e.get("id"):
                 out.append(RemoteVod(str(e["id"]), e.get("url") or e.get("webpage_url"), e.get("title") or "", e.get("duration"), _date(e)))
         return out
+
+    def twitch_clip_origin(self, url: str) -> tuple[str, float] | None:
+        """The stream a Twitch clip was cut from and where in it the clip starts, as Twitch reports it publicly
+        (the same anonymous web request yt-dlp makes for clips). None if the stream was deleted or isn't saved."""
+        m = re.search(r"(?:clips\.twitch\.tv/(?:embed\?clip=)?|twitch\.tv/(?:\w+/)?clip/)([\w-]+)", url)
+        if not m:
+            return None
+        import httpx
+        client_id = "ue6666qo983tsx6so1t0vnawi233wa"  # Twitch's public web client, as yt-dlp uses
+        try:  # follow yt-dlp if it ever changes it
+            from yt_dlp.extractor.twitch import TwitchBaseIE
+            client_id = TwitchBaseIE._CLIENT_ID.fget(type("C", (), {"_configuration_arg": lambda self, *a, **k: a[1]})())[0] or client_id
+        except Exception:
+            pass
+        body = {"query": "query($slug: ID!) { clip(slug: $slug) { videoOffsetSeconds video { id } } }", "variables": {"slug": m[1]}}
+        try:
+            r = httpx.post("https://gql.twitch.tv/gql", json=body, headers={"Client-ID": client_id}, timeout=20)
+            clip = ((r.json() or {}).get("data") or {}).get("clip") or {}
+        except (httpx.HTTPError, ValueError):
+            return None
+        vid, offset = (clip.get("video") or {}).get("id"), clip.get("videoOffsetSeconds")
+        if not vid or offset is None:
+            return None
+        return f"https://www.twitch.tv/videos/{vid}", float(offset)
 
     def vod_details(self, url: str) -> RemoteVod:
         e = self._extract(url, noplaylist=True)

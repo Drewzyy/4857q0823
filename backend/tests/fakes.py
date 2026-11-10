@@ -19,6 +19,7 @@ class FakeFetcher:
         self.calls: list[tuple] = []
         self.fail_listing = False
         self.live: set[str] = set()  # stream urls that are still being broadcast
+        self.origins: dict[str, tuple[str, float]] = {}  # Twitch clip url -> (its stream, offset)
 
     def recent_posts(self, platform, username, profile_url, limit):
         self.calls.append(("posts", username))
@@ -53,6 +54,10 @@ class FakeFetcher:
         run(["-ss", f"{max(0, start - 1.7):.2f}", "-i", str(self.m["stream"]), "-t", f"{end - start + 1.7:.2f}",
              "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(out)])
         return out
+
+    def twitch_clip_origin(self, url):
+        self.calls.append(("origin", url))
+        return self.origins.get(url)
 
     def vod_details(self, url):
         self.calls.append(("vod_details", url))

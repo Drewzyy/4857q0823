@@ -67,9 +67,10 @@ def _creator_counts(s: Session) -> dict[int, dict[str, int]]:
     for src in s.scalars(select(SourceAccount)).unique():
         for cid in source_creator_ids(src):
             out.setdefault(cid, {"sources": 0, "destinations": 0})["sources"] += 1
-    for cid, n in s.execute(select(DestinationAccount.creator_id, func.count()).group_by(DestinationAccount.creator_id)):
-        if cid:
-            out.setdefault(cid, {"sources": 0, "destinations": 0})["destinations"] = n
+    from ..routing import destination_creator_ids
+    for d in s.scalars(select(DestinationAccount)).unique():
+        for cid in destination_creator_ids(d):
+            out.setdefault(cid, {"sources": 0, "destinations": 0})["destinations"] += 1
     return out
 
 
@@ -389,12 +390,14 @@ class DestinationDraftIn(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
     handle: str = Field("", max_length=100)
     creator_id: int | None = None
+    creator_ids: list[int] | None = Field(None, max_length=50)
 
 
 class DestinationPatch(BaseModel):
     display_name: str | None = Field(None, min_length=1, max_length=200)
     handle: str | None = Field(None, max_length=100)
     creator_id: int | None = None
+    creator_ids: list[int] | None = Field(None, max_length=50)
     enabled: bool | None = None
     settings: dict | None = None
 
@@ -410,15 +413,22 @@ def _handle(h: str) -> str:
     return f"@{h}" if h else ""
 
 
+def _dest_ids(s: Session, ids: list[int]) -> list[int]:
+    ids = list(dict.fromkeys(int(i) for i in ids))
+    for i in ids:
+        _check_refs(s, i, None)
+    return ids
+
+
 @router.get("/destinations")
 def list_destinations(platform: str | None = None, creator_id: int | None = None, s: Session = Depends(db)):
     stmt = select(DestinationAccount).order_by(DestinationAccount.platform, DestinationAccount.display_name)
     if platform:
         stmt = stmt.where(DestinationAccount.platform == platform)
-    if creator_id:
-        stmt = stmt.where(DestinationAccount.creator_id == creator_id)
+    from ..routing import destination_creator_ids
     counts = _route_counts(s, FunnelRoute.destination_id)
-    return [ser.destination(d, counts.get(d.id, 0)) for d in s.scalars(stmt).unique()]
+    return [ser.destination(d, counts.get(d.id, 0)) for d in s.scalars(stmt).unique()
+            if not creator_id or creator_id in destination_creator_ids(d)]
 
 
 @router.post("/destinations", status_code=201)
@@ -426,9 +436,10 @@ def add_destination_draft(body: DestinationDraftIn, s: Session = Depends(db)):
     """Add a page you post to. You upload to it yourself, so no login is needed."""
     if body.platform not in DESTINATION_PLATFORMS:
         raise ApiError(422, "validation", "Unsupported platform")
-    _check_refs(s, body.creator_id, None)
+    ids = _dest_ids(s, body.creator_ids if body.creator_ids is not None else ([body.creator_id] if body.creator_id else []))
     d = DestinationAccount(platform=body.platform, external_id=f"manual:{uuid.uuid4().hex}", display_name=body.display_name.strip(),
-                           handle=_handle(body.handle), creator_id=body.creator_id, settings=default_destination_settings(body.platform))
+                           handle=_handle(body.handle), creator_id=ids[0] if ids else None, creator_ids=ids,
+                           settings=default_destination_settings(body.platform))
     s.add(d)
     s.flush()
     s.refresh(d)
@@ -440,7 +451,11 @@ def add_destination_draft(body: DestinationDraftIn, s: Session = Depends(db)):
 def update_destination(did: int, body: DestinationPatch, s: Session = Depends(db)):
     d = get_or_404(s, DestinationAccount, did, "Destination account")
     data = body.model_dump(exclude_unset=True)
-    _check_refs(s, data.get("creator_id"), None)
+    if "creator_ids" in data or "creator_id" in data:
+        ids = data.pop("creator_ids", None)
+        one = data.pop("creator_id", None)
+        ids = _dest_ids(s, ids if ids is not None else ([one] if one else []))
+        d.creator_ids, d.creator_id = ids, (ids[0] if ids else None)
     if "settings" in data:
         try:
             merged = deep_merge(ser.normalized_settings(d.settings), data.pop("settings") or {})

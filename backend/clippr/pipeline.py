@@ -25,7 +25,7 @@ from .media.overlay import Word
 from .media.render import OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
 from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
-from .routing import resolve_destinations, source_creator_ids
+from .routing import destination_creator_ids, resolve_destinations, source_creator_ids
 from .schemas import ClipEdit, OverlaySettings, lenient
 
 log = logging.getLogger("clippr.pipeline")
@@ -209,6 +209,30 @@ class Pipeline:
             s.add(asset)
         return feats
 
+    def _twitch_origin(self, url: str, ref_feats, candidates: list, account: str | None, live: list) -> tuple | None:
+        """A Twitch clip says which saved stream it's from and where: use that instead of searching by sound.
+        A quick sound check around that spot confirms it (and fine-tunes the start)."""
+        try:
+            origin = self.ctx.fetcher.twitch_clip_origin(url)
+        except Exception:
+            log.exception("twitch clip lookup failed")
+            origin = None
+        if not origin:
+            return None
+        vod_url, offset = origin
+        try:
+            vod = self.ctx.fetcher.vod_details(vod_url)
+        except FetchError:
+            return None
+        handle = (account or "").lower()
+        cid, cname = next(((c, n) for c, n, chs in candidates if any(identify.channel_handle(ch).lower() == handle for ch in chs)),
+                          (candidates[0][0], candidates[0][1]))
+        if vod.is_live:
+            live.append(cname)
+            return None
+        length = len(ref_feats) / match.FPS
+        return vod, match.MatchResult(offset, offset + length, 1.0), cid, cname
+
     def _search_order(self, candidates: list, text: str, posted_at: datetime | None, per_channel: int) -> list:
         """Every candidate stream, most likely first: streams of the streamer the post names, then streams that
         started before the post was made, newest first (one that started after it can't contain the moment).
@@ -260,13 +284,13 @@ class Pipeline:
             if src:
                 dests = [r.destination for r in resolve_destinations(s, src.id)]
             else:  # a pasted link goes to the matched streamer's pages and to pages not tied to any streamer
-                dests = list(s.scalars(select(DestinationAccount).where(
-                    DestinationAccount.enabled.is_(True),
-                    or_(DestinationAccount.creator_id.in_([c.id for c in usable]), DestinationAccount.creator_id.is_(None)))).unique())
+                wanted = {c.id for c in usable}
+                dests = [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()
+                         if not destination_creator_ids(d) or wanted & set(destination_creator_ids(d))]
             if not dests:
                 where = f"@{account}" if account else usable[0].name
                 return self._stop(rid, "needs_setup", f"Route {where} to at least one destination in the Account Funnel.", account, ref.url)
-            all_dests = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {}), d.creator_id) for d in dests]
+            all_dests = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {}), frozenset(destination_creator_ids(d))) for d in dests]
             from_twitch = ref.platform == "twitch"
             ref_url, ref_title, posted_at = ref.url, ref.title, ref.posted_at
         self._set(rid, "processing", "Listening to the post")
@@ -276,8 +300,11 @@ class Pipeline:
             ref_feats = match.extract_features(ref_audio)
 
             found, searched, live = None, 0, []
-            self._set(rid, "processing", "Finding the most likely streams")
-            for v, cid, cname in self._search_order(candidates, f"{ref_title or ''} {account or ''}", posted_at, cfg.monitoring.streams_to_search):
+            if from_twitch and not vod_override:
+                found = self._twitch_origin(ref_url, ref_feats, candidates, account, live)
+            if not found and not live:
+                self._set(rid, "processing", "Finding the most likely streams")
+            for v, cid, cname in ([] if found or live else self._search_order(candidates, f"{ref_title or ''} {account or ''}", posted_at, cfg.monitoring.streams_to_search)):
                 if stop_requested():  # the user pressed Stop; the job is already marked cancelled
                     return {"status": "stopped"}
                 if v.is_live:
@@ -315,7 +342,8 @@ class Pipeline:
             # A group's page (e.g. The Core) also takes clips of its members: their channels overlap.
             chans = {cid: {identify.channel_handle(c).lower() for c in chs} - {""} for cid, _, chs in candidates}
             group = {cid for cid, ch in chans.items() if ch & chans.get(matched_id, set())}
-            dest_info = [d[:5] for d in all_dests if d[5] in (None, matched_id) or d[5] in group or (src and d[5] not in covered)]
+            # A page set to several streamers takes a clip of any of them; a page set to none takes everyone's.
+            dest_info = [d[:5] for d in all_dests if not d[5] or matched_id in d[5] or d[5] & group or (src and not d[5] & covered)]
             if not dest_info:
                 others = ", ".join(d[2] for d in all_dests)
                 where = (f"@{account}'s pages ({others}) are each set to another streamer it covers. Under Destinations, set one to "

@@ -52,7 +52,8 @@ def destination(d: DestinationAccount, route_count: int = 0) -> dict[str, Any]:
     return {
         "id": d.id, "platform": d.platform, "external_id": None if d.external_id.startswith(("draft:", "manual:")) else d.external_id,
         "handle": d.handle, "display_name": d.display_name, "avatar_url": d.avatar_url,
-        "creator": creator(d.creator), "settings": normalized_settings(d.settings), "enabled": d.enabled,
+        "creator": creator(d.creator), "creator_ids": [int(i) for i in (d.creator_ids or [])] or ([d.creator_id] if d.creator_id else []),
+        "settings": normalized_settings(d.settings), "enabled": d.enabled,
         "status": "manual",  # you upload each clip yourself
         "route_count": route_count, "created_at": _dt(d.created_at),
     }

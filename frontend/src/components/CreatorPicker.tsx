@@ -3,7 +3,8 @@ import { ChevronDown } from "lucide-react";
 import type { Creator } from "../lib/api";
 
 /** Pick one or more streamers (a general clipping account can cover several). */
-export default function CreatorPicker({ creators, value, onChange, label }: { creators: Creator[]; value: number[]; onChange: (ids: number[]) => void; label: string }) {
+export default function CreatorPicker({ creators, value, onChange, label, empty = "None", hint = "Pick several if this account clips more than one streamer." }:
+  { creators: Creator[]; value: number[]; onChange: (ids: number[]) => void; label: string; empty?: string; hint?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -16,7 +17,7 @@ export default function CreatorPicker({ creators, value, onChange, label }: { cr
     <div ref={ref} style={{ position: "relative", minWidth: 150 }}>
       <button type="button" className="select" aria-label={label} aria-expanded={open} onClick={() => setOpen(!open)}
         style={{ textAlign: "left", display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center", minHeight: 30, backgroundImage: "none" }}>
-        {chosen.length === 0 ? <span className="faint">None</span> : chosen.map((c) => (
+        {chosen.length === 0 ? <span className="faint">{empty}</span> : chosen.map((c) => (
           <span key={c.id} className="chip" style={{ padding: "0 6px" }}><span className="dot" style={{ background: c.color }} />{c.name}</span>))}
         <ChevronDown size={12} style={{ marginLeft: "auto" }} />
       </button>
@@ -30,7 +31,7 @@ export default function CreatorPicker({ creators, value, onChange, label }: { cr
               <span className="dot" style={{ width: 8, height: 8, borderRadius: 3, background: c.color }} />{c.name}
             </label>
           ))}
-          <p className="small faint" style={{ padding: "4px 6px 0" }}>Pick several if this account clips more than one streamer.</p>
+          <p className="small faint" style={{ padding: "4px 6px 0" }}>{hint}</p>
         </div>
       )}
     </div>

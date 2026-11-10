@@ -23,7 +23,7 @@ export interface DestinationSettings {
 }
 export interface Destination {
   id: number; platform: Platform; external_id: string | null; handle: string; display_name: string; avatar_url: string | null;
-  creator: Creator | null; settings: DestinationSettings; enabled: boolean;
+  creator: Creator | null; creator_ids: number[]; settings: DestinationSettings; enabled: boolean;
   status: "manual"; route_count: number; created_at: string;
 }
 export interface Route { id: number; source_id: number; destination_id: number; enabled: boolean; allow_cross_creator: boolean; blocked: boolean }
@@ -156,8 +156,8 @@ export const api = {
   importSourcesText: (b: { text: string; platform: Platform; creator_id?: number | null; folder_id?: number | null }) =>
     request<ImportResult>("POST", "/sources/import-text", b),
   destinations: () => request<Destination[]>("GET", "/destinations"),
-  addDestination: (b: { platform: Platform; display_name: string; handle?: string; creator_id?: number | null }) => request<Destination>("POST", "/destinations", b),
-  updateDestination: (id: number, b: Partial<{ display_name: string; handle: string; creator_id: number | null; enabled: boolean; settings: Partial<DestinationSettings> }>) =>
+  addDestination: (b: { platform: Platform; display_name: string; handle?: string; creator_ids?: number[] }) => request<Destination>("POST", "/destinations", b),
+  updateDestination: (id: number, b: Partial<{ display_name: string; handle: string; creator_ids: number[]; enabled: boolean; settings: Partial<DestinationSettings> }>) =>
     request<Destination>("PATCH", `/destinations/${id}`, b),
   deleteDestination: (id: number) => request<void>("DELETE", `/destinations/${id}`),
   funnel: () => request<Funnel>("GET", "/funnel"),

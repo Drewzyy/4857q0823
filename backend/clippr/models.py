@@ -91,6 +91,7 @@ class DestinationAccount(Base):
     display_name: Mapped[str] = mapped_column(String(200))
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)
+    creator_ids: Mapped[list[Any]] = mapped_column(default=list)  # every streamer whose clips this page takes; empty = any
     settings: Mapped[dict[str, Any]] = mapped_column(default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)

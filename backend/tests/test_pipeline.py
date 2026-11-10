@@ -596,3 +596,41 @@ def test_a_link_that_wont_open_shows_up_and_can_be_retried(env):
     assert "reference_id" in ctx.pipeline.intake_link(link)
     with ctx.db.session() as s:
         assert [r.external_id for r in s.query(ReferenceVideo)] == ["9"]  # the placeholder row is gone
+
+
+def test_twitch_clip_goes_straight_to_its_own_stream(env):
+    """A Twitch clip says which stream it's from and where, so no streams are searched by sound."""
+    ctx, c, fake = env
+    cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    sid = c.post("/api/sources", json={"input": "twitch.tv/streamera", "platform": "twitch", "creator_ids": [cid]}).json()["id"]
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_id": cid})
+    c.post("/api/funnel/auto-route", json={})
+    url = "https://www.twitch.tv/streamera/clip/Exact1"
+    fake.origins[url] = ("https://www.twitch.tv/videos/7", 131.0)
+    fake.posts = [RemotePost("Exact1", url, "clip", posted_at=datetime.now(timezone.utc) + timedelta(seconds=5), views=900)]
+    assert ctx.pipeline.check_source(sid)["new"] == 1
+    drain(ctx)
+    ref = c.get("/api/references").json()[0]
+    assert ref["status"] == "ready", ref
+    assert not [x for x in fake.calls if x[0] == "vods"]  # no stream list was searched
+    assert ("section", "https://www.twitch.tv/videos/7") in [x[:2] for x in fake.calls]
+
+
+def test_a_page_can_take_several_streamers(env):
+    """One page set to two streamers takes clips of either, and auto-route connects both streamers' accounts."""
+    ctx, c, fake = env
+    a = c.post("/api/creators", json={"name": "Jason", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/jasontheween"]}).json()["id"]
+    b = c.post("/api/creators", json={"name": "Silky", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/silky"]}).json()["id"]
+    other = c.post("/api/creators", json={"name": "Other", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/other"]}).json()["id"]
+    page = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "core page", "creator_ids": [a, b]}).json()
+    assert page["creator_ids"] == [a, b]
+    sa = c.post("/api/sources", json={"input": "twitch.tv/jasontheween", "platform": "twitch", "creator_ids": [a]}).json()["id"]
+    sb = c.post("/api/sources", json={"input": "twitch.tv/silky", "platform": "twitch", "creator_ids": [b]}).json()["id"]
+    so = c.post("/api/sources", json={"input": "twitch.tv/other", "platform": "twitch", "creator_ids": [other]}).json()["id"]
+    assert c.post("/api/funnel/auto-route", json={}).json()["created"] == 2  # Other's account isn't connected
+    assert [d["id"] for d in c.get(f"/api/destinations?creator_id={b}").json()] == [page["id"]]
+    counts = {x["id"]: x["destinations"] for x in c.get("/api/creators").json()}
+    assert counts[a] == counts[b] == 1 and counts[other] == 0
+    # Editing it down to one streamer, or to none (any streamer), works.
+    assert c.patch(f"/api/destinations/{page['id']}", json={"creator_ids": [b]}).json()["creator_ids"] == [b]
+    assert c.patch(f"/api/destinations/{page['id']}", json={"creator_ids": []}).json()["creator_ids"] == []

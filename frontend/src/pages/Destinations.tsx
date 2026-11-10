@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, Plus, Settings2, Trash2, Upload, X } from "lucide-react";
+import CreatorPicker from "../components/CreatorPicker";
 import { api, PLATFORM_LABEL, type Creator, type Destination, type DestinationSettings, type Platform } from "../lib/api";
 import { ConfirmModal, CreatorChip, Empty, ErrorNote, Loading, Modal, PlatformBadge, Toggle, useToast } from "../components/ui";
 import { OverlayEditor } from "../components/OverlayEditor";
@@ -42,7 +43,8 @@ export default function Destinations() {
               <div className="card" key={d.id} style={{ opacity: d.enabled ? 1 : 0.6 }}>
                 <InlineNames d={d} onSave={(b) => quick.mutateAsync({ id: d.id, b })} />
                 <div className="row wrap small" style={{ marginTop: 12, gap: 10 }}>
-                  <CreatorChip creator={d.creator} />
+                  {d.creator_ids.length === 0 ? <span className="faint small">Any streamer</span>
+                    : d.creator_ids.map((id) => <CreatorChip key={id} creator={(creators.data ?? []).find((c) => c.id === id) ?? null} />)}
                   <span className="faint">{d.route_count} source{d.route_count === 1 ? "" : "s"} feeding it</span>
                   <span className="faint">{d.settings.format.resolution} · {d.settings.format.fps} fps max</span>
                 </div>
@@ -102,10 +104,10 @@ function AddModal({ creators, onClose, onDone }: { creators: Creator[]; onClose:
   const [platform, setPlatform] = useState<Platform>("tiktok");
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
-  const [creatorId, setCreatorId] = useState<number | null>(null);
+  const [creatorIds, setCreatorIds] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
-    try { await api.addDestination({ platform, display_name: name, handle, creator_id: creatorId }); onDone(); onClose(); }
+    try { await api.addDestination({ platform, display_name: name, handle, creator_ids: creatorIds }); onDone(); onClose(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   return (
@@ -114,9 +116,8 @@ function AddModal({ creators, onClose, onDone }: { creators: Creator[]; onClose:
         <div className="field"><label htmlFor="ad-plat">Platform</label>
           <select id="ad-plat" className="select" value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}>
             {DEST_PLATFORMS.map((p) => <option key={p} value={p}>{PLATFORM_LABEL[p]}</option>)}</select></div>
-        <div className="field"><label htmlFor="ad-creator">Creator</label>
-          <select id="ad-creator" className="select" value={creatorId ?? ""} onChange={(e) => setCreatorId(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">None</option>{creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+        <div className="field"><span className="label-text">Streamers whose clips go here</span>
+          <CreatorPicker label="Streamers for this page" creators={creators} value={creatorIds} onChange={setCreatorIds} empty="Any streamer" hint="Clips of any streamer picked here go to this page. Pick none to take every streamer's clips." /></div>
         <div className="field"><label htmlFor="ad-name">Name</label><input id="ad-name" className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Streamer A TikTok" /></div>
         <div className="field"><label htmlFor="ad-handle">Handle</label><input id="ad-handle" className="input" value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="@streamera.clips" /></div>
       </form>
@@ -126,7 +127,7 @@ function AddModal({ creators, onClose, onDone }: { creators: Creator[]; onClose:
 }
 
 function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination; creators: Creator[]; onClose: () => void; onSaved: () => void }) {
-  const [creatorId, setCreatorId] = useState<number | null>(dest.creator?.id ?? null);
+  const [creatorIds, setCreatorIds] = useState<number[]>(dest.creator_ids ?? []);
   const [s, setS] = useState<DestinationSettings>(structuredClone(dest.settings));
   const [hashtags, setHashtags] = useState(dest.settings.hashtags.join(" "));
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +135,7 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
   const save = async () => {
     setBusy(true); setError(null);
     const tags = hashtags.split(/[\s,]+/).filter(Boolean).map((t) => (t.startsWith("#") ? t : `#${t}`));
-    try { await api.updateDestination(dest.id, { creator_id: creatorId, settings: { default_caption: s.default_caption, hashtags: tags, format: s.format, overlay: s.overlay } }); onSaved(); }
+    try { await api.updateDestination(dest.id, { creator_ids: creatorIds, settings: { default_caption: s.default_caption, hashtags: tags, format: s.format, overlay: s.overlay } }); onSaved(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -144,10 +145,8 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
   return (
     <Modal open wide onClose={onClose} title={<span className="row"><PlatformBadge platform={dest.platform} />{dest.display_name}</span>}
       footer={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy && <span className="spinner" />}Save</button></>}>
-      <div className="field"><label htmlFor="ds-creator">Creator</label>
-        <select id="ds-creator" className="select" value={creatorId ?? ""} onChange={(e) => setCreatorId(e.target.value ? Number(e.target.value) : null)}>
-          <option value="">None</option>{creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-        <span className="hint">Clips from other creators are never routed here unless you confirm it in the funnel.</span></div>
+      <div className="field"><span className="label-text">Streamers whose clips go here</span>
+        <CreatorPicker label="Streamers for this page" creators={creators} value={creatorIds} onChange={setCreatorIds} empty="Any streamer" hint="Clips of any streamer picked here go to this page. Pick none to take every streamer's clips." /></div>
       <h3>Caption added to every clip</h3>
       <div className="field"><label htmlFor="ds-cap">Extra caption text</label>
         <textarea id="ds-cap" className="textarea" rows={2} maxLength={2200} value={s.default_caption} onChange={(e) => setS({ ...s, default_caption: e.target.value })} placeholder="Follow for daily clips" /></div>
