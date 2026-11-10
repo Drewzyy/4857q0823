@@ -35,7 +35,7 @@ def test_reaction_lines_add_points():
     moments.speech_bonus(m, [(0.2, 0.5, "no"), (0.5, 0.8, "way"), (0.9, 1.2, "bro"), (1.3, 1.6, "let's"), (1.6, 1.9, "go")])
     flat = moments.Moment(0, 30, 15, 50.0)
     moments.speech_bonus(flat, [(10, 10.5, "okay")])
-    assert m.score > flat.score and "reaction lines" in " ".join(m.why)
+    assert m.score > flat.score and "awe" in " ".join(m.why)
 
 
 def test_a_dropped_in_file_becomes_clips(env, tmp_path):
@@ -83,3 +83,21 @@ def test_clips_start_and_end_on_whole_sentences():
     moments.snap(m, words, offset=94.0)
     assert abs(m.start - (97.0 - 0.15)) < 0.01  # opens on "So", not mid-sentence
     assert abs(m.end - (131.2 + 0.3)) < 0.01  # ends after "crazy!"
+
+
+def test_a_reaction_word_at_the_peak_beats_the_same_word_elsewhere():
+    near = moments.Moment(0, 30, 15, 50.0)
+    moments.speech_bonus(near, [(14.5, 15.0, "no"), (15.0, 15.4, "way")])
+    far = moments.Moment(0, 30, 15, 50.0)
+    moments.speech_bonus(far, [(1.0, 1.5, "no"), (1.5, 1.9, "way")])
+    assert near.score > far.score and "right at the peak" in " ".join(near.why)
+
+
+def test_pitch_lift_hears_a_raised_voice():
+    from clippr.grade import pitch_lift
+    sr = 8000
+    t = np.arange(sr * 4) / sr
+    calm = 0.3 * np.sin(2 * np.pi * 120 * t)
+    yell = np.concatenate([calm[: sr * 2], 0.3 * np.sin(2 * np.pi * 220 * t[: sr * 2])])  # half the time pitched way up
+    assert pitch_lift(calm.astype(np.float32), sr) < 0.05
+    assert pitch_lift(yell.astype(np.float32), sr) > 0.3

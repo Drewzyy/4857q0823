@@ -282,7 +282,7 @@ function EditorBody({ data }: { data: EditorData }) {
                 style={{ objectPosition: `${e.pan_x * 100}% ${e.pan_y * 100}%`, transform: `scale(${e.zoom})`, transformOrigin: `${e.pan_x * 100}% ${e.pan_y * 100}%` }} />
             </div>
             {inRange && overlay?.title.enabled && first.video_title.trim() && out < overlay.title.duration &&
-              <div className="ov-text" style={css(overlay.title)}>{first.video_title.replace(/\p{Extended_Pictographic}/gu, "")}</div>}
+              <div className="ov-text" style={css(overlay.title)}>{first.video_title}</div>}
             {overlay?.captions.enabled && caption && <div className="ov-text" style={css(overlay.captions)}>{caption.text}</div>}
             {split && <video key={e.bottom_media} src={api.libraryUrl(e.bottom_media!)} muted autoPlay loop playsInline
               style={{ position: "absolute", left: 0, right: 0, bottom: 0, width: "100%", height: "50%", objectFit: "cover" }} />}

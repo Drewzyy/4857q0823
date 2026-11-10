@@ -13,6 +13,12 @@ from media_fixtures import make_stream_and_clip, speechlike, write_wav
 TOKEN = "test-token"
 
 
+@pytest.fixture(autouse=True)
+def _offline_emoji(monkeypatch):
+    """Tests never download emoji pictures; emoji tests put the pictures in place themselves."""
+    monkeypatch.setenv("CLIPPR_OFFLINE_EMOJI", "1")
+
+
 @pytest.fixture
 def ctx(tmp_path):
     cfg = Config(data_dir=tmp_path / "data", port=8765, api_token=TOKEN, run_worker=False, secret_backend="memory")

@@ -1,0 +1,1 @@
+Emoji graphics on rendered videos: Twemoji (https://github.com/jdecked/twemoji), Copyright Twitter, Inc. and other contributors, licensed CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Downloaded on first use; not modified.

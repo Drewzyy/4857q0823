@@ -40,3 +40,14 @@ def test_stream_clip_views_count_as_proof():
     hot = grade(**common, views=2500, stream_clip=True)
     cold = grade(**common, views=3, stream_clip=True)
     assert hot.score > cold.score + 15
+
+
+def test_emotion_and_a_curious_opening_score_higher():
+    db = _db(30)
+    plain = grade(db=db, words=[(0.1, 0.4, "so"), (0.5, 0.8, "today"), (0.9, 1.2, "we"), (10, 10.3, "okay")], length=30, has_captions=True, has_title=True)
+    hyped = grade(db=db, words=[(0.1, 0.4, "wait"), (0.5, 0.8, "watch"), (0.9, 1.2, "this"), (10, 10.3, "no"), (10.3, 10.6, "way"),
+                                (11, 11.3, "oh"), (11.3, 11.6, "no"), (12, 12.3, "run")], length=30, has_captions=True, has_title=True, lift=0.3)
+    part = lambda g, n: next(p for p in g.parts if p["name"] == n)["points"]  # noqa: E731
+    assert part(hyped, "Hook in the first 3 seconds") > part(plain, "Hook in the first 3 seconds")
+    assert part(hyped, "Energy and emotion") > part(plain, "Energy and emotion")
+    assert "awe" in next(p for p in hyped.parts if p["name"] == "Energy and emotion")["note"]

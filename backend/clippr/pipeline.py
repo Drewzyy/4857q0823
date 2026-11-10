@@ -493,8 +493,9 @@ class Pipeline:
                     log.exception("couldn't transcribe a candidate; judged on sound alone")
                     words = []
                 moments.snap(m, words, offset)
+                lift = grade.voice_lift(piece, m.start - offset, m.end - m.start)
                 moments.speech_bonus(m, [(a + offset - m.start, b + offset - m.start, t) for a, b, t in words
-                                         if m.start <= a + offset < m.end])
+                                         if m.start <= a + offset < m.end], lift)
             chosen = moments.pick(cands, wanted)
             self._lf(lid, "processing", f"Found {len(chosen)} moments. Making the clips",
                      moments=[m.to_dict() for m in chosen])
@@ -651,8 +652,12 @@ class Pipeline:
             words = [Word(at(w.start + shift), at(w.end + shift), w.text) for w in words if not deadair.inside(w.start + shift, rel)]
         out_dur = (dur - sum(b - a for a, b in rel)) / speed
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
+        placed: list = []
         if use_text:
-            overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts))
+            overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts,
+                                                      emoji_cache=self._dir("emoji"), emoji_out=placed))
+        # Emoji pictures go under the text, each in the gap the text left for it.
+        layers += [Layer(pic, a, b, pl.x / fmt.width, pl.y / fmt.height, pl.size / fmt.width, False) for a, b, pl, pic in placed]
         with self.ctx.db.session() as s:
             use_hardware = load_settings(s).processing.hardware_encoding
         render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan,
@@ -702,7 +707,8 @@ class Pipeline:
         if abs(facts["speed"] - 1) > 1e-3:  # speed changes the clip's timing, not its loudness
             db = db[np.round(np.arange(0, len(db), facts["speed"])).astype(int).clip(0, len(db) - 1)] if len(db) else db
         mo = grade.motion(facts["source"], facts["start"], facts["dur"])
-        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"], motion=mo,
+        lift = grade.voice_lift(facts["source"], facts["start"], facts["dur"])
+        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"], motion=mo, lift=lift,
                              views=facts["views"], likes=facts["likes"], shares=facts["shares"], posted_at=facts["posted_at"],
                              stream_clip=facts["stream_clip"]).to_dict()
         with self.ctx.db.session() as s:

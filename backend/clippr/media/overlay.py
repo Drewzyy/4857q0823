@@ -10,6 +10,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import emoji
+
 FONT_DIR = Path(__file__).parent / "fonts"
 # Average character width / font size, measured from the bundled fonts (upper, lower case).
 FONT_WIDTH = {"montserrat": (0.66, 0.55), "anton": (0.42, 0.40), "bebas": (0.34, 0.34), "poppins": (0.59, 0.51)}
@@ -153,16 +155,34 @@ def _ts(t: float) -> str:
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0000FE0F\U0000200D\U0001F1E6-\U0001F1FF]")
 
 
-def _clean(text: str, caps: bool) -> str:
-    # Color emoji can't be drawn by the video text renderer; they stay in the written caption only.
-    text = re.sub(r"\s+", " ", _EMOJI.sub("", text))
+def _clean(text: str, caps: bool, keep_emoji: bool = False) -> str:
+    # The text renderer can't draw color emoji: they're removed, or (keep_emoji) placed as pictures by emoji.layout.
+    text = re.sub(r"\s+", " ", text if keep_emoji else _EMOJI.sub("", text))
     text = text.replace("\\", "/").replace("{", "(").replace("}", ")").replace("\n", " ").strip()
     return text.upper() if caps else text
 
 
-def build_ass(width: int, height: int, overlay: dict, title_text: str, words: list[Word], duration: float, texts: list[dict] | None = None) -> str:
+def build_ass(width: int, height: int, overlay: dict, title_text: str, words: list[Word], duration: float, texts: list[dict] | None = None,
+              emoji_cache: Path | None = None, emoji_out: list | None = None) -> str:
+    """emoji_cache: where emoji pictures are kept; with it, emoji in the title and texts are kept, and
+    emoji_out gets (start, end, emoji.Placed, picture) for each, to lay over the video under the text."""
     scale = width / 1080
     t, c = overlay["title"], overlay["captions"]
+
+    def text_for(raw: str, caps: bool, font_key: str, size_px: float, y: float, start: float, end: float) -> str:
+        if emoji_cache is None or emoji_out is None or not emoji.has_emoji(raw):
+            return _clean(raw, caps)
+        # Emoji that can't be had (offline, unknown) are dropped; the rest get a gap and a picture.
+        try:
+            pics = {e: emoji.image(e, emoji_cache) for e in emoji.split(raw) if emoji.is_emoji(e)}
+            kept = "".join(p for p in emoji.split(raw) if not emoji.is_emoji(p) or pics.get(p))
+            ass, placed = emoji.layout(_clean(kept, caps, keep_emoji=True), FONT_DIR / FONTS[font_key][0], size_px,
+                                       width - 140 * scale, width / 2, y)
+        except Exception:
+            emoji.log.exception("emoji layout failed; drawing the text without them")
+            return _clean(raw, caps)
+        emoji_out.extend((start, end, pl, pics[pl.emoji]) for pl in placed)
+        return ass
 
     def style(name: str, s: dict) -> str:
         font = FONTS[s["font"]][1]
@@ -181,7 +201,8 @@ def build_ass(width: int, height: int, overlay: dict, title_text: str, words: li
     if t["enabled"] and title_text.strip():
         y = round(height * t["y_percent"] / 100)
         end = min(float(t["duration"]), duration)
-        lines.append(f"Dialogue: 1,{_ts(0)},{_ts(end)},Title,,0,0,0,,{{\\pos({width // 2},{y})\\fad(150,300)}}{_clean(title_text, t['all_caps'])}")
+        body = text_for(title_text, t["all_caps"], t["font"], round(t["size"] * scale), y, 0, end)
+        lines.append(f"Dialogue: 1,{_ts(0)},{_ts(end)},Title,,0,0,0,,{{\\pos({width // 2},{y})\\fad(150,300)}}{body}")
     if c["enabled"]:
         y = round(height * c["y_percent"] / 100)
         for w in chunk_words(words, int(c["words_per_caption"]), max_chars(c, width)):
@@ -194,7 +215,8 @@ def build_ass(width: int, height: int, overlay: dict, title_text: str, words: li
         y = round(height * tx["y_percent"] / 100)
         style = (f"{{\\pos({width // 2},{y})\\fn{FONTS[tx['font']][1]}\\fs{round(tx['size'] * scale)}\\c{_ass_color(tx['color'])}"
                  f"\\3c{_ass_color('#000000')}\\bord{tx['outline'] * scale:.1f}}}")
-        lines.append(f"Dialogue: 2,{_ts(tx['start'])},{_ts(min(tx['end'], duration))},Title,,0,0,0,,{style}{_clean(tx['text'], tx['all_caps'])}")
+        body = text_for(tx["text"], tx["all_caps"], tx["font"], round(tx["size"] * scale), y, tx["start"], min(tx["end"], duration))
+        lines.append(f"Dialogue: 2,{_ts(tx['start'])},{_ts(min(tx['end'], duration))},Title,,0,0,0,,{style}{body}")
     return "\n".join(lines) + "\n"
 
 

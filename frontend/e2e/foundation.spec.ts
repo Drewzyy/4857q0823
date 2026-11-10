@@ -194,14 +194,14 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
   const save = page.getByRole("button", { name: "Save & render" });
   await expect(save).toBeDisabled();
 
-  // New clips open zoomed in; Fit to frame shows the whole stream; Reset goes back to the default.
+  // New clips open zoomed in to fill the frame; Fit to frame shows the whole stream; Reset goes back to the default.
   const framing = page.getByRole("group", { name: "Framing" });
   await expect(framing.getByRole("button", { name: "Zoomed in" })).toHaveClass(/on/);
-  await expect(page.getByText("Video size: 60% of the frame's height")).toBeVisible();
+  await expect(page.getByText("Video size: 100% of the frame's height")).toBeVisible();
   await framing.getByRole("button", { name: "Fit to frame" }).click();
   await expect(page.getByText(/Video size:/)).toHaveCount(0);
   await page.getByRole("button", { name: "Reset to default" }).click();
-  await expect(page.getByText("Video size: 60% of the frame's height")).toBeVisible();
+  await expect(page.getByText("Video size: 100% of the frame's height")).toBeVisible();
   const start = Number(await page.getByLabel("Start (s)").inputValue());
   await page.getByLabel("End (s)").fill(String(start + 6));
   await page.getByRole("group", { name: "Speed" }).getByRole("button", { name: "1.5x" }).click();

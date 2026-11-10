@@ -165,18 +165,35 @@ def snap(m: Moment, words: list[tuple[float, float, str]], offset: float) -> Non
         m.end = m.start + MIN_LEN * 0.75
 
 
-def speech_bonus(m: Moment, words: list[tuple[float, float, str]]) -> None:
-    """Pass 2: what's said. words are (start, end, text) in seconds from the moment's start. Adds up to 25
-    points and blends: final = 75% sound/audience + 25% speech."""
+def speech_bonus(m: Moment, words: list[tuple[float, float, str]], lift: float | None = None) -> None:
+    """Pass 2: what's said and how. words are (start, end, text) in seconds from the moment's start; lift is the
+    share of the voice pitched up (see grade.pitch_lift). Adds up to 25 points: final = 75% sound/audience +
+    25% speech. What counts, from the research:
+    - a reaction word right at the loud peak (sound plus keyword is the classic highlight signal),
+    - high-arousal emotion: awe, amusement, anger, anxiety (what gets shared most),
+    - a raised voice, a fast pace, and talking from the first second."""
+    from .grade import arousal
+
     text = " ".join(w for _, _, w in words)
     m.text = text
     length = max(1.0, m.end - m.start)
-    hype = len(HYPE.findall(text))
+    rel_peak = m.peak - m.start
+    at_peak = " ".join(w for a, _, w in words if abs(a - rel_peak) <= 3)
+    keyword_at_peak = bool(HYPE.search(at_peak))
+    feels = arousal(text)
     pace = len(words) / length
-    early = sum(1 for s, _, _ in words if s < 2)
-    speech = (0.45 * min(1.0, hype / 3) + 0.3 * (1 - min(1.0, abs(pace - 2.8) / 2.8)) + 0.25 * min(1.0, early / 3))
-    if hype >= 2:
-        m.why.append(f"reaction lines like \"{HYPE.search(text).group(0)}\"")
+    early = sum(1 for st, _, _ in words if st < 2)
+    speech = (0.3 * (1.0 if keyword_at_peak else min(1.0, len(HYPE.findall(text)) / 4))
+              + 0.25 * min(1.0, len(feels) / 2)
+              + 0.15 * (min(1.0, lift / 0.25) if lift is not None else 0.5)
+              + 0.15 * (min(1.0, pace / 2.5) if pace <= 4.5 else 0.7)
+              + 0.15 * min(1.0, early / 3))
+    if keyword_at_peak:
+        m.why.append(f"\"{HYPE.search(at_peak).group(0)}\" right at the peak")
+    if feels:
+        m.why.append(f"{' and '.join(feels)} in what's said")
+    if lift is not None and lift > 0.2:
+        m.why.append("a raised, excited voice")
     if early >= 3:
         m.why.append("talking from the first second")
     m.score = 0.75 * m.score + 25 * speech

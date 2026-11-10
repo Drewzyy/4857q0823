@@ -524,11 +524,13 @@ def test_new_clips_are_zoomed_in_and_old_clips_keep_their_look(env):
     clip = c.get("/api/clips").json()[0]
     out = next(o for o in clip["outputs"] if o["platform"] == "tiktok")
     with ctx.db.session() as s:
-        assert s.get(Clip, clip["id"]).edit["video_height"] == 0.6  # saved with the clip
+        assert s.get(Clip, clip["id"]).edit["video_height"] == 1.0  # saved with the clip
         path = Path(s.get(ClipOutput, out["id"]).file_path)
-    assert 0.55 < _sharp_rows(path) < 0.65  # the stream fills about 60% of the frame
+    f = _frame(path, 2.0)  # the stream fills the whole frame: its pure test colours reach the very top and bottom rows
+    for row in (f[1], f[-2]):
+        assert (row.max(axis=1) > 230).mean() > 0.9, "blurred, darkened bars above or below the video"
     ed = c.get(f"/api/clips/{clip['id']}/editor").json()
-    assert ed["edit"]["video_height"] == 0.6 and ed["default_video_height"] == 0.6
+    assert ed["edit"]["video_height"] == 1.0 and ed["default_video_height"] == 1.0
 
     # A clip made before framing was saved re-renders exactly as it was: the whole stream, fit to the frame.
     with ctx.db.session() as s:

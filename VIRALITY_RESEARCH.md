@@ -17,6 +17,11 @@ direction, not law. Vyral's weights should be re-tuned on the user's own posted-
 | Clips should start and end on a complete thought | Clipping tools using the replay graph | Long-form snaps start/end to sentence boundaries |
 | Funny fails, reactions and personality beat pure skill | Practitioner consensus | Reaction phrases and loudness peaks score; laughter counted via loud bursts |
 | Captions and vertical framing are table stakes | Consensus | On by default; grader counts them but weights them low (5) |
+| High-arousal emotions (awe, amusement, anger, anxiety) get shared most, whatever their sign; sadness lowers sharing | Peer-reviewed (Berger & Milkman 2012, ~7,000 NYT articles plus experiments) | Grader "Energy and emotion" and the moment finder look for words of each emotion |
+| Excitement shows as louder and higher-pitched voices; a loud spike with a reaction word at it is a highlight | Sports and esports highlight research (Interspeech 2010, CVPR 2018 workshop, 2025-26 papers) | Voice pitch lift in grader and moment finder; reaction word within 3 s of the peak scores highest |
+| A question or "watch this" opens a curiosity gap viewers stay to close (Loewenstein's information-gap theory) | Established theory, practitioner use; no controlled clip study | Grader hook counts a curious opening |
+| Platforms weight completion and rewatches most, then shares; follower count isn't a direct input | Third-party summaries of platform guidance | Length and hook weights; tips to cut lead-ins and end on the payoff |
+| Faces on screen in the first seconds | Weak: unverified marketing figures only | Not scored (the facecam layout keeps faces visible anyway) |
 | "Virality scores" from commercial tools are ranking aids, not predictions (in one test the best performer scored 64, the worst 87) | Independent reviews | Vyral's grade is labelled a prediction; S means every signal is strong, never a guarantee |
 
 ## Not used yet, and why
@@ -36,3 +41,7 @@ direction, not law. Vyral's weights should be re-tuned on the user's own posted-
 - Gaming clip practice: autoclip.dev/blog/why-clips-go-viral-what-clippers-get-wrong, clipflip.io/resources/how-to-make-viral-clips, dev.to/clamper_ai/how-to-clip-twitch-streams-for-tiktok-youtube-shorts-and-reels-2pjp
 - Retention benchmarks: grow-it.se/en/resources/short-form-video-retention-benchmarks, opus.pro/blog/ideal-youtube-shorts-length-format-retention, fanpagekarma.com/insights/optimal-tiktok-video-length
 - Laughter detection: github.com/jrgillick/laughter-detection
+- Arousal and sharing: Berger & Milkman, "What Makes Online Content Viral?", Journal of Marketing Research 2012 (faculty.wharton.upenn.edu/wp-content/uploads/2011/11/Virality.pdf)
+- Excitement in sports audio: Interspeech 2010 sports highlights (personal.utdallas.edu/~hynek/pdfs/Interspeech10_SportsHighlights.pdf); Merler et al., "The Excitement of Sports" (CVPR 2018 workshops); arxiv.org/html/2501.16100v2
+- Platform signals: blog.hootsuite.com/tiktok-algorithm; YouTube Shorts "viewed vs swiped away" (contentstudio.io/blog/youtube-shorts-analytics-guide)
+- Curiosity loops: creatorlanehq.com/blog/science-of-curiosity-open-loops-without-clickbait-2026

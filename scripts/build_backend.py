@@ -29,6 +29,7 @@ def main() -> None:
            "--add-binary", f"{ffmpeg}{sep}imageio_ffmpeg/binaries",
            "--collect-submodules", "clippr", "--collect-submodules", "keyring", "--collect-submodules", "yt_dlp",
            "--collect-data", "cv2",  # the face model files for facecam layout
+           "--collect-submodules", "fontTools.ttLib.tables",  # loaded by name when measuring text for emoji
            "--add-data", f"{BACKEND / 'clippr' / 'media' / 'models'}{sep}clippr/media/models",
            "--collect-all", "curl_cffi",  # browser impersonation; without it TikTok blocks account pages
            "--hidden-import", "keyring.backends.macOS", "--hidden-import", "keyring.backends.Windows",

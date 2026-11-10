@@ -151,10 +151,10 @@ class TextOverlay(Strict):
         return self
 
 
-# New clips are zoomed in: the stream fills 60% of the frame's height, centered, trimmed at the sides, so the
-# speaker is easy to see on a phone. 0 means "fit to frame": the whole stream across the full width (about 32%
-# for 16:9), which is how clips looked before.
-VIDEO_HEIGHT = 0.6
+# New clips are zoomed in to fill each page's shape: on a 9:16 page the stream fills the whole frame, centered
+# and trimmed at the sides, with no blurred bars. The editor can zoom out to any share of the height; 0 means
+# "fit to frame" (the whole stream across the full width, about 32% for 16:9).
+VIDEO_HEIGHT = 1.0
 
 
 class LayerEdit(Strict):

@@ -6,7 +6,10 @@ short-form analytics consistently report):
   likes and shares fast. This is the strongest predictor, and the only one measured on real viewers.
 - The hook: most viewers who leave do so in the first 3 seconds, so the clip must open with speech or a loud,
   high-energy moment, not silence or a slow build.
-- Energy: reaction peaks (shouting, laughing, explosions) well above the clip's normal level.
+- Energy and emotion: reaction peaks well above the clip's normal level, a voice pitched up (how sports and esports
+  highlight research spots excitement), and high-arousal emotion in the words: awe, amusement, anger, anxiety
+  (Berger & Milkman found these drive sharing, whatever their sign).
+- The hook also counts a question or "watch this" in the opening: a curiosity gap viewers stay to close.
 - Pacing: steady talking and little dead air keep people watching to the end.
 - Length: 20 to 45 seconds for stream and gaming clips; shorter lacks setup, longer loses viewers.
 - Visual pace: the first frame is already moving and the picture keeps changing; the most-viewed clips are
@@ -20,6 +23,7 @@ is guaranteed to go viral. Scores are recomputed when a clip is edited.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +71,57 @@ def loudness(path: Path, start: float, dur: float, gaps: list[tuple[float, float
     return 20 * np.log10(np.sqrt((frames ** 2).mean(axis=1)) + 1e-6)
 
 
+# High-arousal emotions get shared most, whatever their sign (Berger & Milkman, ~7,000 NYT articles): awe,
+# amusement, anger and anxiety. These are the words people say when they feel them.
+AROUSAL = {
+    "awe": re.compile(r"\b(no way|holy|insane|crazy|unbelievable|incredible|oh my (god|gosh)|what the|how did|clean|cracked|goated|let'?s go+)\b", re.I),
+    "amusement": re.compile(r"\b(ha(ha)+|lmao|lol|i'?m dying|bro+|dude|you'?re (so )?funny|stop it)\b", re.I),
+    "anger": re.compile(r"\b(are you (kidding|serious)|what are you doing|trash|rigged|bs|come on|why would|hell no|shut up)\b", re.I),
+    "anxiety": re.compile(r"\b(oh no|run+|help|he'?s (right )?(here|behind)|we'?re dead|i'?m dead|hurry|watch out|go go)\b", re.I),
+}
+# Opening on a question or a "watch this" opens a curiosity gap the viewer stays to close.
+CURIOUS = re.compile(r"\?|\b(watch|wait|look at|guess|you won'?t believe|did you see|how|why|what if|bet)\b", re.I)
+
+
+def arousal(text: str) -> list[str]:
+    """The high-arousal emotions this speech shows."""
+    return [name for name, rx in AROUSAL.items() if rx.search(text)]
+
+
+def voice_lift(path: Path, start: float, dur: float) -> float | None:
+    """How much of the talking is pitched up (yelling, hype): the share of voiced moments at least 25% above the
+    speaker's usual pitch. Raised pitch with loudness is what sports and esports highlight research uses for
+    excitement. None if there's too little voice to judge."""
+    import subprocess
+
+    sr = 8000
+    try:
+        raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path),
+                              "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"], capture_output=True, timeout=120, check=True).stdout
+    except (subprocess.SubprocessError, OSError):
+        return None
+    x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768
+    return pitch_lift(x, sr)
+
+
+def pitch_lift(x: np.ndarray, sr: int) -> float | None:
+    n = int(sr * 0.04)  # 40 ms frames
+    frames = x[: len(x) // n * n].reshape(-1, n)
+    if len(frames) < 25:
+        return None
+    frames = frames - frames.mean(axis=1, keepdims=True)
+    loud = np.sqrt((frames ** 2).mean(axis=1)) > 0.01
+    spec = np.fft.rfft(frames * np.hanning(n), 2 * n)
+    ac = np.fft.irfft(np.abs(spec) ** 2)[:, :n]
+    lo, hi = int(sr / 400), int(sr / 75)  # voices sit between 75 and 400 Hz
+    lag = lo + ac[:, lo:hi].argmax(axis=1)
+    voiced = loud & (ac[np.arange(len(ac)), lag] > 0.45 * ac[:, 0])
+    if voiced.sum() < 15:
+        return None
+    f0 = sr / lag[voiced]
+    return float((f0 > 1.25 * np.median(f0)).mean())
+
+
 def motion(path: Path, start: float, dur: float) -> np.ndarray | None:
     """How much the picture changes every 0.5 s (0 still .. 1 completely new), from tiny grey frames: cheap."""
     import subprocess
@@ -107,7 +162,7 @@ def _proof(views: int | None, likes: int | None, shares: int | None, posted_at: 
 
 def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: float, has_captions: bool, has_title: bool,
           views: int | None = None, likes: int | None = None, shares: int | None = None, posted_at: datetime | None = None,
-          stream_clip: bool = False, motion: np.ndarray | None = None) -> Grade:
+          stream_clip: bool = False, motion: np.ndarray | None = None, lift: float | None = None) -> Grade:
     """db: loudness every 100 ms of the finished clip. words: (start, end, text) in finished-clip seconds.
     motion: how much the picture changes, 0..1, every 0.5 s of the finished clip (None if it couldn't be read)."""
     parts, tips = [], []
@@ -125,17 +180,28 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
     base = float(np.median(active)) if len(active) else -60.0
     peak = float(np.percentile(active, 97)) if len(active) else -60.0
     first3 = db[: int(3 / STEP)]
-    early_words = sum(1 for s, _, _ in words if s < 2.0)
+    early_words = sum(1 for st, _, _ in words if st < 2.0)
+    opening = " ".join(w for st, _, w in words if st < 3.0)
+    curious = bool(CURIOUS.search(opening))
     early_energy = float(np.percentile(first3, 90)) if len(first3) else -60.0
-    hook = 0.5 * min(1.0, early_words / 3) + 0.5 * min(1.0, max(0.0, early_energy - base + 3) / 9)
+    hook = (0.4 * min(1.0, early_words / 3) + 0.4 * min(1.0, max(0.0, early_energy - base + 3) / 9)
+            + 0.2 * (1.0 if curious else 0.0))
     add("Hook in the first 3 seconds", hook, 20,
-        f"{early_words} word{'' if early_words == 1 else 's'} in the first 2 s; the opening is {early_energy - base:+.0f} dB against the clip's usual level.",
+        f"{early_words} word{'' if early_words == 1 else 's'} in the first 2 s; the opening is {early_energy - base:+.0f} dB against the clip's usual level"
+        + ("; it opens a question." if curious else "."),
         "Start the clip closer to the action: cut the lead-in so it opens on talking or the loud moment (drag the start in the editor).")
 
+    # Energy: loud peaks, a voice pitched up, and high-arousal emotion in what's said (all three predict sharing).
     spikes = int(((db[1:] > base + 10) & (db[:-1] <= base + 10)).sum()) if len(db) > 1 else 0
-    energy = 0.6 * min(1.0, max(0.0, peak - base) / 15) + 0.4 * min(1.0, spikes / max(1.0, length / 10))
-    add("Energy and reactions", energy, 15, f"Biggest moments hit {peak - base:.0f} dB above normal, {spikes} spike{'' if spikes == 1 else 's'}.",
-        "This one is calm. Clips with a clear reaction (shouting, laughing, a big play) do much better.")
+    feels = arousal(" ".join(w for _, _, w in words))
+    loud = 0.6 * min(1.0, max(0.0, peak - base) / 15) + 0.4 * min(1.0, spikes / max(1.0, length / 10))
+    voice = min(1.0, lift / 0.25) if lift is not None else 0.5
+    energy = 0.55 * loud + 0.2 * voice + 0.25 * min(1.0, len(feels) / 2)
+    add("Energy and emotion", energy, 15,
+        f"Biggest moments hit {peak - base:.0f} dB above normal, {spikes} spike{'' if spikes == 1 else 's'}"
+        + (f"; voice pitched up {lift * 100:.0f}% of the time" if lift is not None else "")
+        + (f"; you can hear {', '.join(feels)}." if feels else "; no strong emotion in the words."),
+        "This one is calm. Clips with a clear reaction (shock, laughing, rage, panic) get shared much more.")
 
     # Faster talking is linked to more shares in TikTok research; past ~4.5 words a second it gets hard to follow.
     rate = len(words) / max(length, 1)

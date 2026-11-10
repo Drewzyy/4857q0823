@@ -20,7 +20,7 @@ export function OverlayPreview({ overlay, title, caption = "no way he actually" 
   const words = caption.split(/\s+/).slice(0, overlay.captions.words_per_caption).join(" ");
   return (
     <div className="ov-preview" aria-label="Preview of text on the video">
-      {overlay.title.enabled && title.trim() && <div className="ov-text" style={textCss(overlay.title)}>{title.replace(/\p{Extended_Pictographic}/gu, "")}</div>}
+      {overlay.title.enabled && title.trim() && <div className="ov-text" style={textCss(overlay.title)}>{title}</div>}
       {overlay.captions.enabled && <div className="ov-text" style={textCss(overlay.captions)}>{words}</div>}
     </div>
   );

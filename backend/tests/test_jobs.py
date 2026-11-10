@@ -103,7 +103,7 @@ def test_a_stuck_job_is_given_up_on_and_the_queue_keeps_moving(ctx):
 
 
 def test_a_long_job_that_keeps_making_progress_is_left_alone(ctx):
-    import threading, time
+    import threading
     from datetime import datetime, timedelta, timezone
     q = JobQueue(ctx.db)
     release, beats = threading.Event(), threading.Event()

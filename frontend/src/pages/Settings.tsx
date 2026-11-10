@@ -322,6 +322,7 @@ function Security() {
           <li>Vyral never logs in to TikTok, YouTube or Twitch as you and never reads your browser's cookies or passwords.</li>
         </ul>
         <div className="small faint">Data folder: <span className="mono">{dash.data?.storage.data_dir}</span></div>
+        <div className="small faint">Emoji on videos: Twemoji by Twitter and contributors, CC-BY 4.0. Fonts: SIL Open Font License.</div>
       </div>
       <div className="card">
         <h2 style={{ marginBottom: 8 }}>Activity log</h2>

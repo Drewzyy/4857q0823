@@ -76,6 +76,14 @@ def _self_test(audio: Path, data_dir: Path) -> int:
         print(json.dumps({"facecam_error": f"{type(e).__name__}: {e}"}))
         facecam = False
     print(json.dumps({"facecam": facecam}))
+    try:  # emoji in titles need the text measured with the bundled fonts
+        from clippr.media import emoji, overlay as ovl
+        _, placed = emoji.layout("SELF TEST 😂", ovl.FONT_DIR / ovl.FONTS["montserrat"][0], 80, 900, 540, 300)
+        emoji_ok = len(placed) == 1 and placed[0].x > 540
+    except Exception as e:
+        print(json.dumps({"emoji_error": f"{type(e).__name__}: {e}"}))
+        emoji_ok = False
+    print(json.dumps({"emoji": emoji_ok}))
     words = WhisperTranscriber(data_dir / "models").words(audio)
     print(json.dumps({"words": [w.text for w in words]}))
     with tempfile.TemporaryDirectory() as td:
@@ -88,7 +96,7 @@ def _self_test(audio: Path, data_dir: Path) -> int:
         out = render(d / "src.mp4", d / "out.mp4", OutputFormat(), duration=3, overlay_dir=d / "ov")
         info = probe(out)
         print(json.dumps({"render": [info.width, info.height]}))
-    return 0 if impersonate and sections and facecam and words and info.height == 1920 else 1
+    return 0 if impersonate and sections and facecam and emoji_ok and words and info.height == 1920 else 1
 
 
 def main() -> None:
