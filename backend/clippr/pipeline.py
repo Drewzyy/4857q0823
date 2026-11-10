@@ -521,6 +521,13 @@ class Pipeline:
         """Everything a re-render depends on, to tell whether a finished render is still the latest wanted."""
         return json.dumps([o.format, o.overlay, o.video_title, clip.words, clip.edit], sort_keys=True, default=str)
 
+    def _render_stuck(self, output_ids: list[int]) -> None:
+        with self.ctx.db.session() as s:
+            for oid in output_ids:
+                o = s.get(ClipOutput, oid)
+                if o and o.render_state == "rendering":
+                    o.render_state, o.render_error = "failed", "The re-render got stuck. Save your edit again to retry."
+
     def rerender(self, output_ids: list[int]) -> dict:
         """Re-render outputs after their text or style was edited. Each gets its own new file."""
         done = 0
@@ -647,4 +654,10 @@ def register(ctx: Any) -> Pipeline:
     q.every("monitor.tick", 60)
     q.every("storage.cleanup", 6 * 3600)
     q.heavy = {"clip.build", "clip.rerender"}
+    # Searching several full streams can legitimately take a while; well past that, something is stuck.
+    q.time_limits = {"clip.build": 90 * 60, "clip.rerender": 30 * 60, "intake.link": 10 * 60, "source.check": 10 * 60}
+    q.on_timeout = {
+        "clip.build": lambda pl: p._set(pl["reference_id"], "failed", "This got stuck (a download stopped responding). Press Retry to try again."),
+        "clip.rerender": lambda pl: p._render_stuck(pl.get("output_ids") or []),
+    }
     return p

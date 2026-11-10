@@ -47,6 +47,10 @@ class JobQueue:
         self._last_periodic: dict[str, float] = {}
         # Heavy jobs (downloads + rendering) are capped so monitoring and notifications never wait behind them.
         self.heavy: set[str] = set()
+        # Longest a job may run before it's given up on (seconds), and what to tell the user when that happens.
+        self.time_limits: dict[str, float] = {}
+        self.on_timeout: dict[str, Callable[[dict], None]] = {}
+        self._workers = 1
         self.heavy_limit: Callable[[], int] = lambda: 1
 
     def register(self, kind: str, handler: Handler) -> None:
@@ -162,6 +166,39 @@ class JobQueue:
                 bucket = int(now // seconds)
                 self.enqueue(kind, payload(), idempotency_key=f"periodic:{kind}:{bucket}", max_attempts=1)
 
+    def _reap_stuck(self) -> None:
+        """A job past its time limit is marked failed so it stops holding a slot, and a fresh worker replaces the
+        one still stuck inside it. (A thread can't be killed; when it finally returns, its result is ignored.)"""
+        if not self.time_limits:
+            return
+        now = datetime.now(timezone.utc)
+        stuck = []
+        with self.db.session() as s:
+            for j in s.scalars(select(Job).where(Job.status == "running", Job.kind.in_(list(self.time_limits)))):
+                started = j.started_at.replace(tzinfo=j.started_at.tzinfo or timezone.utc) if j.started_at else None
+                if started and (now - started).total_seconds() > self.time_limits[j.kind]:
+                    j.status, j.finished_at = "failed", now
+                    j.error = f"Stopped after {int(self.time_limits[j.kind] // 60)} minutes: it stopped making progress"
+                    stuck.append((j.kind, dict(j.payload)))
+        for kind, payload in stuck:
+            log.warning("gave up on a stuck %s job", kind)
+            try:
+                if kind in self.on_timeout:
+                    self.on_timeout[kind](payload)
+            except Exception:
+                log.exception("timeout handler failed")
+            if not self._stop.is_set() and len([t for t in self._threads if t.is_alive()]) < self._workers * 3:
+                t = threading.Thread(target=self._loop, name=f"clippr-worker-extra-{len(self._threads)}", daemon=True)
+                t.start()
+                self._threads.append(t)
+
+    def _watchdog(self) -> None:
+        while not self._stop.wait(30):  # its own thread: a worker stuck in a job can't check on itself
+            try:
+                self._reap_stuck()
+            except Exception:
+                log.exception("watchdog error")
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -176,6 +213,8 @@ class JobQueue:
         self._stop.clear()  # allow restarting after stop()
         self._threads = [t for t in self._threads if t.is_alive()]
         self.recover()
+        self._workers = workers
+        threading.Thread(target=self._watchdog, name="clippr-watchdog", daemon=True).start()
         for i in range(workers):
             t = threading.Thread(target=self._loop, name=f"clippr-worker-{i}", daemon=True)
             t.start()

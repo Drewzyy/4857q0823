@@ -70,3 +70,33 @@ def test_worker_can_restart_after_stop(ctx):
     q.stop()
     with ctx.db.session() as s:
         assert s.get(Job, jid).status == "succeeded"
+
+
+def test_a_stuck_job_is_given_up_on_and_the_queue_keeps_moving(ctx):
+    import threading, time
+    from datetime import datetime, timedelta, timezone
+    db = ctx.db
+    q = JobQueue(db)
+    release, done, told = threading.Event(), [], []
+    q.register("slow", lambda jc, pl: release.wait(30) and {})
+    q.register("quick", lambda jc, pl: done.append(1) or {})
+    q.heavy, q.heavy_limit = {"slow"}, lambda: 1
+    q.time_limits, q.on_timeout = {"slow": 60}, {"slow": lambda pl: told.append(pl)}
+    q._threads = []
+    stuck_id = q.enqueue("slow", {"n": 1})
+    q._workers = 1
+    t = threading.Thread(target=q.run_one, daemon=True); t.start(); q._threads.append(t)
+    time.sleep(0.3)
+    with db.session() as s:  # pretend it has been running for two minutes
+        s.get(Job, stuck_id).started_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+    q._reap_stuck()
+    with db.session() as s:
+        j = s.get(Job, stuck_id)
+        assert j.status == "failed" and "Stopped after 1 minutes" in j.error
+    assert told == [{"n": 1}]
+    q.enqueue("quick", {})
+    deadline = time.time() + 5
+    while not done and time.time() < deadline:
+        time.sleep(0.1)
+    assert done  # a replacement worker picked up the next job while the stuck one is still inside its handler
+    q._stop.set(); release.set()

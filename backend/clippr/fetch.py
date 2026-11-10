@@ -167,6 +167,8 @@ def use_bundled_ffmpeg() -> None:
 class YtDlpFetcher:
     def _opts(self, **extra) -> dict:
         return {"quiet": True, "no_warnings": True, "noprogress": True, "socket_timeout": 30, "retries": 3,
+                # FFmpeg downloads (stream sections) give up after 60 s without data instead of waiting forever.
+                "external_downloader_args": {"ffmpeg_i": ["-rw_timeout", "60000000"]},
                 "ffmpeg_location": ffmpeg_exe(), "noplaylist": False, "cachedir": False, **extra}
 
     def _extract(self, url: str, download: bool = False, **opts) -> dict:
