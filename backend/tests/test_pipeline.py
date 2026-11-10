@@ -540,3 +540,19 @@ def test_new_clips_are_zoomed_in_and_old_clips_keep_their_look(env):
     with ctx.db.session() as s:
         path = Path(s.get(ClipOutput, out["id"]).file_path)
     assert 0.27 < _sharp_rows(path) < 0.37
+
+
+def test_member_clip_goes_to_the_group_page(env):
+    ctx, c, fake = env
+    core = c.post("/api/creators", json={"name": "The Core", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera", "https://www.twitch.tv/other"]}).json()["id"]
+    jason = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "vyralc0re", "creator_id": core})
+    sid = c.post("/api/sources", json={"input": "@a.clips", "creator_ids": [jason, core]}).json()["id"]
+    c.post("/api/funnel/auto-route", json={})
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("g1", "https://www.tiktok.com/@a.clips/video/g1", "#streamera moment")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    ref = c.get("/api/references").json()[0]
+    assert ref["status"] == "ready", ref["status_detail"]

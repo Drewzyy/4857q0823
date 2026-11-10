@@ -298,7 +298,10 @@ class Pipeline:
             # isn't A's content). Every other routed page does: pages tied to this streamer or to nobody,
             # and pages the user routed this account to on purpose, like a group page for its members.
             covered = {cid for cid, _, _ in candidates} if src else set()
-            dest_info = [d[:5] for d in all_dests if d[5] in (None, matched_id) or (src and d[5] not in covered)]
+            # A group's page (e.g. The Core) also takes clips of its members: their channels overlap.
+            chans = {cid: {identify.channel_handle(c).lower() for c in chs} - {""} for cid, _, chs in candidates}
+            group = {cid for cid, ch in chans.items() if ch & chans.get(matched_id, set())}
+            dest_info = [d[:5] for d in all_dests if d[5] in (None, matched_id) or d[5] in group or (src and d[5] not in covered)]
             if not dest_info:
                 others = ", ".join(d[2] for d in all_dests)
                 where = (f"@{account}'s pages ({others}) are each set to another streamer it covers. Under Destinations, set one to "

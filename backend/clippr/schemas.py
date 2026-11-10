@@ -106,8 +106,8 @@ class MonitoringSettings(Strict):
     interval_minutes: int = Field(10, ge=3, le=240)
     streams_to_search: int = Field(4, ge=1, le=15)
     max_clip_seconds: int = Field(180, ge=15, le=600)
-    twitch_min_views: int = Field(50, ge=0, le=1_000_000)  # a Twitch clip is made into a video once this many people watched it
-    twitch_clips_per_check: int = Field(2, ge=1, le=10)
+    twitch_min_views: int = Field(25, ge=0, le=1_000_000)  # a Twitch clip is made into a video once this many people watched it
+    twitch_clips_per_check: int = Field(3, ge=1, le=10)
 
 
 class CaptionEngineSettings(Strict):
