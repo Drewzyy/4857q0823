@@ -809,3 +809,46 @@ def test_clips_are_graded_and_regraded_after_edits(env):
     drain(ctx)
     short = c.get("/api/clips").json()[0]["grade"]
     assert next(p for p in short["parts"] if p["name"] == "Length")["points"] == 0
+
+
+def test_page_videos_lost_in_an_update_are_restored_from_the_kept_footage(env):
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("lost1", "https://www.tiktok.com/@a.clips/video/lost1", "lost me")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    before = c.get("/api/clips").json()[0]
+    with ctx.db.session() as s:  # what the bad update did
+        s.query(ClipOutput).delete()
+    assert c.get("/api/clips").json() == [] and c.get("/api/clips?status=all").json()[0]["outputs"] == []  # gone from Ready
+    assert ctx.pipeline.restore_lost_outputs() == {"restored": len(before["outputs"])}
+    drain(ctx)
+    after = c.get("/api/clips").json()[0]["outputs"]
+    assert sorted(o["platform"] for o in after) == sorted(o["platform"] for o in before["outputs"])
+    assert all(o["render_state"] == "ready" and o["available"] for o in after)
+    assert ctx.pipeline.restore_lost_outputs() == {"restored": 0}  # nothing more to do
+
+
+def test_database_updates_never_cascade_deletes():
+    import tempfile
+    import sqlalchemy as sa
+    from alembic import command
+    from alembic.config import Config as AC
+    from clippr.db import MIGRATIONS_DIR, Database
+    d = tempfile.mkdtemp()
+    db = Database(f"sqlite:///{d}/t.db")
+    cfg = AC()
+    cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
+    with db.engine.begin() as conn:  # a database from before the clips table was rebuilt, with one ready clip
+        cfg.attributes["connection"] = conn
+        command.upgrade(cfg, "0013")
+        conn.execute(sa.text("INSERT INTO clips (id,title,edit,status,words,captions_note,created_at,expires_at) "
+                             "VALUES (1,'c','{}','ready','[]','','2026-01-01','2027-01-01')"))
+        conn.execute(sa.text("INSERT INTO clip_outputs (id,clip_id,platform,title,description,status,video_title,overlay,format,render_state,created_at) "
+                             "VALUES (1,1,'tiktok','t','d','ready','v','{}','{}','ready','2026-01-01')"))
+    db.migrate()
+    with db.engine.connect() as conn:
+        assert conn.execute(sa.text("select count(*) from clip_outputs")).scalar() == 1
+        assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1

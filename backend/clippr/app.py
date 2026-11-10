@@ -83,6 +83,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
             # how many clips build at once is limited separately (Settings), so extra workers just wait.
             ctx.jobs.start(workers=7)
             ctx.inbox.start()
+            ctx.jobs.enqueue("clips.restore", {}, max_attempts=1)  # brings back page videos a past update lost
         yield
         ctx.inbox.stop()
         ctx.jobs.stop()

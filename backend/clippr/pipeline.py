@@ -731,6 +731,35 @@ class Pipeline:
         """Everything a re-render depends on, to tell whether a finished render is still the latest wanted."""
         return json.dumps([o.format, o.overlay, o.video_title, clip.words, clip.edit], sort_keys=True, default=str)
 
+    def restore_lost_outputs(self) -> dict:
+        """Give back clips their pages' videos if they have none: an earlier update's database change deleted them
+        (the clips and their full-quality footage were kept). Each page that takes the clip's streamer gets its
+        output again, re-rendered from the kept footage with the clip's saved edits. Clips whose footage has
+        expired can't be restored. Runs at startup; does nothing once every clip has its outputs."""
+        restored = []
+        with self.ctx.db.session() as s:
+            has = select(ClipOutput.id).where(ClipOutput.clip_id == Clip.id).exists()
+            for clip in s.scalars(select(Clip).where(Clip.status == "ready", ~has, Clip.expires_at > now())):
+                if not clip.source_path or not Path(clip.source_path).exists():
+                    continue
+                dests = pages_for(s, {clip.creator_id}) if clip.creator_id else \
+                    [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()]
+                ref = clip.reference
+                name = clip.creator.name if clip.creator else ""
+                for d in dests:
+                    st = dict(d.settings or {})
+                    title, desc = describe.build(d.platform, ref.title if ref else clip.title, name, st, clip.stream_date)
+                    o = ClipOutput(clip_id=clip.id, destination_id=d.id, platform=d.platform, title=title, description=desc,
+                                   video_title=clip.title, overlay=lenient(OverlaySettings, st.get("overlay")).model_dump(),
+                                   format=dict(st.get("format") or {}), render_state="rendering")
+                    s.add(o)
+                    s.flush()
+                    restored.append(o.id)
+            if restored:
+                self.ctx.jobs.enqueue("clip.rerender", {"output_ids": restored}, max_attempts=1, session=s)
+                log.warning("restoring %d page videos lost in an earlier update", len(restored))
+        return {"restored": len(restored)}
+
     def _render_stuck(self, output_ids: list[int]) -> None:
         with self.ctx.db.session() as s:
             for oid in output_ids:
@@ -874,6 +903,7 @@ def register(ctx: Any) -> Pipeline:
     q.register("notify.discord", lambda jc, pl: events.deliver(ctx, pl["event_id"]) if "event_id" in pl else {"skipped": "old format"})
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())
     q.register("longform.make", lambda jc, pl: p.make_longform(pl["longform_id"], jc.cancelled))
+    q.register("clips.restore", lambda jc, pl: p.restore_lost_outputs())
     q.register("clip.rerender", lambda jc, pl: p.rerender(pl["output_ids"]))
     q.register("metrics.fetch", lambda jc, pl: p.fetch_metrics(pl["output_id"]))
     q.register("metrics.refresh", lambda jc, pl: p.refresh_metrics())

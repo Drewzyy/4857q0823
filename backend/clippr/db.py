@@ -38,16 +38,33 @@ def run_migrations(engine: Engine) -> None:
 
     cfg = AlembicConfig()
     cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
-    with engine.begin() as conn:
-        current = MigrationContext.configure(conn).get_current_revision()
-        known = {sc.revision for sc in ScriptDirectory.from_config(cfg).walk_revisions()}
-        if current and current not in known:
-            # A newer Vyral already upgraded this data (e.g. an older copy was reopened). Leave it as it is:
-            # migrations only go forward.
-            log.warning("data is from a newer Vyral (schema %s); leaving it as is", current)
-            return
-        cfg.attributes["connection"] = conn
-        command.upgrade(cfg, "head")
+    sqlite = engine.dialect.name == "sqlite"
+    with engine.connect() as conn:
+        # Changing a column in SQLite rebuilds the table (copy, drop the old, rename). With foreign keys enforced,
+        # dropping the old table counts as deleting its rows and cascades: an update once wiped every page's
+        # ready-to-upload video this way. So enforcement is off while the schema changes (it can only be switched
+        # outside a transaction) and back on after, with a check that nothing was left pointing nowhere.
+        if sqlite:
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            conn.commit()  # ends SQLAlchemy's automatic transaction so the update below gets its own
+        try:
+            with conn.begin():
+                current = MigrationContext.configure(conn).get_current_revision()
+                known = {sc.revision for sc in ScriptDirectory.from_config(cfg).walk_revisions()}
+                if current and current not in known:
+                    # A newer Vyral already upgraded this data (e.g. an older copy was reopened). Leave it as it
+                    # is: migrations only go forward.
+                    log.warning("data is from a newer Vyral (schema %s); leaving it as is", current)
+                    return
+                cfg.attributes["connection"] = conn
+                command.upgrade(cfg, "head")
+        finally:
+            if sqlite:
+                broken = conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+                if broken:
+                    log.warning("after the update, %d rows point at missing rows: %s", len(broken), broken[:5])
+                conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+                conn.commit()
 
 
 class Database:
