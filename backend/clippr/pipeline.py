@@ -692,9 +692,10 @@ class Pipeline:
             outs = s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip_id)).all()
             ov = lenient(OverlaySettings, outs[0].overlay if outs else None).model_dump()
             has_title = bool(outs and ov["title"]["enabled"] and (outs[0].video_title or "").strip())
+            title_text = outs[0].video_title if has_title else ""
             facts = dict(source=Path(clip.source_path), start=start, dur=dur, rel=rel, speed=speed,
                          words=[(w["start"] + shift, w["end"] + shift, w["text"]) for w in clip.words or []],
-                         captions=bool(ov["captions"]["enabled"] and clip.words), title=has_title,
+                         captions=bool(ov["captions"]["enabled"] and clip.words), title=has_title, title_text=title_text,
                          views=ref.views if ref else None, likes=ref.likes if ref else None, shares=ref.shares if ref else None,
                          posted_at=ref.posted_at if ref else None, stream_clip=bool(ref and ref.platform in STREAM_CLIP_PLATFORMS))
         try:
@@ -711,7 +712,7 @@ class Pipeline:
             db = db[np.round(np.arange(0, len(db), facts["speed"])).astype(int).clip(0, len(db) - 1)] if len(db) else db
         mo, loop = grade.picture(facts["source"], facts["start"], facts["dur"])
         lift = grade.voice_lift(facts["source"], facts["start"], facts["dur"])
-        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"], motion=mo, lift=lift, loop=loop,
+        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"], motion=mo, lift=lift, loop=loop, title=facts["title_text"],
                              views=facts["views"], likes=facts["likes"], shares=facts["shares"], posted_at=facts["posted_at"],
                              stream_clip=facts["stream_clip"]).to_dict()
         with self.ctx.db.session() as s:

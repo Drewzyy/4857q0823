@@ -51,3 +51,17 @@ def test_emotion_and_a_curious_opening_score_higher():
     assert part(hyped, "Hook in the first 3 seconds") > part(plain, "Hook in the first 3 seconds")
     assert part(hyped, "Energy and emotion") > part(plain, "Energy and emotion")
     assert "awe" in next(p for p in hyped.parts if p["name"] == "Energy and emotion")["note"]
+
+
+def test_slow_intros_and_long_titles_lose_points():
+    db = _db(30)
+    quick = [(0.1, 0.4, "no"), (0.5, 0.8, "way"), (0.9, 1.2, "he"), (1.3, 1.6, "did")]
+    slow = [(0.1, 0.4, "hey"), (0.5, 0.8, "guys"), (0.9, 1.2, "welcome"), (1.3, 1.6, "back")]
+    part = lambda g, n: next(p for p in g.parts if p["name"] == n)  # noqa: E731
+    a = grade(db=db, words=quick, length=30, has_captions=True, has_title=True, title="He jumped the gap")
+    b = grade(db=db, words=slow, length=30, has_captions=True, has_title=True,
+              title="So this is what happened when we finally tried to do the craziest heist in the game")
+    assert part(a, "Hook in the first 3 seconds")["points"] > part(b, "Hook in the first 3 seconds")["points"]
+    assert "slow intro" in part(b, "Hook in the first 3 seconds")["note"]
+    assert part(a, "Captions and title")["points"] > part(b, "Captions and title")["points"]
+    assert any("3 to 7 words" in t for t in b.tips) or part(b, "Captions and title")["points"] < 5

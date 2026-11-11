@@ -16,7 +16,8 @@ short-form analytics consistently report):
   rewatch (YouTube Shorts and TikTok creator guidance).
 - Visual pace: the first frame is already moving and the picture keeps changing; the most-viewed clips are
   the fastest, not the best looking.
-- Captions and a title: table stakes now (most people watch muted), so they count, but less.
+- Hook killers: a slow intro ("hey guys", "today we're going to") halves the hook score.
+- Captions and a title: table stakes now; the title on the video reads best at 3 to 7 words (most people watch muted), so they count, but less.
 - Payoff: the clip ends on or near its biggest moment instead of trailing off.
 
 The grade is a prediction, never a promise: S means every signal Vyral can measure is strong, not that a clip
@@ -90,6 +91,9 @@ AROUSAL = {
     "anger": re.compile(r"\b(are you (kidding|serious)|what are you doing|trash|rigged|bs|come on|why would|hell no|shut up)\b", re.I),
     "anxiety": re.compile(r"\b(oh no|run+|help|he'?s (right )?(here|behind)|we'?re dead|i'?m dead|hurry|watch out|go go)\b", re.I),
 }
+# Slow intros lose people before anything happens (hook checklists: no welcome, no "today we're going to").
+SLOW_OPEN = re.compile(r"^\W*(hey guys|hi guys|what'?s up guys|welcome back|today we'?re|today i'?m|so basically|let me tell you|"
+                       r"before we start|don'?t forget to)\b", re.I)
 # Opening on a question or a "watch this" opens a curiosity gap the viewer stays to close.
 CURIOUS = re.compile(r"\?|\b(watch|wait|look at|guess|you won'?t believe|did you see|how|why|what if|bet)\b", re.I)
 
@@ -176,7 +180,7 @@ def _proof(views: int | None, likes: int | None, shares: int | None, posted_at: 
 def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: float, has_captions: bool, has_title: bool,
           views: int | None = None, likes: int | None = None, shares: int | None = None, posted_at: datetime | None = None,
           stream_clip: bool = False, motion: np.ndarray | None = None, lift: float | None = None,
-          loop: float | None = None) -> Grade:
+          loop: float | None = None, title: str = "") -> Grade:
     """db: loudness every 100 ms of the finished clip. words: (start, end, text) in finished-clip seconds.
     motion: how much the picture changes, 0..1, every 0.5 s of the finished clip (None if it couldn't be read)."""
     parts, tips = [], []
@@ -197,12 +201,13 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
     early_words = sum(1 for st, _, _ in words if st < 2.0)
     opening = " ".join(w for st, _, w in words if st < 3.0)
     curious = bool(CURIOUS.search(opening))
+    slow = bool(SLOW_OPEN.search(opening))
     early_energy = float(np.percentile(first3, 90)) if len(first3) else -60.0
     hook = (0.4 * min(1.0, early_words / 3) + 0.4 * min(1.0, max(0.0, early_energy - base + 3) / 9)
-            + 0.2 * (1.0 if curious else 0.0))
+            + 0.2 * (1.0 if curious else 0.0)) * (0.5 if slow else 1.0)
     add("Hook in the first 3 seconds", hook, 20,
         f"{early_words} word{'' if early_words == 1 else 's'} in the first 2 s; the opening is {early_energy - base:+.0f} dB against the clip's usual level"
-        + ("; it opens a question." if curious else "."),
+        + ("; it opens a question" if curious else "") + ("; it opens with a slow intro." if slow else "."),
         "Start the clip closer to the action: cut the lead-in so it opens on talking or the loud moment (drag the start in the editor).")
 
     # Energy: loud peaks, a voice pitched up, and high-arousal emotion in what's said (all three predict sharing).
@@ -246,9 +251,14 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
     else:
         add("Visual pace", 0.5, 5, "Couldn't read the picture, so this part is neutral.")
 
-    add("Captions and title", (0.6 if has_captions else 0) + (0.4 if has_title else 0), 5,
-        ("Captions on" if has_captions else "No captions") + (", title on." if has_title else ", no title."),
-        "Turn captions on: most people scroll with the sound off.")
+    # On-screen text reads at a glance at 3 to 7 words; a long title is skimmed past.
+    n_title = len(title.split())
+    title_fit = 1.0 if 3 <= n_title <= 7 else 0.6 if n_title <= 10 else 0.3
+    add("Captions and title", (0.6 if has_captions else 0) + (0.4 * title_fit if has_title else 0), 5,
+        ("Captions on" if has_captions else "No captions")
+        + (f", title on ({n_title} words; 3 to 7 reads at a glance)." if has_title else ", no title."),
+        "Turn captions on: most people scroll with the sound off." if not has_captions else
+        "Shorten the title on the video to 3 to 7 words (Edit text on video in Ready to Upload).")
 
     tail = db[int(len(db) * 0.75):] if len(db) else db
     payoff = min(1.0, max(0.0, (float(np.percentile(tail, 90)) - base + 2) / 8)) if len(tail) else 0.0
