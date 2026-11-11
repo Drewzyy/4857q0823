@@ -67,6 +67,11 @@ function General() {
               <button className={s.processing.cut_dead_air ? "on" : ""} onClick={() => up("processing", { cut_dead_air: true })}>Cut it out</button>
               <button className={s.processing.cut_dead_air ? "" : "on"} onClick={() => up("processing", { cut_dead_air: false })}>Keep it</button></div>
             <span className="hint">Silent stretches of a second or more are cut out of new clips so they keep moving. Each clip can be switched back in the editor.</span></div>
+          <div className="field"><span className="label-text">Render with</span>
+            <div className="seg" role="group" aria-label="Render with" style={{ alignSelf: "flex-start" }}>
+              <button className={s.processing.hardware_encoding ? "on" : ""} onClick={() => up("processing", { hardware_encoding: true })}>Graphics card (fast)</button>
+              <button className={s.processing.hardware_encoding ? "" : "on"} onClick={() => up("processing", { hardware_encoding: false })}>Processor only</button></div>
+            <span className="hint">The graphics card renders several times faster. If videos come out wrong (sound out of step, glitches), switch to Processor only and re-render.</span></div>
         </div>
       </div>
 

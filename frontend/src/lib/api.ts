@@ -45,7 +45,7 @@ export interface AppSettings {
   captions: { accuracy: "fast" | "accurate" | "best"; language: string };
   monitoring: { enabled: boolean; interval_minutes: number; streams_to_search: number; max_clip_seconds: number; twitch_min_views: number; twitch_clips_per_check: number };
   storage: { retention_days: number };
-  processing: { max_concurrent_jobs: number; cut_dead_air: boolean };
+  processing: { max_concurrent_jobs: number; cut_dead_air: boolean; hardware_encoding: boolean };
   intake: { clipboard: boolean };
 }
 export interface RefPost {
