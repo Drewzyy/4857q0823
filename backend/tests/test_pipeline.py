@@ -877,3 +877,13 @@ def test_retry_makes_a_clip_of_a_moment_that_was_already_made(env):
     drain(ctx)
     assert next(r for r in c.get("/api/references").json() if r["id"] == dup["id"])["status"] == "ready"
     assert len(c.get("/api/clips").json()) == 2
+
+
+def test_the_game_goes_in_the_caption_and_as_a_specific_hashtag():
+    from clippr.describe import build, game_tag
+    assert game_tag("Grand Theft Auto VI") == "#GrandTheftAutoVI" and game_tag("Just Chatting") == ""
+    _, desc = build("instagram", "he got away #fyp #heist", "Streamer A", {"hashtags": ["#streamera"]}, None, "Grand Theft Auto VI")
+    assert "Game: Grand Theft Auto VI" in desc
+    assert desc.rsplit("\n\n", 1)[-1].split() == ["#streamera", "#GrandTheftAutoVI", "#heist", "#vyralclips"]
+    _, chat = build("tiktok", "lol", "Streamer A", {}, None, "Just Chatting")
+    assert "Game:" not in chat

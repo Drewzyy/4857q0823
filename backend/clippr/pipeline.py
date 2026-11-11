@@ -393,7 +393,7 @@ class Pipeline:
                 section, start, dur, work, title=describe.clean_title(ref_title, creator_name), post_title=ref_title,
                 creator_id=matched_id, creator_name=creator_name, dest_info=dest_info, hints=hints,
                 retention_days=cfg.storage.retention_days, progress=lambda d: self._set(rid, "processing", d),
-                reference_id=rid, vod_url=vod.url, vod_start=m.start, vod_end=m.end, stream_date=self._stream_date(vod))
+                reference_id=rid, vod_url=vod.url, vod_start=m.start, vod_end=m.end, stream_date=self._stream_date(vod), game=vod.game)
             self._set(rid, "ready", f"Ready to upload to {len(dest_info)} destination(s)" + (f". {captions_note}" if captions_note else ""))
             tier = f" [{graded['tier']} tier, {graded['score']}/100]" if graded else ""
             events.emit(self.ctx, "approvals", f"Clip ready to upload: {clip_title}{tier}", body=f"{creator_name}, {len(dest_info)} page(s)",
@@ -545,7 +545,7 @@ class Pipeline:
                       creator_id: int | None, creator_name: str, dest_info: list, hints: list[str], retention_days: int,
                       progress: Callable[[str], None], reference_id: int | None = None, longform_id: int | None = None,
                       vod_url: str | None = None, vod_start: float | None = None, vod_end: float | None = None,
-                      stream_date: datetime | None = None) -> tuple[int, str, dict | None, str]:
+                      stream_date: datetime | None = None, game: str = "") -> tuple[int, str, dict | None, str]:
         """Turn a downloaded section into a finished clip: captions, framing, one render per distinct page format,
         a Clip with an output per page, and its grade. `start`/`dur` locate the moment inside `section`.
         Returns (clip id, title, grade, captions note)."""
@@ -583,7 +583,7 @@ class Pipeline:
             s.flush()
             for did, platform, st, fmt_raw, ov, path in planned:
                 info = probe(path)
-                ptitle, desc = describe.build(platform, post_title, creator_name, st, stream_date)
+                ptitle, desc = describe.build(platform, post_title, creator_name, st, stream_date, game)
                 s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=ptitle, description=desc,
                                  video_title=title, overlay=ov, format=fmt_raw,
                                  file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))

@@ -43,6 +43,7 @@ class RemoteVod:
     duration: float | None = None
     published_at: datetime | None = None
     is_live: bool = False  # still being streamed: its audio can't be downloaded until it ends
+    game: str = ""  # the category the stream was in (e.g. "Grand Theft Auto VI"), when the site says
 
 
 class Fetcher(Protocol):
@@ -262,7 +263,8 @@ class YtDlpFetcher:
     def vod_details(self, url: str) -> RemoteVod:
         e = self._extract(url, noplaylist=True)
         live = bool(e.get("is_live")) or e.get("live_status") == "is_live"
-        return RemoteVod(str(e.get("id")), url, e.get("title") or "", e.get("duration"), _date(e), live)
+        game = (e.get("categories") or [""])[0] or e.get("category") or ""
+        return RemoteVod(str(e.get("id")), url, e.get("title") or "", e.get("duration"), _date(e), live, str(game)[:80])
 
     def download_section(self, url: str, start: float, end: float, dest_dir: Path) -> Path:
         import yt_dlp
