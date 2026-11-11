@@ -54,6 +54,7 @@ class Fetcher(Protocol):
     def vod_details(self, url: str) -> RemoteVod: ...
     def download_section(self, url: str, start: float, end: float, dest_dir: Path) -> Path: ...
     def twitch_clip_origin(self, url: str) -> tuple[str, float] | None: ...
+    def download_post(self, url: str, dest_dir: Path) -> Path: ...
     def longform_details(self, url: str) -> tuple[str, float | None, list[dict] | None]: ...
 
 
@@ -230,6 +231,13 @@ class YtDlpFetcher:
             if e and e.get("id"):
                 out.append(RemoteVod(str(e["id"]), e.get("url") or e.get("webpage_url"), e.get("title") or "", e.get("duration"), _date(e)))
         return out
+
+    def download_post(self, url: str, dest_dir: Path) -> Path:
+        """A post itself (e.g. a viewer's Twitch or Kick clip) in its best quality."""
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        info = self._extract(url, download=True, noplaylist=True, format="bv*+ba/b", format_sort=["res:1080", "fps"],
+                             merge_output_format="mp4", outtmpl=str(dest_dir / "post-%(id)s.%(ext)s"))
+        return Path(info["requested_downloads"][0]["filepath"])
 
     def longform_details(self, url: str) -> tuple[str, float | None, list[dict] | None]:
         """A long video's title, length and, on YouTube, its most-replayed graph (viewers rewinding)."""

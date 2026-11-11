@@ -20,7 +20,7 @@ from sqlalchemy import delete, func, select
 from . import describe, events, grade, identify, moments, notify
 from .api.system import load_settings
 from .audit import audit
-from .fetch import MONITORABLE, FetchError, RemotePost
+from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
 from .media import deadair, facecam, match, overlay
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
@@ -224,29 +224,51 @@ class Pipeline:
             log.exception("listening for a name failed")
             return ""
 
-    def _twitch_origin(self, url: str, ref_feats, candidates: list, account: str | None, live: list) -> tuple | None:
-        """A Twitch clip says which saved stream it's from and where: use that instead of searching by sound.
-        A quick sound check around that spot confirms it (and fine-tunes the start)."""
-        try:
-            origin = self.ctx.fetcher.twitch_clip_origin(url)
-        except Exception:
-            log.exception("twitch clip lookup failed")
-            origin = None
-        if not origin:
-            return None
-        vod_url, offset = origin
-        try:
-            vod = self.ctx.fetcher.vod_details(vod_url)
-        except FetchError:
-            return None
+    def _same_moment(self, feats, creator_id: int) -> str | None:
+        """The title of a recent clip of this streamer with the same sound, if there is one."""
+        with self.ctx.db.session() as s:
+            recent = [(c.title, c.source_path, c.source_start or 0.0, c.source_duration or 0.0) for c in s.scalars(
+                select(Clip).where(Clip.creator_id == creator_id, Clip.status == "ready", Clip.created_at > now() - timedelta(days=1)))]
+        for title, path, start, dur in recent:
+            if not path or not Path(path).exists():
+                continue
+            try:
+                other = match.extract_features(Path(path))
+            except Exception:
+                continue
+            short, long_ = (feats, other) if len(feats) <= len(other) else (other, feats)
+            if match.find_in_stream(short, long_):
+                return title
+        return None
+
+    def _stream_clip(self, url: str, ref_feats, candidates: list, account: str | None, platform: str,
+                     title: str, posted_at: datetime | None) -> tuple:
+        """A viewer's Twitch or Kick clip. Twitch says which saved stream it's from and where: when that stream has
+        ended, the moment is cut from it (with a little lead-in, for editing). While the streamer is still live,
+        or on Kick, the clip itself is used: it's already the moment in full quality, so it's made right away
+        instead of waiting hours for the stream to end. Returns (vod, match, creator id, name, use clip itself)."""
         handle = (account or "").lower()
         cid, cname = next(((c, n) for c, n, chs in candidates if any(identify.channel_handle(ch).lower() == handle for ch in chs)),
                           (candidates[0][0], candidates[0][1]))
-        if vod.is_live:
-            live.append(cname)
-            return None
         length = len(ref_feats) / match.FPS
-        return vod, match.MatchResult(offset, offset + length, 1.0), cid, cname
+        origin = None
+        if platform == "twitch":
+            try:
+                origin = self.ctx.fetcher.twitch_clip_origin(url)
+            except Exception:
+                log.exception("twitch clip lookup failed")
+        if origin:
+            vod_url, offset = origin
+            try:
+                vod = self.ctx.fetcher.vod_details(vod_url)
+            except FetchError:
+                vod = None
+            if vod and not vod.is_live:
+                return vod, match.MatchResult(offset, offset + length, 1.0), cid, cname, False
+            # Live: remember where in the stream it is, so other clips of this moment are still spotted as repeats.
+            return RemoteVod(vod_url.rsplit("/", 1)[-1], vod_url, title, None, posted_at, True), \
+                match.MatchResult(offset, offset + length, 1.0), cid, cname, True
+        return RemoteVod(url.rsplit("/", 1)[-1], url, title, None, posted_at, False), match.MatchResult(0.0, length, 1.0), cid, cname, True
 
     def _search_order(self, candidates: list, text: str, posted_at: datetime | None, per_channel: int) -> list:
         """Every candidate stream, most likely first: streams of the streamer the post names, then streams that
@@ -308,8 +330,8 @@ class Pipeline:
                 return self._stop(rid, "needs_setup", f"No page takes {usable[0].name}'s clips yet. Under Source Accounts, pick pages "
                                   f"in {usable[0].name}'s Post to list.", account, ref.url)
             all_dests = [(d.id, d.platform, d.display_name, d.handle, dict(d.settings or {}), frozenset(destination_creator_ids(d))) for d in dests]
-            from_twitch = ref.platform == "twitch"
             from_stream_clip = ref.platform in STREAM_CLIP_PLATFORMS
+            ref_platform = ref.platform
             ref_url, ref_title, posted_at = ref.url, ref.title, ref.posted_at
         self._set(rid, "processing", "Listening to the post")
         work = self._dir("tmp") / f"build-{rid}-{random.randrange(1 << 30)}"
@@ -330,8 +352,11 @@ class Pipeline:
                 candidates = identify.rank_candidates(pointed, clue)
 
             found, searched, live = None, 0, []
-            if from_twitch and not vod_override:
-                found = self._twitch_origin(ref_url, ref_feats, candidates, account, live)
+            use_post = False
+            if from_stream_clip and not vod_override:
+                *found, use_post = self._stream_clip(ref_url, ref_feats, candidates, account, ref_platform,
+                                                     ref_title, posted_at)
+                found = tuple(found)
             if not found and not live:
                 self._set(rid, "processing", "Finding the most likely streams")
             for v, cid, cname in ([] if found or live else self._search_order(candidates, clue, posted_at, cfg.monitoring.streams_to_search)):
@@ -370,6 +395,14 @@ class Pipeline:
                         self._set(rid, "duplicate", f"Another clip of this same moment was already made: \"{c.title}\" "
                                   f"(in Ready to Upload). Nothing was posted. Press Retry to make this one too.")
                         return {"status": "duplicate", "clip_id": c.id}
+            # A viewer clip with no known stream position (Kick, or a stream that wasn't saved): compare its sound with
+            # this streamer's clips from the last day, so two viewers' clips of one moment still make one video.
+            if use_post and vod.url == ref_url and not allow_duplicate:
+                same = self._same_moment(ref_feats, matched_id)
+                if same:
+                    self._set(rid, "duplicate", f"Another clip of this same moment was already made: \"{same}\" "
+                              f"(in Ready to Upload). Nothing was posted. Press Retry to make this one too.")
+                    return {"status": "duplicate"}
             # A page takes the clip if it lists this streamer, or this streamer's group or members.
             dest_info = [d[:5] for d in all_dests if d[5] & family({matched_id})]
             if not dest_info:
@@ -379,14 +412,19 @@ class Pipeline:
                 s.get(ReferenceVideo, rid).creator_id = matched_id
             if m.end - m.start > cfg.monitoring.max_clip_seconds:
                 m.end = m.start + cfg.monitoring.max_clip_seconds
-            self._set(rid, "processing", f"Found it at {_hms(m.start)} in \"{vod.title or 'stream'}\". Downloading full quality",
+            self._set(rid, "processing", "Using the clip itself (the stream is still live). Downloading full quality" if use_post else
+                      f"Found it at {_hms(m.start)} in \"{vod.title or 'stream'}\". Downloading full quality",
                       vod_url=vod.url, vod_start=m.start, vod_end=m.end, match_confidence=m.confidence)
 
-            lead = 8.0
-            section = self.ctx.fetcher.download_section(vod.url, max(0.0, m.start - lead), m.end + 3, work / "section")
-            # The download may start at a keyframe before the requested time; re-align on audio for a frame-exact cut.
-            local = match.find_in_stream(ref_feats, match.extract_features(section), pad=0.4)
-            start, dur = (local.start, local.end - local.start) if local else (min(lead, m.start), m.end - m.start)
+            if use_post:  # the viewer's clip is the moment itself
+                section = self.ctx.fetcher.download_post(ref_url, work / "section")
+                start, dur = 0.0, min(probe(section).duration or (m.end - m.start), cfg.monitoring.max_clip_seconds)
+            else:
+                lead = 8.0
+                section = self.ctx.fetcher.download_section(vod.url, max(0.0, m.start - lead), m.end + 3, work / "section")
+                # The download may start at a keyframe before the requested time; re-align on audio for a frame-exact cut.
+                local = match.find_in_stream(ref_feats, match.extract_features(section), pad=0.4)
+                start, dur = (local.start, local.end - local.start) if local else (min(lead, m.start), m.end - m.start)
 
             channels = next((chs for cid, _, chs in candidates if cid == matched_id), [])
             # The streamer's name and channel handles (every member's, for a group) help the speech model hear names.

@@ -938,3 +938,27 @@ def test_your_own_posted_links_are_not_made_into_clips(env):
     # A short link only shows whose post it is once opened: it's dropped then.
     fake.post_details = lambda url: RemotePost("888", "https://www.tiktok.com/@streamera.tt/video/888", "mine")
     assert ctx.pipeline.intake_link("https://vm.tiktok.com/ZMmine/") == {"skipped": "one of your own posts"}
+
+
+def test_clips_of_a_live_stream_are_made_right_away_from_the_viewer_clip(env):
+    ctx, c, fake = env
+    cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    sid = c.post("/api/sources", json={"input": "twitch.tv/streamera", "platform": "twitch", "creator_ids": [cid]}).json()["id"]
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_ids": [cid]})
+    url = "https://www.twitch.tv/streamera/clip/Live1"
+    fake.origins[url] = ("https://www.twitch.tv/videos/7", 131.0)
+    fake.live.add("https://www.twitch.tv/videos/7")  # she's still streaming
+    soon = datetime.now(timezone.utc) + timedelta(seconds=5)
+    fake.posts = [RemotePost("Live1", url, "live moment", posted_at=soon, views=900)]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    ref = c.get("/api/references").json()[0]
+    assert ref["status"] == "ready", ref["status_detail"]
+    assert ("post", url) in fake.calls and not [x for x in fake.calls if x[0] == "section"]
+    # A second viewer clip of the same moment is still recognised as a repeat.
+    url2 = "https://www.twitch.tv/streamera/clip/Live2"
+    fake.origins[url2] = ("https://www.twitch.tv/videos/7", 131.5)
+    fake.posts = [RemotePost("Live2", url2, "same", posted_at=soon, views=900)]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    assert {r["status"] for r in c.get("/api/references").json()} == {"ready", "duplicate"}

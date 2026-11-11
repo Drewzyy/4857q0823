@@ -60,6 +60,10 @@ class FakeFetcher:
         self.calls.append(("longform", url))
         return "A long stream", 240.0, self.heatmap
 
+    def download_post(self, url, dest_dir):
+        self.calls.append(("post", url))
+        return self._copy(self.m["clip"], dest_dir, "post.mp4")
+
     def twitch_clip_origin(self, url):
         self.calls.append(("origin", url))
         return self.origins.get(url)
