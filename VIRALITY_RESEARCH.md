@@ -45,3 +45,17 @@ direction, not law. Vyral's weights should be re-tuned on the user's own posted-
 - Excitement in sports audio: Interspeech 2010 sports highlights (personal.utdallas.edu/~hynek/pdfs/Interspeech10_SportsHighlights.pdf); Merler et al., "The Excitement of Sports" (CVPR 2018 workshops); arxiv.org/html/2501.16100v2
 - Platform signals: blog.hootsuite.com/tiktok-algorithm; YouTube Shorts "viewed vs swiped away" (contentstudio.io/blog/youtube-shorts-analytics-guide)
 - Curiosity loops: creatorlanehq.com/blog/science-of-curiosity-open-loops-without-clickbait-2026
+
+## Open-source projects reviewed (November 2026)
+
+Projects over 1,000 GitHub stars doing similar work, and what Vyral took as inspiration (ideas only; no code
+copied):
+
+| Project | Stars | Idea | In Vyral |
+|---|---|---|---|
+| Anil-matcha/AI-Youtube-Shorts-Generator (MIT) | 5.9k | Vertical crop that follows the speaker's face; score + reason per clip | Zoomed-in framing keeps the main person in the crop; every clip already has a grade with reasons |
+| xixihhhh/hotclip (AGPL, livestream replay clipper) | <1k | Steady framing: lock one position per shot instead of chasing faces; chat heat with per-user caps; several signals agreeing before trusting a peak; flag weak clips | Steady single framing per clip; D-tier clips marked "skip?" |
+| ClipsAI/clipsai (MIT) | 565 | Reframe on the active speaker | Same idea as above |
+| jipraks/yt-short-clipper (MIT) | 1.0k | Use the video's own subtitles instead of transcribing | Not yet: a speed-up for long-form YouTube links |
+| xenova/chat-downloader (MIT) | 1.2k | Read Twitch and YouTube chat replays without signing in | Not yet: chat spikes as a long-form signal (needs a real Twitch connection to test) |
+| WyattBlue/auto-editor, Breakthrough/PySceneDetect, m-bain/whisperX | 5.8k / 5.4k / 25k | Silence cutting, scene cuts, word timing | Vyral has its own versions of each |

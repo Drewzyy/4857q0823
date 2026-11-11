@@ -7,8 +7,8 @@ export function GradeBadge({ grade }: { grade: GradeT | null }) {
   if (!grade) return null;
   return (
     <span className="grade-badge" style={{ background: COLORS[grade.tier] }}
-      title={`${grade.tier} tier, ${grade.score}/100. ${grade.tips.length ? "To improve: " + grade.tips.join(" ") : "Every signal is strong."}`}>
-      {grade.tier}<span>{grade.score}</span>
+      title={`${grade.tier} tier, ${grade.score}/100.${grade.tier === "D" ? " Probably not worth posting as it is." : ""} ${grade.tips.length ? "To improve: " + grade.tips.join(" ") : "Every signal is strong."}`}>
+      {grade.tier}<span>{grade.score}</span>{grade.tier === "D" && <span style={{ fontWeight: 600, marginLeft: 2 }}>· skip?</span>}
     </span>
   );
 }

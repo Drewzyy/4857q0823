@@ -28,7 +28,7 @@ from .media.render import Layer, OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
 from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, LongformVideo, MediaItem, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import destination_creator_ids, pages_for, source_creator_ids
-from .schemas import ClipEdit, OverlaySettings, lenient
+from .schemas import VIDEO_HEIGHT, ClipEdit, OverlaySettings, lenient
 
 log = logging.getLogger("clippr.pipeline")
 POSTS_PER_CHECK = 12
@@ -469,11 +469,17 @@ class Pipeline:
             info = probe(source)
             stream = info.width / info.height if info.width and info.height else 16 / 9
             fmt = OutputFormat()
-            cam = facecam.detect(source, start, dur, stream, fmt.width / (fmt.height * facecam.CAM_SHARE))
+            sampled = facecam.sample(source, start, dur)
+            cam = facecam.detect(source, start, dur, stream, fmt.width / (fmt.height * facecam.CAM_SHARE), sampled)
+            if cam:
+                return {"layout": "stacked", "cam": cam}
+            # Zoomed in to fill the frame, only a slice of a wide stream fits: keep the person in that slice.
+            crop_share = min(1.0, (fmt.width / (fmt.height * VIDEO_HEIGHT)) / stream)
+            pan = facecam.subject_pan(*sampled, crop_share)
+            return {"pan_x": pan} if pan is not None else {}
         except Exception:
-            log.exception("facecam check failed")
+            log.exception("framing check failed")
             return {}
-        return {"layout": "stacked", "cam": cam} if cam else {}
 
     # ---------- long-form ----------
     def _lf(self, lid: int, status: str, detail: str, **fields) -> None:

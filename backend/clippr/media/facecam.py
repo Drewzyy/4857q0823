@@ -74,13 +74,13 @@ def cam_box(face: tuple[float, float, float], stream_aspect: float, panel_aspect
     return [round(x, 4), round(y, 4), round(w, 4), round(h, 4)]
 
 
-def detect(src: Path, start: float, dur: float, stream_aspect: float, panel_aspect: float) -> list[float] | None:
-    """The facecam's box in the source for this cut, or None if there isn't one (or it couldn't be checked)."""
+def sample(src: Path, start: float, dur: float) -> tuple[list[list[tuple[int, int, int, int]]], tuple[int, int] | None]:
+    """Faces in a dozen frames spread over the cut, and the frame size they were found at."""
     try:
         import cv2
     except ImportError:
-        return None
-    frames = []
+        return [], None
+    frames: list = []
     size = None
     with tempfile.TemporaryDirectory() as tmp:
         for i in range(SAMPLES):
@@ -95,8 +95,37 @@ def detect(src: Path, start: float, dur: float, stream_aspect: float, panel_aspe
                 continue
             size = img.shape[1], img.shape[0]
             frames.append(_faces(img))
+    return frames, size
+
+
+def detect(src: Path, start: float, dur: float, stream_aspect: float, panel_aspect: float,
+           sampled: tuple | None = None) -> list[float] | None:
+    """The facecam's box in the source for this cut, or None if there isn't one (or it couldn't be checked)."""
+    frames, size = sampled or sample(src, start, dur)
     if not frames or not size:
         return None
     face = pick(frames, *size)
     log.info("facecam %s in %d frames", "found" if face else "not found", len(frames))
     return cam_box(face, stream_aspect, panel_aspect) if face else None
+
+
+def subject_pan(frames: list, size: tuple[int, int] | None, crop_share: float) -> float | None:
+    """Where to point a narrow crop (crop_share of the width) so the main person stays in it, as pan_x 0..1, or
+    None to keep it centered. One position for the whole clip, never following the face around (steady beats
+    jittery: the approach the most-used open-source clippers settled on). The main person is the biggest face
+    seen in at least a third of the frames; a crowd or nobody keeps the center."""
+    if not frames or not size or crop_share >= 0.98:
+        return None
+    w = size[0]
+    biggest = []
+    for faces in frames:
+        if faces:
+            x, y, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+            if fw / w >= 0.04:  # big enough to be the subject, not a face in the background
+                biggest.append((x + fw / 2) / w)
+    if len(biggest) < max(2, len(frames) / 3):
+        return None
+    cx = sorted(biggest)[len(biggest) // 2]
+    if max(biggest) - min(biggest) > 0.5:  # people on both sides: no single framing keeps them all
+        return None
+    return round(min(1.0, max(0.0, (cx - crop_share / 2) / (1 - crop_share))), 3)

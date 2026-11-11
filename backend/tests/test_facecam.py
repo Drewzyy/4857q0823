@@ -45,3 +45,18 @@ def test_stacked_render_is_full_vertical(tmp_path):
     out = render(src, tmp_path / "out.mp4", OutputFormat(540, 960, 30), cam=[0.7, 0.5, 0.3, 0.45])
     info = probe(out)
     assert (info.width, info.height) == (540, 960)
+
+
+def test_the_zoomed_crop_keeps_the_person_in_frame(tmp_path):
+    src = tmp_path / "right.mp4"  # a big face sitting on the right of a wide stream
+    run(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=3", "-loop", "1", "-i", str(FACE),
+         "-filter_complex", "[1:v]scale=-2:900[f];[0:v][f]overlay=W-w:-90:shortest=1", "-t", "3",
+         "-c:v", "libx264", "-preset", "ultrafast", str(src)])
+    frames, size = facecam.sample(src, 0, 3)
+    assert facecam.detect(src, 0, 3, 16 / 9, 1080 / 768, (frames, size)) is None  # not a small corner facecam
+    pan = facecam.subject_pan(frames, size, crop_share=0.316)
+    x, y, w, h = frames[0][0]
+    face_left, face_right = x / size[0], (x + w) / size[0]
+    crop_left = pan * (1 - 0.316)
+    assert crop_left <= face_left and face_right <= crop_left + 0.316  # the whole face is inside the crop
+    assert facecam.subject_pan([[]] * 8, size, 0.316) is None  # nobody: stays centered
