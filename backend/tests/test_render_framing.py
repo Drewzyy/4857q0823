@@ -39,3 +39,16 @@ def test_thumbnail_is_saved_and_embedded(tmp_path):
     assert thumbnail(src, 99).exists()  # past the end falls back to the last frame
     info = subprocess.run([ffmpeg_exe(), "-i", str(src)], capture_output=True, text=True).stderr
     assert info.count("attached pic") == 1  # a new cover replaces the old one
+
+
+def test_the_picture_starts_with_the_sound_in_every_player(tmp_path):
+    """No reordered frames: the first video frame is shown at time 0, so players that ignore the MP4 edit list
+    (some apps and uploads) don't play the sound ahead of the picture."""
+    src = tmp_path / "s.mp4"
+    run(["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=2", "-f", "lavfi", "-i", "sine=f=440:d=2",
+         "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(src)])
+    out = render(src, tmp_path / "o.mp4", OutputFormat(360, 640, 30), duration=2)
+    r = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(out), "-c", "copy", "-map", "0:v:0", "-f", "framemd5", "-"],
+                       capture_output=True, text=True)
+    first = [l.split(",") for l in r.stdout.splitlines() if not l.startswith("#")][0]
+    assert int(first[1]) == 0 and int(first[2]) == 0  # decode time = show time = 0
