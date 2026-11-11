@@ -50,6 +50,9 @@ class JobQueue:
         # Longest a job may run before it's given up on (seconds), and what to tell the user when that happens.
         self.time_limits: dict[str, float] = {}
         self.on_timeout: dict[str, Callable[[dict], None]] = {}
+        # Jobs that need the internet wait (stay queued, no attempt used up) while there's no connection.
+        self.needs_network: set[str] = set()
+        self.online: Callable[[], bool] = lambda: True
         self._workers = 1
         self._local = threading.local()  # the job this worker thread is running, for beat()
         self.heavy_limit: Callable[[], int] = lambda: 1
@@ -112,6 +115,8 @@ class JobQueue:
         now = datetime.now(timezone.utc)
         with self.db.session() as s:
             q = select(Job.id).where(Job.status == "queued", Job.run_after <= now)
+            if self.needs_network and not self.online():
+                q = q.where(Job.kind.not_in(self.needs_network))
             if self.heavy:
                 running_heavy = s.scalar(select(func.count()).select_from(Job).where(Job.status == "running", Job.kind.in_(self.heavy))) or 0
                 if running_heavy >= self.heavy_limit():

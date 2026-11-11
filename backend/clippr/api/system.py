@@ -101,6 +101,8 @@ def needs_you(c=Depends(ctx), s: Session = Depends(db)):
     from ..attention import needs_you as waiting
 
     items = waiting(s)
+    if not c.jobs.online():
+        items.insert(0, {"kind": "offline", "count": 1, "title": "No internet connection. Vyral is waiting and carries on by itself when it's back.", "link": "/activity"})
     inbox_error = c.inbox.state(s).get("last_error")
     if inbox_error:
         items.append({"kind": "inbox", "count": 1, "title": f"Discord inbox: {inbox_error}", "link": "/settings?tab=notifications"})

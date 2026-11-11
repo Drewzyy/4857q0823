@@ -855,7 +855,12 @@ class Pipeline:
 
     # ---------- storage ----------
     def cleanup(self) -> dict:
-        """Delete clips and cached media older than the retention period."""
+        """Delete clips and cached media older than the retention period; clear day-old dead ends from Activity."""
+        with self.ctx.db.session() as s:
+            # Hidden, not deleted: a deleted post would look new on the next check and be tried all over again.
+            for r in s.scalars(select(ReferenceVideo).where(ReferenceVideo.status.in_(("no_match", "failed")),
+                                                            ReferenceVideo.updated_at < now() - timedelta(days=1))):
+                r.status = "removed"
         with self.ctx.db.session() as s:
             days = load_settings(s).storage.retention_days
             cutoff = now() - timedelta(days=days)
@@ -916,6 +921,7 @@ def register(ctx: Any) -> Pipeline:
     q.every("monitor.tick", 60)
     q.every("storage.cleanup", 6 * 3600)
     q.heavy = {"clip.build", "clip.rerender", "longform.make"}
+    q.needs_network = {"clip.build", "longform.make", "intake.link", "source.check", "monitor.tick", "metrics.fetch", "metrics.refresh", "notify.discord"}
     # How long a job may go without any progress (a step finished, data downloaded) before it's given up on.
     # Long searches are fine as long as they keep moving.
     q.time_limits = {"longform.make": 20 * 60, "clip.build": 20 * 60, "clip.rerender": 20 * 60, "intake.link": 10 * 60, "source.check": 10 * 60}

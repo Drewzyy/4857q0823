@@ -20,6 +20,7 @@ from .media.transcribe import Transcriber, WhisperTranscriber
 from .api.deps import ApiError
 from .config import Config
 from .db import Database
+from . import net
 from .jobs import JobQueue
 from .logging_setup import setup_logging
 from .secrets_store import SecretStore, make_store
@@ -81,6 +82,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         if cfg.run_worker:
             # Room for the most clips the settings allow (4) plus monitoring, link intake and notifications alongside;
             # how many clips build at once is limited separately (Settings), so extra workers just wait.
+            ctx.jobs.online = net.online  # downloads wait while there's no internet
             ctx.jobs.start(workers=7)
             ctx.inbox.start()
             ctx.jobs.enqueue("clips.restore", {}, max_attempts=1)  # brings back page videos a past update lost

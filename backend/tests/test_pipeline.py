@@ -887,3 +887,44 @@ def test_the_game_goes_in_the_caption_and_as_a_specific_hashtag():
     assert desc.rsplit("\n\n", 1)[-1].split() == ["#streamera", "#GrandTheftAutoVI", "#heist", "#vyralclips"]
     _, chat = build("tiktok", "lol", "Streamer A", {}, None, "Just Chatting")
     assert "Game:" not in chat
+
+
+def test_retry_all_remove_and_day_old_dead_ends(env):
+    from clippr.models import ReferenceVideo
+    ctx, c, fake = env
+    with ctx.db.session() as s:
+        for i, st in enumerate(("failed", "no_match", "ready")):
+            s.add(ReferenceVideo(platform="tiktok", external_id=f"x{i}", url=f"https://www.tiktok.com/@a/video/{i}", title=f"p{i}", status=st))
+    refs = {r["title"]: r for r in c.get("/api/references").json()}
+    assert c.post("/api/references/retry-all").json() == {"retried": 2}
+    assert {r["status"] for r in c.get("/api/references").json()} == {"new", "ready"}
+    assert c.delete(f"/api/references/{refs['p0']['id']}").status_code == 409  # busy now
+    c.delete(f"/api/references/{refs['p2']['id']}")
+    assert len(c.get("/api/references").json()) == 2
+    with ctx.db.session() as s:  # a day-old dead end is cleared by housekeeping; a fresh one stays
+        a, b = s.get(ReferenceVideo, refs["p0"]["id"]), s.get(ReferenceVideo, refs["p1"]["id"])
+        a.status = b.status = "no_match"
+        s.flush()
+        s.execute(ReferenceVideo.__table__.update().where(ReferenceVideo.id == a.id).values(updated_at=datetime.now(timezone.utc) - timedelta(days=2)))
+    ctx.pipeline.cleanup()
+    assert [r["title"] for r in c.get("/api/references").json()] == ["p1"]
+    assert c.post("/api/references/clear").json() == {"removed": 1}
+
+
+def test_network_jobs_wait_while_offline(ctx):
+    from clippr.jobs import JobQueue
+    q = JobQueue(ctx.db)
+    ran = []
+    q.register("net", lambda jc, pl: ran.append("net") or {})
+    q.register("local", lambda jc, pl: ran.append("local") or {})
+    q.needs_network, q.online = {"net"}, lambda: False
+    jid = q.enqueue("net", {})
+    q.enqueue("local", {})
+    while q.run_one():
+        pass
+    from clippr.models import Job
+    with ctx.db.session() as s:
+        assert ran == ["local"] and s.get(Job, jid).status == "queued" and s.get(Job, jid).attempts == 0
+    q.online = lambda: True
+    q.run_one()
+    assert ran == ["local", "net"]

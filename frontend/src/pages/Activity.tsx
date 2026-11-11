@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity as ActivityIcon, ExternalLink, Link2, RotateCw, Square, Wand2 } from "lucide-react";
+import { Activity as ActivityIcon, ExternalLink, Link2, RotateCw, Square, Wand2, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, type RefPost } from "../lib/api";
 import { Empty, ErrorNote, Loading, Modal, PlatformBadge, relTime, useToast } from "../components/ui";
@@ -57,6 +57,20 @@ export default function ActivityPage() {
           <p className="small">Vyral checks your <Link to="/sources">source accounts</Link> automatically while it's running. Posts that existed before you added an account are skipped.</p>
         </Empty></div>
       ) : (
+        <>
+        {(() => {
+          const stuck = (refs.data ?? []).filter((r) => ["failed", "no_match", "needs_setup", "duplicate"].includes(r.status)).length;
+          const dead = (refs.data ?? []).filter((r) => r.status === "failed" || r.status === "no_match").length;
+          return stuck > 0 && (
+            <div className="row" style={{ marginBottom: 10 }}>
+              <span className="small faint">Posts that failed or weren't found leave this list by themselves after a day.</span><span className="spacer" />
+              <button className="btn sm" onClick={async () => { try { const r = await api.retryAllReferences(); toast("ok", `Retrying ${r.retried} post${r.retried === 1 ? "" : "s"}.`); refresh(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } }}>
+                <RotateCw size={12} />Retry all ({stuck})</button>
+              {dead > 0 && <button className="btn sm ghost" onClick={async () => { try { await api.clearReferences(); refresh(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } }}>
+                <Trash2 size={12} />Clear failed and not found ({dead})</button>}
+            </div>
+          );
+        })()}
         <div className="card" style={{ padding: "4px 18px" }}>
           {(refs.data ?? []).map((r) => {
             const [cls, label] = STATUS[r.status];
@@ -84,10 +98,14 @@ export default function ActivityPage() {
                     <button className="btn sm ghost" onClick={async () => { await api.stopReference(r.id); refresh(); }}><Square size={11} />Stop</button>
                   : (r.status === "no_match" || r.status === "needs_setup" || r.status === "failed" || r.status === "duplicate") &&
                     <button className="btn sm" onClick={() => setRetry(r)}><RotateCw size={12} />Retry</button>}
+                {r.status !== "processing" && r.status !== "new" &&
+                  <button className="btn ghost icon" aria-label="Remove from Activity" title="Remove from this list (a clip already made stays in Ready to Upload)"
+                    onClick={async () => { try { await api.removeReference(r.id); refresh(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } }}><Trash2 size={13} /></button>}
               </div>
             );
           })}
         </div>
+        </>
       )}
       {retry && <RetryModal post={retry} onClose={() => setRetry(null)} onDone={refresh} />}
     </div>

@@ -283,6 +283,7 @@ def delete_clip(cid: int, s: Session = Depends(db)):
 @router.get("/references")
 def list_references(include_baseline: bool = False, limit: int = 100, s: Session = Depends(db)):
     q = select(ReferenceVideo).order_by(ReferenceVideo.created_at.desc()).limit(min(max(limit, 1), 500))
+    q = q.where(ReferenceVideo.status != "removed")
     if not include_baseline:
         q = q.where(ReferenceVideo.status != "baseline")
     return [_reference(r) for r in s.scalars(q).unique()]
@@ -353,26 +354,63 @@ def stop_reference(rid: int, c=Depends(ctx), s: Session = Depends(db)):
     return _reference(r)
 
 
+def _requeue(c, s: Session, r: ReferenceVideo, vod_url: str | None = None) -> None:
+    if r.external_id.startswith("link:"):  # the link itself couldn't be opened: try opening it again
+        r.status, r.status_detail = "new", "Opening the link again"
+        c.jobs.enqueue("intake.link", {"url": r.url, "creator_id": r.creator_id}, max_attempts=3, session=s)
+        return
+    payload: dict = {"reference_id": r.id}
+    if r.status == "duplicate":  # the user wants this one even though the moment was already clipped
+        payload["allow_duplicate"] = True
+    if vod_url:
+        payload["vod_url"] = vod_url
+    r.status, r.status_detail = "new", "Queued"
+    c.jobs.enqueue("clip.build", payload, max_attempts=3, session=s)
+
+
+RETRYABLE = ("failed", "no_match", "needs_setup", "duplicate")
+
+
+@router.post("/references/retry-all")
+def retry_all(c=Depends(ctx), s: Session = Depends(db)):
+    """Try every post again that failed, wasn't found, needed setup or was skipped as a repeat."""
+    rows = list(s.scalars(select(ReferenceVideo).where(ReferenceVideo.status.in_(RETRYABLE))))
+    for r in rows:
+        _requeue(c, s, r)
+    return {"retried": len(rows)}
+
+
+@router.delete("/references/{rid}", status_code=204)
+def remove_reference(rid: int, s: Session = Depends(db)):
+    """Take a post off Activity. Its clip, if one was made, stays in Ready to Upload."""
+    r = get_or_404(s, ReferenceVideo, rid, "Post")
+    if r.status in ("new", "processing"):
+        raise ApiError(409, "busy", "Stop it first, then remove it")
+    r.status = "removed"  # kept hidden so the same post isn't picked up as new again
+
+
+@router.post("/references/clear")
+def clear_references(s: Session = Depends(db)):
+    """Take every post that failed or wasn't found off Activity."""
+    rows = list(s.scalars(select(ReferenceVideo).where(ReferenceVideo.status.in_(("failed", "no_match")))))
+    for r in rows:
+        r.status = "removed"
+    return {"removed": len(rows)}
+
+
 @router.post("/references/{rid}/retry")
 def retry_reference(rid: int, body: RetryIn, c=Depends(ctx), s: Session = Depends(db)):
     r = get_or_404(s, ReferenceVideo, rid, "Post")
     if r.status == "processing":
         raise ApiError(409, "busy", "Vyral is already working on this one")
-    if r.external_id.startswith("link:"):  # the link itself couldn't be opened: try opening it again
-        r.status, r.status_detail = "new", "Opening the link again"
-        c.jobs.enqueue("intake.link", {"url": r.url, "creator_id": r.creator_id}, max_attempts=3, session=s)
-        return _reference(r)
-    payload: dict = {"reference_id": rid}
-    if r.status == "duplicate":  # the user wants this one even though the moment was already clipped
-        payload["allow_duplicate"] = True
+    vod = None
     if body.vod_url:
         from ..fetch import is_single_video
 
         if not is_single_video(body.vod_url):
             raise ApiError(422, "invalid_input", "Paste the link to the specific stream (twitch.tv/videos/… or a YouTube video link)")
-        payload["vod_url"] = body.vod_url.strip()
-    r.status, r.status_detail = "new", "Queued"
-    c.jobs.enqueue("clip.build", payload, max_attempts=3, session=s)
+        vod = body.vod_url.strip()
+    _requeue(c, s, r, vod)
     return _reference(r)
 
 
