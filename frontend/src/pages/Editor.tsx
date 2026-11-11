@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clapperboard, Pause, Play, Plus, Redo2, RotateCcw, Trash2, Undo2 } from "lucide-react";
+import { Clapperboard, Pause, Play, Plus, Redo2, RotateCcw, Trash2, Type, Undo2 } from "lucide-react";
 import { api, type ClipEditT, type EditorData, type FontKey, type Overlay, type TextOverlayT, type TextStyle } from "../lib/api";
 import { Empty, ErrorNote, Loading, relTime, useToast } from "../components/ui";
 import { EditorExtras, LayerPreview, useLibrary } from "../components/EditorExtras";
 import { GradeBadge, GradeCard } from "../components/GradeBadge";
+import { VideoTextPanel } from "../components/VideoTextPanel";
 
 const FONTS: [FontKey, string][] = [["montserrat", "Montserrat Black"], ["anton", "Anton"], ["bebas", "Bebas Neue"], ["poppins", "Poppins ExtraBold"]];
 const SWATCHES = ["#FFFFFF", "#FFE500", "#F97316", "#22C55E", "#38BDF8", "#EC4899", "#000000"];
@@ -431,6 +432,15 @@ function EditorBody({ data }: { data: EditorData }) {
               <p className="small faint" style={{ margin: 0 }}>{e.thumb_at === null ? "Vyral uses the frame one second in. " : `Cover frame: ${fmt(e.thumb_at - e.start)} into the clip. `}
                 Pause the video where you want, then Use this frame. It's saved as a JPG next to each video and set as the video's cover. Saving re-renders, and the picture here updates when it's done.</p></div>
           </div>
+
+          {first && (
+            <div className="card stack">
+              <div className="row"><Type size={16} /><h2>Title and captions</h2></div>
+              <p className="small faint" style={{ margin: 0 }}>The title on the video, how the title and captions look, and the caption words. Saved on its own and re-rendered right away.</p>
+              <VideoTextPanel o={first} toast={toast} onChange={() => qc.invalidateQueries({ queryKey: ["editor", data.id] })}
+                clip={{ id: data.id, outputs: data.outputs, has_captions: data.words.length > 0, captions_text: data.words.map((w) => w.text).join(" ") }} />
+            </div>
+          )}
 
           <GradeCard grade={data.grade} />
 

@@ -136,9 +136,13 @@ class DiscordInbox:
                     if not content and not m.get("attachments") and not m.get("embeds"):
                         error = NO_CONTENT
                         continue
-                    found = parse(content, creators)
-                    for link, creator_id in found:
-                        self.ctx.jobs.enqueue("intake.link", {"url": link, "creator_id": creator_id}, max_attempts=3)
+                    try:
+                        found = parse(content, creators)
+                        for link, creator_id in found:
+                            self.ctx.jobs.enqueue("intake.link", {"url": link, "creator_id": creator_id}, max_attempts=3)
+                    except Exception:  # one odd message must never stop the inbox: skip it and keep going
+                        log.exception("couldn't read a Discord message; skipped it")
+                        found = []
                     queued += len(found)
                     if not found:  # shown in Settings so it's clear what the bot saw
                         unrecognized = content[:200]

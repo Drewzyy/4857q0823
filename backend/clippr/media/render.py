@@ -67,11 +67,26 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         return len(inputs)
 
     # Dead air (seconds from `start`) is dropped first and the rest is closed up, before anything else.
-    cut_v = cut_a = ""
+    # Dead air and the user's cuts (seconds from `start`) are removed first: each kept stretch is trimmed on its
+    # real timestamps and the stretches are joined, video and audio alike, so they stay in sync even when the
+    # stream's frame rate wobbles (counting frames instead drifted by seconds on Twitch and Kick footage).
+    src_v, pre = "[0:v]", ""
+    keep: list[tuple[float, float]] = []
     if gaps:
-        from .deadair import keep_expr
-        cut_v = f"select='{keep_expr(gaps)}',setpts=N/FRAME_RATE/TB,"
-        cut_a = f"aselect='{keep_expr(gaps)}',asetpts=N/SR/TB,"
+        total = duration if duration is not None else (info.duration or 0.0)
+        pos = 0.0
+        for a, b in sorted(gaps):
+            if a > pos + 0.04:
+                keep.append((pos, min(a, total)))
+            pos = max(pos, b)
+        if total > pos + 0.04:
+            keep.append((pos, total))
+        n = len(keep)
+        pre = f"[0:v]split={n}" + "".join(f"[vk{i}]" for i in range(n)) + ";" if n > 1 else ""
+        for i, (a, b) in enumerate(keep):
+            pre += f"{'[vk%d]' % i if n > 1 else '[0:v]'}trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[vs{i}];"
+        pre += "".join(f"[vs{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[cutv];"
+        src_v = "[cutv]"
     timing = f"setpts=PTS/{speed:.4f},fps={fps:.3f}"
     stacked = H > W and (cam or bottom)  # vertical outputs only
     if stacked:  # content on top, facecam or gameplay underneath, no blurred background
@@ -83,11 +98,11 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         fill = f"scale={W}:{hb}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{hb},setsar=1"  # fill, then trim
         if cam:
             cx, cy, cw, ch = cam
-            vf = (f"[0:v]{cut_v}{timing},split=2[a][c];[a]{top}[t];"
+            vf = (f"{pre}{src_v}{timing},split=2[a][c];[a]{top}[t];"
                   f"[c]crop=iw*{cw:.4f}:ih*{ch:.4f}:iw*{cx:.4f}:ih*{cy:.4f},{fill}[m];[t][m]vstack[base]")
         else:
             k = add_input("-stream_loop", "-1", "-i", str(bottom.resolve()))
-            vf = f"[0:v]{cut_v}{timing},{top}[t];[{k}:v]fps={fps:.3f},{fill}[m];[t][m]vstack=shortest=1[base]"
+            vf = f"{pre}{src_v}{timing},{top}[t];[{k}:v]fps={fps:.3f},{fill}[m];[t][m]vstack=shortest=1[base]"
     else:
         bw, bh = W // 4 // 2 * 2, H // 4 // 2 * 2
         # Width/height of the area the video fills. Never wider than the stream itself: asking for less height than
@@ -96,7 +111,7 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         box = min(W / (H * video_height), stream) if video_height > 0 else stream
         vf = (
             # Editor zoom/pan crops the source; speed retimes it. Both are no-ops at their defaults.
-            f"[0:v]{cut_v}crop=iw/{zoom:.4f}:ih/{zoom:.4f}:(iw-iw/{zoom:.4f})*{pan[0]:.4f}:(ih-ih/{zoom:.4f})*{pan[1]:.4f},"
+            f"{pre}{src_v}crop=iw/{zoom:.4f}:ih/{zoom:.4f}:(iw-iw/{zoom:.4f})*{pan[0]:.4f}:(ih-ih/{zoom:.4f})*{pan[1]:.4f},"
             f"{timing},split=2[bg][fg];"
             # Blur at quarter size then scale up: same look as a full-size blur, many times faster.
             f"[bg]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},gblur=sigma=10,"
@@ -125,7 +140,18 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         args += extra
     args += ["-filter_complex", vf, "-map", "[v]"]
     if info.has_audio:
-        args += ["-map", "0:a:0", "-af", cut_a + (f"atempo={speed:.4f}," if abs(speed - 1) > 1e-3 else "") + "loudnorm=I=-14:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
+        tempo = (f"atempo={speed:.4f}," if abs(speed - 1) > 1e-3 else "") + "loudnorm=I=-14:TP=-1.5:LRA=11"
+        if keep:
+            n = len(keep)
+            au = (f"[0:a:0]asplit={n}" + "".join(f"[ak{i}]" for i in range(n)) + ";") if n > 1 else ""
+            for i, (a, b) in enumerate(keep):
+                au += f"{'[ak%d]' % i if n > 1 else '[0:a:0]'}atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[as{i}];"
+            au += "".join(f"[as{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1,{tempo}[aout]"
+            args[args.index("-filter_complex") + 1] += ";" + au
+            args += ["-map", "[aout]"]
+        else:
+            args += ["-map", "0:a:0", "-af", tempo]
+        args += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
     if inputs:  # looping gameplay and pictures never end on their own: stop with the clip
         args += ["-shortest"]
     out.parent.mkdir(parents=True, exist_ok=True)

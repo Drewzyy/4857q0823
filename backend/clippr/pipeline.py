@@ -151,6 +151,8 @@ class Pipeline:
         with self.ctx.db.session() as s:  # it opened this time: drop the earlier "couldn't open" row
             s.query(ReferenceVideo).filter(ReferenceVideo.platform == platform, ReferenceVideo.external_id == placeholder).delete()
         with self.ctx.db.session() as s:
+            if own_post(s, url) or own_post(s, post.url or ""):
+                return {"skipped": "one of your own posts"}  # e.g. copied to paste into Ready to Upload's post link
             have = s.scalar(select(ReferenceVideo.status).where(ReferenceVideo.platform == _link_platform(url),
                                                                ReferenceVideo.external_id == post.id))
         if have and have not in ("failed", "no_match", "needs_setup"):
@@ -894,6 +896,19 @@ class Pipeline:
 def _hms(sec: float) -> str:
     sec = int(sec)
     return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
+
+
+def own_post(s, url: str) -> bool:
+    """A link to something you posted: on one of your pages (by @handle), or saved as a clip's post link."""
+    import re as _re
+    if not url:
+        return False
+    m = _re.search(r"tiktok\.com/@([\w.-]+)", url, _re.I)
+    handles = {(d.handle or "").lstrip("@").lower() for d in s.scalars(select(DestinationAccount)).unique()} - {""}
+    if m and m.group(1).lower() in handles:
+        return True
+    base = url.split("?")[0].rstrip("/")
+    return bool(s.scalar(select(ClipOutput.id).where(ClipOutput.post_url.is_not(None), ClipOutput.post_url.like(f"{base}%")).limit(1)))
 
 
 def _link_platform(url: str) -> str:

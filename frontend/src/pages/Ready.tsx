@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle2, Clapperboard, Clock, Copy, Download, ExternalLink, FolderDown, RefreshCw, Trash2, Type, Undo2 } from "lucide-react";
+import { Check, CheckCircle2, Clapperboard, Clock, Copy, Download, ExternalLink, FolderDown, Trash2, Type, Undo2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, PLATFORM_LABEL, type ClipOutputT, type ClipT } from "../lib/api";
 import { bytes, ConfirmModal, Empty, ErrorNote, Loading, PlatformBadge, relTime, useToast } from "../components/ui";
-import { OverlayEditor } from "../components/OverlayEditor";
 import { GradeBadge } from "../components/GradeBadge";
-import type { Overlay } from "../lib/api";
 
 type Tab = "ready" | "uploaded" | "expired";
 
@@ -123,43 +121,6 @@ function daysLeftLabel(c: ClipT) {
   return `${days} days`;
 }
 
-function VideoTextPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
-  const [title, setTitle] = useState(o.video_title);
-  const [overlay, setOverlay] = useState<Overlay>(structuredClone(o.overlay));
-  const [all, setAll] = useState(false);
-  const [captions, setCaptions] = useState(clip.captions_text);
-  const [busy, setBusy] = useState(false);
-  const styleDirty = JSON.stringify(overlay) !== JSON.stringify(o.overlay) || title !== o.video_title;
-  const run = async (fn: () => Promise<unknown>, msg: string) => {
-    setBusy(true);
-    try { await fn(); toast("ok", msg); onChange(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
-  };
-  if (!clip.editable) return <p className="small faint">The original footage for this clip has expired, so its text can't be changed anymore.</p>;
-  return (
-    <div className="stack">
-      <div className="field"><label htmlFor={`vt-${o.id}`}>Title on the video</label>
-        <input id={`vt-${o.id}`} className="input" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Leave empty for no title" /></div>
-      <OverlayEditor value={overlay} onChange={setOverlay} title={title} />
-      <div className="row wrap">
-        {clip.outputs.length > 1 && <label className="check small"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />Use this style for every page of this clip</label>}
-        <span className="spacer" />
-        <button className="btn primary" disabled={!styleDirty || busy || o.render_state === "rendering"}
-          onClick={() => run(() => api.editVideoText(o.id, { video_title: title, overlay, apply_style_to_all: all }), "Re-rendering. The new version appears in a moment.")}>
-          <RefreshCw size={14} />Re-render with changes</button>
-      </div>
-      {clip.has_captions && (
-        <div className="field"><label htmlFor={`cap-${clip.id}`}>Caption words (fix anything misheard; timing is kept)</label>
-          <textarea id={`cap-${clip.id}`} className="textarea" rows={3} value={captions} onChange={(e) => setCaptions(e.target.value)} />
-          <div className="row"><span className="hint">Changes the captions on every page of this clip.</span><span className="spacer" />
-            <button className="btn" disabled={captions === clip.captions_text || busy}
-              onClick={() => run(() => api.editCaptions(clip.id, captions), "Captions updated. Re-rendering every page.")}>Save captions</button></div>
-        </div>
-      )}
-      {o.render_state === "failed" && <div className="banner warn small">Re-render failed: {o.render_error}</div>}
-    </div>
-  );
-}
-
 function PostLink({ o, onChange, toast }: { o: ClipOutputT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
   const [url, setUrl] = useState(o.post_url ?? "");
   const [nums, setNums] = useState({ views: "", likes: "", comments: "", shares: "" });
@@ -195,7 +156,6 @@ function PostLink({ o, onChange, toast }: { o: ClipOutputT; onChange: () => void
 }
 
 function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
-  const [showText, setShowText] = useState(false);
   const [title, setTitle] = useState(o.title);
   const [desc, setDesc] = useState(o.description);
   const [copied, setCopied] = useState<string | null>(null);
@@ -254,9 +214,8 @@ function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT
         {o.status === "uploaded" && <button className="btn ghost" onClick={() => mark("ready")}><Undo2 size={14} />Not uploaded</button>}
       </div>
       <PostLink o={o} onChange={onChange} toast={toast} />
-      <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} aria-expanded={showText} onClick={() => setShowText(!showText)}>
-        <Type size={13} />{showText ? "Hide text on video" : "Edit text on video (title, captions, colors, font, size, position)"}</button>
-      {showText && <VideoTextPanel o={o} clip={clip} onChange={onChange} toast={toast} />}
+      {clip.editable && <Link className="btn ghost sm" style={{ alignSelf: "flex-start" }} to={`/editor/${clip.id}`}>
+        <Type size={13} />Edit the title, captions and text style in the Video Editor</Link>}
       <p className="small faint">Save to computer puts the full-quality file (and its thumbnail) in Downloads › Vyral and shows it in {navigator.userAgent.includes("Windows") ? "File Explorer" : "Finder"}.</p>
     </div>
   );

@@ -125,32 +125,34 @@ test("the API refuses requests without the window token", async ({ request }) =>
   expect((await request.get("/api/media/outputs/1")).status()).toBe(401);
 });
 
-test("edit the text burned into a clip and re-render it", async ({ page }) => {
+test("edit the title, its style and the caption words in the video editor", async ({ page }) => {
   await page.goto("/ready");
   const card = page.locator(".card", { hasText: "He did NOT just say that" }).first();
-  await card.getByRole("tab", { name: /Streamer A YouTube/ }).click();
   const video = card.locator("video");
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1)).toBe(true);
   const before = await video.getAttribute("src");
-
-  await card.getByRole("button", { name: /Edit text on video/ }).click();
-  await expect(card.getByLabel("Title on the video")).toHaveValue("He did NOT just say that");
+  await card.getByRole("link", { name: /Edit the title, captions and text style in the Video Editor/ }).click();
+  await expect(page).toHaveURL(/\/editor\/\d+$/);
+  const panel = page.locator(".card", { has: page.getByRole("heading", { name: "Title and captions" }) });
+  await expect(panel.getByLabel("Title on the video")).toHaveValue("He did NOT just say that");
   // Defaults: white title, yellow captions, all caps, title shown 5 s.
-  await expect(card.getByLabel("Title color", { exact: true })).toHaveValue("#ffffff");
-  await expect(card.getByLabel("Captions color", { exact: true })).toHaveValue("#ffe500");
-  await expect(card.getByText("Shows for 5 s")).toBeVisible();
-  await card.getByLabel("Title on the video").fill("BRO REALLY SAID IT");
-  await card.getByRole("button", { name: "Title color #F97316" }).click();
-  await card.getByLabel("Size: 88").fill("120");
-  await expect(card.locator(".ov-preview .ov-text").first()).toHaveText("BRO REALLY SAID IT");
-  await card.getByRole("button", { name: "Re-render with changes" }).click();
+  await expect(panel.getByLabel("Title color", { exact: true })).toHaveValue("#ffffff");
+  await expect(panel.getByLabel("Captions color", { exact: true })).toHaveValue("#ffe500");
+  await expect(panel.getByText("Shows for 5 s")).toBeVisible();
+  await panel.getByLabel("Title on the video").fill("BRO REALLY SAID IT 🔥");
+  await panel.getByRole("button", { name: "Title color #F97316" }).click();
+  await panel.getByLabel("Size: 88").fill("120");
+  await expect(panel.locator(".ov-preview .ov-text").first()).toHaveText("BRO REALLY SAID IT 🔥");
+  await panel.getByRole("button", { name: "Re-render with changes" }).click();
   await expect(page.getByText(/Re-rendering\. The new version/)).toBeVisible();
-  await expect.poll(async () => card.locator("video").getAttribute("src"), { timeout: 40_000 }).not.toBe(before);
-  await expect.poll(() => card.locator("video").evaluate((v: HTMLVideoElement) => v.readyState >= 1 && v.videoHeight === 1920), { timeout: 20_000 }).toBe(true);
-
-  // Fix a caption word: applies to every page (the edit panel stays open after re-rendering).
-  await card.getByLabel(/Caption words/).fill("no way he ACTUALLY did that right now");
-  await card.getByRole("button", { name: "Save captions" }).click();
+  await page.goto("/ready");
+  await expect.poll(async () => page.locator(".card", { hasText: "He did NOT just say that" }).first().locator("video").getAttribute("src"), { timeout: 40_000 }).not.toBe(before);
+  // Fix a caption word: applies to every page.
+  await page.goto("/editor");
+  await page.getByRole("link", { name: /He did NOT just say that/ }).first().click();
+  const p2 = page.locator(".card", { has: page.getByRole("heading", { name: "Title and captions" }) });
+  await p2.getByLabel(/Caption words/).fill("no way he ACTUALLY did that right now");
+  await p2.getByRole("button", { name: "Save captions" }).click();
   await expect(page.getByText(/Captions updated/)).toBeVisible();
 });
 

@@ -332,6 +332,9 @@ def intake(body: IntakeIn, c=Depends(ctx), s: Session = Depends(db)):
         for link, named in parse(piece, creators):
             found.setdefault(link, body.creator_id or named)
     links = list(found)[:50]
+    from ..pipeline import own_post
+    mine = [u for u in links if own_post(s, u)]  # your own posts (copied for the post-link box) aren't new clips
+    links = [u for u in links if u not in mine]
     for url in links:  # a link Vyral already has (or is making) is skipped when the job runs
         c.jobs.enqueue("intake.link", {"url": url, "creator_id": found[url]}, max_attempts=3, session=s)
     others = sum(count_links(p) for p in pieces) - len(links)

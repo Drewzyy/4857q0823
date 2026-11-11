@@ -60,7 +60,3 @@ def removed_before(t: float, rel: list[tuple[float, float]]) -> float:
 
 def inside(t: float, rel: list[tuple[float, float]]) -> bool:
     return any(a <= t < b for a, b in rel)
-
-
-def keep_expr(rel: list[tuple[float, float]]) -> str:
-    return "not(" + "+".join(f"between(t\\,{a:.3f}\\,{b:.3f})" for a, b in rel) + ")"

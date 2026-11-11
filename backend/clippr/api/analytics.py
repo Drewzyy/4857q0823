@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import audit
-from ..models import Clip, ClipOutput, MetricSnapshot
+from ..models import Clip, ClipOutput, Job, MetricSnapshot, ReferenceVideo
 from .deps import ApiError, ctx, db, get_or_404
 
 router = APIRouter()
@@ -33,6 +33,13 @@ def set_post_link(oid: int, body: PostIn, c=Depends(ctx), s: Session = Depends(d
     if o.status != "uploaded":
         o.status, o.uploaded_at = "uploaded", datetime.now(timezone.utc)
     audit(s, "clip.post_linked", "output", oid, {"platform": o.platform})
+    # Copying this link to paste here may have been picked up as a new clip to make: undo that.
+    base = url.split("?")[0].rstrip("/")
+    for r in s.scalars(select(ReferenceVideo).where(ReferenceVideo.url.like(f"{base}%"), ReferenceVideo.source_id.is_(None))):
+        for job in s.scalars(select(Job).where(Job.kind == "clip.build", Job.status.in_(("queued", "running")))):
+            if job.payload.get("reference_id") == r.id:
+                job.status = "cancelled"
+        r.status, r.status_detail = "removed", "Your own post"
     if o.platform in AUTO_PLATFORMS:
         c.jobs.enqueue("metrics.fetch", {"output_id": oid}, max_attempts=2, session=s)
     return {"post_url": url, "auto": o.platform in AUTO_PLATFORMS}

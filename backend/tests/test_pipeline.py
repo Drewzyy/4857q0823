@@ -928,3 +928,13 @@ def test_network_jobs_wait_while_offline(ctx):
     q.online = lambda: True
     q.run_one()
     assert ran == ["local", "net"]
+
+
+def test_your_own_posted_links_are_not_made_into_clips(env):
+    ctx, c, fake = env
+    cid, sid, tt, yt = setup_accounts(c)
+    own = "https://www.tiktok.com/@streamera.tt/video/999"  # tt's handle is @streamera.tt
+    assert c.post("/api/intake", json={"urls": [own], "from_clipboard": True}).json()["queued"] == 0
+    # A short link only shows whose post it is once opened: it's dropped then.
+    fake.post_details = lambda url: RemotePost("888", "https://www.tiktok.com/@streamera.tt/video/888", "mine")
+    assert ctx.pipeline.intake_link("https://vm.tiktok.com/ZMmine/") == {"skipped": "one of your own posts"}
