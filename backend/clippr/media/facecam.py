@@ -65,7 +65,7 @@ def cam_box(face: tuple[float, float, float], stream_aspect: float, panel_aspect
     """The area of the source (x, y, w, h as shares) shown in the facecam panel: the face with room around it,
     shaped like the panel and kept inside the frame."""
     cx, cy, fw = face
-    w = min(1.0, fw * 3.2)
+    w = min(1.0, fw * 4.5)  # roomy: less enlarging, so the facecam stays sharp
     h = w * stream_aspect / panel_aspect
     if h > 1:
         h, w = 1.0, panel_aspect / stream_aspect
