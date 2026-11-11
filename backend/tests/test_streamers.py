@@ -76,3 +76,17 @@ def test_turning_on_watch_for_an_older_streamer_starts_watching_their_channel(en
     assert c.get("/api/streamers").json()[0]["channels"] == []
     v = c.patch(f"/api/streamers/{cid}", json={"watching": True}).json()
     assert v["watching"] and [(x["platform"], x["username"]) for x in v["channels"]] == [("twitch", "olds")]
+
+
+def test_streamers_sharing_a_channel_can_both_be_watched(env):
+    ctx, c, fake = env
+    core = c.post("/api/streamers", json={"name": "The Core", "links": ["twitch.tv/silky"], "permission": True}).json()
+    silky = c.post("/api/streamers", json={"name": "Silky", "links": ["twitch.tv/silky"], "permission": True}).json()
+    assert core["watching"] and silky["watching"]
+    assert [x["username"] for x in c.get("/api/sources").json()] == ["silky"]  # one channel, watched once
+    off = c.patch(f"/api/streamers/{silky['id']}", json={"watching": False}).json()
+    assert not off["watching"]  # the switch stays where it was put
+    assert c.patch(f"/api/streamers/{silky['id']}", json={"watching": True}).json()["watching"]
+    c.delete(f"/api/streamers/{silky['id']}")
+    assert [x["username"] for x in c.get("/api/sources").json()] == ["silky"]  # The Core still uses it
+    assert c.get("/api/streamers").json()[0]["channels"][0]["username"] == "silky"

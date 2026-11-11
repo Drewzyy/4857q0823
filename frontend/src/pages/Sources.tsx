@@ -48,7 +48,8 @@ export default function Sources() {
           </tr></thead><tbody>
             {streamers.data!.map((s) => {
               const last = s.channels.map((c) => c.last_check).filter(Boolean).sort().pop() ?? null;
-              const watchable = s.links.some((l) => ["twitch", "kick"].includes(linkPlatform(l)));
+              // A channel link can be watched; a link to one past broadcast (twitch.tv/videos/…) or YouTube can't.
+              const watchable = s.links.some((l) => ["twitch", "kick"].includes(linkPlatform(l)) && !/\/videos?\/[\w-]/i.test(l));
               const error = s.channels.find((c) => c.error)?.error;
               return (
                 <tr key={s.id}>
@@ -61,7 +62,7 @@ export default function Sources() {
                       onChange={(ids) => update(s.id, { destination_ids: ids })} hint="Clips from this streamer go to every page ticked here." /></td>
                   <td className="small">{s.posts} · {s.clips}</td>
                   <td className="small muted" title={s.channels.map((c) => c.next_check ? `Next check ${relTime(c.next_check)}` : "").join(" ")}>
-                    {s.channels.length ? relTime(last) : <span className="faint" title={watchable ? "Turn on Watch to pick up their new clips" : "YouTube links are searched for moments; there are no viewer clips to watch"}>Not watched</span>}
+                    {s.channels.length ? relTime(last) : <span className="faint" title={watchable ? "Turn on Watch to pick up their new clips" : "Only a Twitch or Kick channel link can be watched (twitch.tv/name or kick.com/name). YouTube and single-broadcast links are searched for moments instead. Edit the streamer to add one."}>{watchable ? "Not watched" : "Add a Twitch or Kick channel to watch"}</span>}
                     {error && <span title={error}> <AlertTriangle size={12} color="var(--warn)" /></span>}</td>
                   <td>{watchable && <Toggle label={`Watch ${s.name}`} checked={s.watching} onChange={(v) => update(s.id, { watching: v })} />}</td>
                   <td><div className="row" style={{ gap: 2, justifyContent: "flex-end" }}>

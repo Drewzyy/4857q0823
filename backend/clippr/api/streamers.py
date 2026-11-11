@@ -31,9 +31,19 @@ def _iso(d: datetime | None) -> str | None:
 
 
 def _watched(s: Session, cid: int) -> list[SourceAccount]:
-    """The channels watched for this streamer alone (an account covering several streamers isn't theirs to change)."""
+    """The Twitch and Kick channels watched for this streamer, including ones shared with another streamer
+    (a group and its members, or two names for the same person)."""
     return [x for x in s.scalars(select(SourceAccount).where(SourceAccount.platform.in_(WATCHED))).unique()
-            if source_creator_ids(x) == [cid]]
+            if cid in source_creator_ids(x)]
+
+
+def _drop(s: Session, src: SourceAccount, cid: int) -> None:
+    """This streamer no longer uses the channel: it stays for anyone else who does, else it goes."""
+    ids = [i for i in source_creator_ids(src) if i != cid]
+    if ids:
+        src.creator_ids, src.creator_id = ids, ids[0]
+    else:
+        s.delete(src)
 
 
 def _out(s: Session, c: Creator, pages: list[DestinationAccount]) -> dict:
@@ -95,7 +105,7 @@ def _sync_channels(s: Session, c: Creator, watching: bool = True) -> None:
             src.creator_ids, src.creator_id = ids, ids[0]
     for w in _watched(s, c.id):
         if (w.platform, w.username) not in wanted:
-            s.delete(w)
+            _drop(s, w, c.id)
     s.flush()
 
 
@@ -165,7 +175,7 @@ def remove_streamer(cid: int, s: Session = Depends(db)):
     """Removes the streamer and the channels watched for them. Clips already made stay in Ready to Upload."""
     c = get_or_404(s, Creator, cid, "Streamer")
     for w in _watched(s, cid):
-        s.delete(w)
+        _drop(s, w, cid)
     _set_pages(s, cid, [])
     audit(s, "streamer.removed", "creator", cid, {"name": c.name})
     s.delete(c)
