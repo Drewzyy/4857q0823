@@ -70,6 +70,21 @@ _FIND_LINK = re.compile(r"https?://(?:(?:www\.|m\.)?tiktok\.com/(?:@[\w.-]+/vide
                         r"|(?:www\.|m\.)?youtube\.com/shorts/[\w-]+)/?(?:\?[^\s<>\"']*)?", re.I)
 
 
+# A long video to break into clips: a YouTube video or live replay, or a Twitch or Kick past broadcast.
+_LONG_LINK = re.compile(r"https?://(?:(?:www\.|m\.)?youtube\.com/(?:watch\?[^\s<>]*v=[\w-]+|live/[\w-]+)|youtu\.be/[\w-]+"
+                        r"|(?:www\.)?twitch\.tv/videos/\d+|(?:www\.)?kick\.com/(?:video/[\w-]+|[\w-]+/videos/[\w-]+))[^\s<>]*", re.I)
+
+
+def find_long_links(text: str) -> list[str]:
+    """Links to long videos in pasted text, in order, without repeats."""
+    out = []
+    for m in _LONG_LINK.finditer(_unglue(text)):
+        link = m.group(0).rstrip(".,;:!?)]}")
+        if link not in out:
+            out.append(link)
+    return out
+
+
 def _unglue(text: str) -> str:
     return re.sub(r"(?<!\s)(https?://)", r" \1", text)  # split links pasted back to back
 

@@ -7,6 +7,7 @@ message with a video link gets a ✅ reaction once it's queued.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from typing import Any
@@ -16,8 +17,8 @@ import httpx
 from sqlalchemy import select
 
 from . import identify
-from .fetch import find_links
-from .models import Creator, Setting
+from .fetch import find_links, find_long_links
+from .models import Creator, LongformVideo, Setting
 
 log = logging.getLogger("clippr.discord_inbox")
 
@@ -140,6 +141,19 @@ class DiscordInbox:
                         found = parse(content, creators)
                         for link, creator_id in found:
                             self.ctx.jobs.enqueue("intake.link", {"url": link, "creator_id": creator_id}, max_attempts=3)
+                        # Long videos (YouTube, Twitch / Kick past broadcasts) go to Long-form to be broken into clips.
+                        longs = find_long_links(content)
+                        if longs:
+                            named = _named(content, creators)
+                            m_count = re.search(r"\b(\d{1,2})\s*clips?\b", content, re.I)
+                            wanted = min(20, max(1, int(m_count.group(1)))) if m_count else 6
+                            with self.ctx.db.session() as s:
+                                for url in longs:
+                                    v = LongformVideo(url=url, creator_id=named, clips_wanted=wanted, status="new", status_detail="Waiting for its turn")
+                                    s.add(v)
+                                    s.flush()
+                                    self.ctx.jobs.enqueue("longform.make", {"longform_id": v.id}, max_attempts=2, session=s)
+                            found = found + [(u, named) for u in longs]
                     except Exception:  # one odd message must never stop the inbox: skip it and keep going
                         log.exception("couldn't read a Discord message; skipped it")
                         found = []

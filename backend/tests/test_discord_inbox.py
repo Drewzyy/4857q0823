@@ -65,3 +65,29 @@ def test_links_posted_in_discord_become_clips(env):
     assert c.get("/api/discord-inbox").json()["last_error"] == NO_CONTENT
     assert c.delete("/api/discord-inbox").status_code == 204
     assert c.get("/api/discord-inbox").json()["configured"] is False
+
+
+def test_find_long_links():
+    from clippr.fetch import find_long_links
+    text = "watch https://www.youtube.com/watch?v=abc123, and <https://youtu.be/xyz> plus https://www.twitch.tv/videos/987 https://www.tiktok.com/@a/video/1"
+    assert find_long_links(text) == ["https://www.youtube.com/watch?v=abc123", "https://youtu.be/xyz", "https://www.twitch.tv/videos/987"]
+    assert find_long_links("https://www.youtube.com/@channel") == []  # a channel, not a video
+
+
+@respx.mock
+def test_youtube_link_in_discord_becomes_longform(env):
+    ctx, c, fake = env
+    a = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    inbox = []
+    reactions = _discord(lambda: inbox)
+    c.put("/api/discord-inbox", json={"token": TOKEN})
+    c.put("/api/discord-inbox", json={"channel_id": CH})
+    assert ctx.inbox.poll() == {"started": True}
+    inbox[:] = [{"id": "102", "author": {"id": "u"}, "content": "https://www.youtube.com/watch?v=abc streamera 4 clips"}]
+    ctx.inbox.poll()
+    from clippr.models import LongformVideo
+    from sqlalchemy import select
+    with ctx.db.session() as s:
+        v = s.scalars(select(LongformVideo)).one()
+        assert v.url == "https://www.youtube.com/watch?v=abc" and v.creator_id == a and v.clips_wanted == 4
+    assert any("/102/" in str(call.request.url) for call in reactions.calls)
