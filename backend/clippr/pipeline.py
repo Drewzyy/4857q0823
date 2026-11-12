@@ -608,6 +608,7 @@ class Pipeline:
         # Keep the full-quality cut until the clip expires so text edits can be re-rendered later.
         clip_dir = self._dir("clips") / f"{'ref' if reference_id else 'long'}{reference_id or longform_id}-{int(now().timestamp() * 1000)}"
         clip_dir.mkdir(parents=True, exist_ok=True)
+        work.mkdir(parents=True, exist_ok=True)  # scratch files (the speech audio) go here
         source = clip_dir / f"source{section.suffix or '.mp4'}"
         shutil.move(str(section), source)
 

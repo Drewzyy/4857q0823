@@ -56,6 +56,7 @@ def test_a_dropped_in_file_becomes_clips(env, tmp_path):
     assert len(lf["moments"]) == 2 and all(m["clip_id"] for m in lf["moments"])
     clips = c.get("/api/clips").json()
     assert len(clips) == 2 and all(x["grade"] and x["outputs"] for x in clips)
+    assert all(not x.get("captions_note") for x in clips), [x.get("captions_note") for x in clips]
     c.delete(f"/api/longform/{lf['id']}")
     assert c.get("/api/longform").json() == [] and len(c.get("/api/clips").json()) == 2  # clips stay
 
