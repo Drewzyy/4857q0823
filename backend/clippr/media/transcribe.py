@@ -75,6 +75,9 @@ class WhisperTranscriber:
             log_prob_threshold=-1.0,
             no_speech_threshold=0.6,
             hallucination_silence_threshold=1.0,
+            # Speech models tidy "um" and "uh" away (and squeeze their time into the next word); a prompt that
+            # has them makes the model write them down, so they can be cut.
+            initial_prompt="Umm, so, uh, I was like, hmm, let me think.",
             hotwords=" ".join(h for h in hints if h) or None,
         )
         out: list[Word] = []

@@ -448,13 +448,23 @@ class Pipeline:
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
-    def _dead_air(self, source: Path, start: float, dur: float) -> dict:
-        """Silent stretches to cut, if the user has dead-air cutting on (it is by default)."""
+    def _dead_air(self, source: Path, start: float, dur: float, words: list[Word] = ()) -> dict:
+        """Silent stretches, filler words and long quiet pauses to cut, if the user has dead-air cutting on (it is
+        by default). The editor shows them and can put them back."""
         with self.ctx.db.session() as s:
             on = load_settings(s).processing.cut_dead_air
         if not on:
             return {}
         gaps = deadair.detect(source, start, dur)
+        if words:
+            try:
+                db = grade.loudness(source, start, dur)
+            except Exception:
+                log.exception("couldn't measure loudness; long pauses are kept")
+                db = None
+            both = [list(g) for g in deadair.relative(gaps + deadair.speech_gaps(words, start, dur, db), 0, start + dur)]
+            if sum(b - a for a, b in both) <= dur - deadair.MIN_LEFT:
+                gaps = both
         return {"cut_dead_air": True, "gaps": gaps} if gaps else {}
 
     def _auto_layout(self, source: Path, start: float, dur: float, creator_id: int | None = None) -> dict:
@@ -607,7 +617,8 @@ class Pipeline:
         progress("Rendering")
         # Framing (and later edits) are saved with the clip, so a re-render never changes how it looks.
         framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur, creator_id),
-                           **self._dead_air(source, start, dur)).model_dump()
+                           **self._dead_air(source, start, dur, words)).model_dump()
+        words = [w for w in words if not deadair.FILLER.match(w.text.strip())]  # "um" never shows in captions
         renders: dict[str, Path] = {}
         planned = []
         for did, platform, name, handle, st in dest_info:

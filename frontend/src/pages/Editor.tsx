@@ -383,11 +383,11 @@ function EditorBody({ data }: { data: EditorData }) {
               <div className="seg" role="group" aria-label="Speed" style={{ alignSelf: "flex-start" }}>
                 {SPEEDS.map((s) => <button key={s} className={e.speed === s ? "on" : ""} onClick={() => patch({ speed: s })}>{s}x</button>)}</div></div>
             {e.gaps.length > 0 && (
-              <div className="field"><span className="label-text">Dead air</span>
-                <div className="seg" role="group" aria-label="Dead air" style={{ alignSelf: "flex-start" }}>
+              <div className="field"><span className="label-text">Pauses and filler words</span>
+                <div className="seg" role="group" aria-label="Pauses and filler words" style={{ alignSelf: "flex-start" }}>
                   <button className={e.cut_dead_air ? "on" : ""} onClick={() => patch({ cut_dead_air: true })}>Cut out</button>
                   <button className={e.cut_dead_air ? "" : "on"} onClick={() => patch({ cut_dead_air: false })}>Keep</button></div>
-                <span className="hint">{`${e.gaps.length} silent stretch${e.gaps.length === 1 ? "" : "es"} (${e.gaps.reduce((n, [a, b]) => n + b - a, 0).toFixed(1)}s). `}
+                <span className="hint">{`${e.gaps.length} pause${e.gaps.length === 1 ? "" : "s"}, "um"s and silent stretch${e.gaps.length === 1 ? "" : "es"} (${e.gaps.reduce((n, [a, b]) => n + b - a, 0).toFixed(1)}s). `}
                   The preview plays them; the rendered video skips them, so your own text may land a little earlier than shown.</span></div>
             )}
           </div>
