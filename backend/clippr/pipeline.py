@@ -526,7 +526,7 @@ class Pipeline:
             self._lf(lid, "processing", "Listening for the best moments", duration=length)
             db = grade.loudness(audio, 0, length)
             heat = moments.heat_curve(heatmap, len(db))
-            cands = moments.candidates(db, heat, limit=max(wanted * 2, wanted + 4))
+            cands = moments.candidates(db, heat, limit=min(40, max(wanted * 3, wanted + 6)))  # extra to judge on speech, and spares for repeats
             if not cands:
                 self._lf(lid, "failed", "No moment stood out enough to clip. Very quiet or very short videos don't have peaks to find.")
                 return {"status": "no_moments"}

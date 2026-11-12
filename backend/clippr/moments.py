@@ -8,7 +8,11 @@ Two passes, so a 4-hour video takes minutes, not hours:
    it settles (the payoff), 15 to 60 seconds long.
 2. Speech (best candidates only). What's said is transcribed: reaction phrases ("no way", "let's go", "bro"),
    a fast talking pace, and words in the first two seconds all count.
-The best few that don't overlap are kept. Each finished clip is then graded like every other clip.
+   For talk-heavy videos (podcasts, interviews) the words matter most: a clip that opens on a hook ("the
+   craziest thing", a question) gains, one that opens mid-thought ("and", "but", "like I said") loses.
+3. Picking: the best that don't overlap once snapped to sentences, spread through the video rather than five
+   from one heated minute, and never the same moment twice (streamers often replay their own highlight, and
+   a repeated line is the same clip). Each finished clip is then graded like every other clip.
 """
 from __future__ import annotations
 
@@ -74,11 +78,14 @@ def candidates(db: np.ndarray, heat: np.ndarray | None = None, limit: int = 20) 
         return []
     excite = _smooth(db - _local_level(db), int(1 / STEP))  # loudness above the surrounding level, 1 s smoothed
     signal = excite + (heat * 12 if heat is not None else 0)  # replayed parts stand out even when they're quiet
+    # A steady talker never gets 4 dB above themselves: judge each video against its own loudest moments so a
+    # podcast still gives candidates, while a loud stream keeps the usual bar.
+    floor = min(4.0, max(1.5, float(np.percentile(signal, 97))))
     order = np.argsort(signal)[::-1]
     taken = np.zeros(len(db), bool)
     out: list[Moment] = []
     for i in order:
-        if len(out) >= limit * 2 or signal[i] < 4:
+        if len(out) >= limit * 2 or signal[i] < floor:
             break
         if taken[i]:
             continue
@@ -165,6 +172,11 @@ def snap(m: Moment, words: list[tuple[float, float, str]], offset: float) -> Non
         m.end = m.start + MIN_LEN * 0.75
 
 
+HOOK = re.compile(r"^(\W*)(why|how|what|who|when|did you|have you|do you|the (craziest|worst|best|funniest|scariest)|"
+                  r"i (never|can'?t believe|swear)|nobody|everyone|this is|imagine|story|so this|listen)\b", re.I)
+DANGLING = re.compile(r"^(\W*)(and|but|so|because|cause|or|which|then|also|like i said|as i (said|mentioned)|anyway)\b", re.I)
+
+
 def speech_bonus(m: Moment, words: list[tuple[float, float, str]], lift: float | None = None) -> None:
     """Pass 2: what's said and how. words are (start, end, text) in seconds from the moment's start; lift is the
     share of the voice pitched up (see grade.pitch_lift). Adds up to 25 points: final = 75% sound/audience +
@@ -196,13 +208,35 @@ def speech_bonus(m: Moment, words: list[tuple[float, float, str]], lift: float |
         m.why.append("a raised, excited voice")
     if early >= 3:
         m.why.append("talking from the first second")
-    m.score = 0.75 * m.score + 25 * speech
+    opening = " ".join(w for _, _, w in words[:6])
+    if words and HOOK.search(opening):
+        speech += 0.15
+        m.why.append("opens on a hook")
+    elif words and DANGLING.search(opening):
+        speech -= 0.2  # starts mid-thought: the viewer is missing what came before
+    m.score = 0.75 * m.score + 25 * max(0.0, min(1.0, speech))
 
 
-def pick(moments: list[Moment], count: int) -> list[Moment]:
-    """The best `count`, in the order they happen in the video."""
-    best = sorted(moments, key=lambda m: -m.score)[:count]
-    return sorted(best, key=lambda m: m.start)
+def _same_words(a: str, b: str) -> bool:
+    x, y = set(re.findall(r"[a-z']{3,}", a.lower())), set(re.findall(r"[a-z']{3,}", b.lower()))
+    return len(x) >= 12 and len(y) >= 12 and len(x & y) / len(x | y) > 0.5
+
+
+def pick(moments: list[Moment], count: int, spread: float = 180.0) -> list[Moment]:
+    """The best `count`, in the order they happen in the video. Greedy by score, skipping any that overlap one
+    already picked (sentence snapping can move edges) or repeat its words; one within `spread` seconds of a
+    pick counts for 20% less, so the clips cover the whole video unless one stretch really is that good."""
+    left, chosen = list(moments), []
+    while left and len(chosen) < count:
+        def value(m: Moment) -> float:
+            near = any(abs(m.peak - c.peak) < spread for c in chosen)
+            return m.score * (0.8 if near else 1.0)
+        best = max(left, key=value)
+        left.remove(best)
+        if any(best.start < c.end and c.start < best.end for c in chosen) or any(_same_words(best.text, c.text) for c in chosen):
+            continue
+        chosen.append(best)
+    return sorted(chosen, key=lambda m: m.start)
 
 
 def title_for(m: Moment, fallback: str) -> str:

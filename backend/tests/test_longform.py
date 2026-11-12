@@ -101,3 +101,25 @@ def test_pitch_lift_hears_a_raised_voice():
     yell = np.concatenate([calm[: sr * 2], 0.3 * np.sin(2 * np.pi * 220 * t[: sr * 2])])  # half the time pitched way up
     assert pitch_lift(calm.astype(np.float32), sr) < 0.05
     assert pitch_lift(yell.astype(np.float32), sr) > 0.3
+
+
+def test_a_steady_talker_still_gives_candidates():
+    rng = np.random.default_rng(5)
+    db = -24 + rng.normal(0, 0.8, 6000)
+    db[3000:3030] = -21  # a laugh only 3 dB up
+    assert moments.candidates(db, limit=3)
+
+
+def test_hooks_beat_mid_thought_openings():
+    hook, dangling = moments.Moment(0, 30, 15, 50.0), moments.Moment(0, 30, 15, 50.0)
+    moments.speech_bonus(hook, [(0.1, 0.4, "the"), (0.4, 0.8, "craziest"), (0.8, 1.0, "thing")])
+    moments.speech_bonus(dangling, [(0.1, 0.4, "and"), (0.4, 0.8, "then"), (0.8, 1.0, "thing")])
+    assert hook.score > dangling.score and "opens on a hook" in hook.why
+
+
+def test_pick_spreads_out_and_skips_repeats():
+    line = "we just won the whole tournament against the best team ever and chat cannot believe what happened tonight"
+    ms = [moments.Moment(100, 130, 115, 90, text=line), moments.Moment(1000, 1030, 1015, 88, text=line),  # replayed
+          moments.Moment(140, 170, 155, 80), moments.Moment(2000, 2030, 2015, 70), moments.Moment(120, 150, 135, 85)]
+    got = moments.pick(ms, 2)
+    assert [m.start for m in got] == [100, 2000], [m.start for m in got]  # 140 is close to 100; 120 overlaps; 1000 repeats
