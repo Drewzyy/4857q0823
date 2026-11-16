@@ -335,3 +335,28 @@ test("long-form: paste a link or drop in a file", async ({ page }) => {
   await page.getByRole("button", { name: "Remove podcast-ep-12" }).click();
   await expect(page.getByText("podcast-ep-12", { exact: true })).toHaveCount(0);
 });
+
+test("ready to upload: filter by grade and put the best first", async ({ page }) => {
+  await page.goto("/");
+  await nav(page, "Ready to Upload");
+  const group = page.getByRole("group", { name: "Filter by grade" });
+  // Earlier tests may have marked the seeded clips uploaded: use whichever tab has them.
+  await expect(page.locator(".card").first()).toBeVisible();
+  if (!(await group.isVisible())) await page.getByRole("tab", { name: "Uploaded" }).click();
+  await expect(group).toBeVisible();
+  const grade = group.locator("button.filter-btn:not([disabled])").first();
+  const before = await page.locator(".grade-badge").count();
+  await grade.click();
+  await expect(grade).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Show all" })).toBeVisible();
+  expect(await page.locator(".grade-badge").count()).toBeLessThanOrEqual(before);
+  await page.getByLabel("Best first").check();
+  const tab = page.locator('.tabs [role=tab][aria-selected=true]');
+  const tabName = (await tab.textContent()) ?? "Ready";
+  await page.reload();  // both are remembered
+  await page.getByRole("tab", { name: tabName }).click();
+  await expect(group.locator("button.filter-btn[aria-pressed=true]")).toHaveCount(1);
+  await expect(page.getByLabel("Best first")).toBeChecked();
+  await page.getByRole("button", { name: "Show all" }).click();
+  await expect(group.locator("button.filter-btn[aria-pressed=true]")).toHaveCount(0);
+});

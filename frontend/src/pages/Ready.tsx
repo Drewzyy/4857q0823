@@ -19,6 +19,12 @@ function daysLeft(iso: string): string {
   return d <= 0 ? "Deleting soon" : d === 1 ? "Deletes tomorrow" : `Deletes in ${d} days`;
 }
 
+const TIERS = ["S", "A", "B", "C", "D"] as const;
+const saved = <T,>(key: string, fallback: T): T => {
+  try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; }
+};
+const save = (key: string, v: unknown) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* private window: just not remembered */ } };
+
 export default function Ready() {
   const [tab, setTab] = useState<Tab>("ready");
   const qc = useQueryClient();
@@ -30,7 +36,17 @@ export default function Ready() {
   });
   const [removing, setRemoving] = useState<ClipT | null>(null);
   const refresh = () => ["clips", "dashboard"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-  const list = clips.data ?? [];
+  // Grades to show (none ticked = all) and whether the best come first. Remembered between visits.
+  const [grades, setGrades] = useState<string[]>(() => saved("ready.grades", []));
+  const [bestFirst, setBestFirst] = useState<boolean>(() => saved("ready.bestFirst", false));
+  useEffect(() => save("ready.grades", grades), [grades]);
+  useEffect(() => save("ready.bestFirst", bestFirst), [bestFirst]);
+  const all = clips.data ?? [];
+  const tierOf = (c: ClipT) => c.grade?.tier ?? "none";
+  const counts = Object.fromEntries([...TIERS, "none"].map((t) => [t, all.filter((c) => tierOf(c) === t).length]));
+  const shown = grades.length ? all.filter((c) => grades.includes(tierOf(c))) : all;
+  const list = bestFirst ? [...shown].sort((a, b) => (b.grade?.score ?? -1) - (a.grade?.score ?? -1)) : shown;
+  const toggle = (t: string) => setGrades((g) => (g.includes(t) ? g.filter((x) => x !== t) : [...g, t]));
 
   return (
     <div className="page">
@@ -43,8 +59,23 @@ export default function Ready() {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
+      {all.length > 0 && (
+        <div className="row wrap" style={{ gap: 6, marginBottom: 12 }} role="group" aria-label="Filter by grade">
+          <span className="small faint">Grade</span>
+          {[...TIERS, ...(counts.none ? ["none"] : [])].map((t) => (
+            <button key={t} className={`filter-btn${grades.includes(t) ? " on" : ""}`} aria-pressed={grades.includes(t)}
+              disabled={!counts[t] && !grades.includes(t)} onClick={() => toggle(t)}>
+              {t === "none" ? "Not graded" : t} <span className="faint">{counts[t]}</span></button>))}
+          {grades.length > 0 && <button className="btn ghost sm" onClick={() => setGrades([])}>Show all</button>}
+          <span className="spacer" />
+          <label className="check small"><input type="checkbox" checked={bestFirst} onChange={(e) => setBestFirst(e.target.checked)} />Best first</label>
+        </div>
+      )}
       {clips.error && <ErrorNote error={clips.error} />}
-      {clips.isLoading ? <Loading /> : list.length === 0 ? (
+      {clips.isLoading ? <Loading /> : all.length > 0 && list.length === 0 ? (
+        <div className="card"><Empty icon={<Download size={28} />} title="No clips with those grades">
+          <button className="btn" onClick={() => setGrades([])}>Show all grades</button></Empty></div>
+      ) : list.length === 0 ? (
         <div className="card"><Empty icon={<Download size={28} />} title={tab === "ready" ? "Nothing waiting" : tab === "uploaded" ? "Nothing marked uploaded yet" : "Nothing expired"}>
           {tab === "ready" && <p className="small">When a source account posts, Vyral finds the moment in the full stream, makes the clip and puts it here. Watch progress in <Link to="/activity">Activity</Link>.</p>}
         </Empty></div>
