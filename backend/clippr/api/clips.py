@@ -95,6 +95,7 @@ def update_output(oid: int, body: OutputPatch, s: Session = Depends(db)):
 
 
 def _safe_name(text: str) -> str:
+    text = re.sub(r"\s{2,}", " ", re.sub("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+", "", text))  # emoji: unreliable in file names
     return (re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "", text).strip(" .") or "clip")[:80]
 
 
