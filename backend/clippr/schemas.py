@@ -118,6 +118,7 @@ class CaptionEngineSettings(Strict):
 class ProcessingSettings(Strict):
     max_concurrent_jobs: int = Field(2, ge=1, le=16)
     cut_dead_air: bool = True  # cut stretches with no sound out of new clips
+    viral_preedit: bool = True  # headline box, strongest 18-30 s, open on sound (see preedit.py)
     hardware_encoding: bool = True  # render on the graphics card when this computer has a working video encoder
 
 
@@ -143,6 +144,7 @@ class TextOverlay(Strict):
     font: FontName = "montserrat"
     all_caps: bool = True
     outline: int = Field(6, ge=0, le=20)
+    box: bool = False  # dark text on a white box: the headline look of top-performing clip pages
 
     @model_validator(mode="after")
     def _ordered(self):
@@ -192,6 +194,8 @@ class ClipEdit(Strict):
     cuts: list[list[float]] = Field(default_factory=list, max_length=50)  # stretches the user cut out, in source seconds
     texts: list[TextOverlay] = Field(default_factory=list, max_length=20)
     layers: list[LayerEdit] = Field(default_factory=list, max_length=20)
+    hide_title: bool = False  # the page's own title is left off (a headline in texts replaces it)
+    preedited: bool = False  # Vyral's viral pre-edit has been applied (see preedit.py)
 
 
 class PresetData(Strict):

@@ -268,12 +268,12 @@ test("the sidebar has no Agents or Account Funnel", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Account Funnel" })).toHaveCount(0);
 });
 
-test("video editor: facecam on bottom with a hand-drawn box", async ({ page }) => {
+test("video editor: facecam on top with a hand-drawn box", async ({ page }) => {
   await page.goto("/editor");
   await page.getByRole("link", { name: /He did NOT just say that/ }).click();
   const video = page.locator(".ed-preview video");
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 2)).toBe(true);
-  await page.getByRole("button", { name: "Facecam on bottom" }).click();
+  await page.getByRole("button", { name: "Facecam on top" }).click();
   const area = page.getByText("Drag a box around the streamer's camera").locator("xpath=following-sibling::div[1]");
   const box = (await area.boundingBox())!;
   await page.mouse.move(box.x + 20, box.y + 20);

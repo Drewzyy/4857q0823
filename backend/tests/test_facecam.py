@@ -60,3 +60,17 @@ def test_the_zoomed_crop_keeps_the_person_in_frame(tmp_path):
     crop_left = pan * (1 - 0.316)
     assert crop_left <= face_left and face_right <= crop_left + 0.316  # the whole face is inside the crop
     assert facecam.subject_pan([[]] * 8, size, 0.316) is None  # nobody: stays centered
+
+
+def test_stacked_puts_the_facecam_on_top(tmp_path):
+    import cv2
+    src = tmp_path / "cam.mp4"  # grey stream, red facecam in the bottom right
+    run(["-f", "lavfi", "-i", "color=c=gray:size=1280x720:rate=30:duration=2",
+         "-vf", "drawbox=x=900:y=420:w=380:h=300:color=red:t=fill", "-c:v", "libx264", "-preset", "ultrafast", str(src)])
+    out = render(src, tmp_path / "out.mp4", OutputFormat(540, 960, 30), cam=[900 / 1280, 420 / 720, 380 / 1280, 300 / 720])
+    frame = tmp_path / "f.png"
+    run(["-ss", "1", "-i", str(out), "-frames:v", "1", str(frame)])
+    img = cv2.imread(str(frame))
+    red = (img[:, :, 2] > 180) & (img[:, :, 1] < 80)
+    assert red[:300].mean() > 0.8  # the facecam fills the top
+    assert red[500:].mean() < 0.2  # the stream below (its own small facecam corner aside)

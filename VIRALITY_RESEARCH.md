@@ -59,3 +59,20 @@ copied):
 | jipraks/yt-short-clipper (MIT) | 1.0k | Use the video's own subtitles instead of transcribing | Not yet: a speed-up for long-form YouTube links |
 | xenova/chat-downloader (MIT) | 1.2k | Read Twitch and YouTube chat replays without signing in | Not yet: chat spikes as a long-form signal (needs a real Twitch connection to test) |
 | WyattBlue/auto-editor, Breakthrough/PySceneDetect, m-bain/whisperX | 5.8k / 5.4k / 25k | Silence cutting, scene cuts, word timing | Vyral has its own versions of each |
+
+## Eight clips over 200k views (November 2026)
+
+Eight streamer clips from clip pages, each past 200k views, studied frame by frame and by ear. What they share, and
+what Vyral's pre-edit (backend/clippr/preedit.py) does about it:
+
+| What the clips do | Count | Pre-edit |
+|---|---|---|
+| 18 to 28 seconds long (the eighth is 109 s, a story) | 7 of 8 | Clips over 30 s are trimmed to the strongest 26 s, ending just after the loudest moment |
+| Sound starts in the first quarter second | 7 of 8 | A silent opening is cut |
+| One headline for the whole clip, at the top, dark text on a white box, sentence case, ends on 1 or 2 emoji | 8 of 8 | Same headline box, from the source post's own caption or the clip's line with the streamer's name |
+| Headline is third person and names the streamer ("Lacy couldn't believe...") | 7 of 8 | The source post's line is used as is; otherwise "Name: “line”" |
+| Word-by-word captions burned in | 0 of 8 | Left to the page's setting (they help silent viewing; the evidence here doesn't say either way) |
+| Cuts | 1 to 5 in a short clip | No extra cuts beyond quiet pauses and "um"s |
+| Added music, sound effects or zooms | 0 of 8 | None added |
+| Facecam on top, gameplay under it, headline on the seam | 2 of 2 gaming clips | Stacked layout now puts the facecam on top (it was underneath) |
+| Loudness | -17 LUFS typical | Clips are normalized to -14 LUFS (TikTok's target), a little louder |

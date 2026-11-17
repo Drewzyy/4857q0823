@@ -72,6 +72,11 @@ function General() {
               <button className={s.processing.hardware_encoding ? "on" : ""} onClick={() => up("processing", { hardware_encoding: true })}>Graphics card (fast)</button>
               <button className={s.processing.hardware_encoding ? "" : "on"} onClick={() => up("processing", { hardware_encoding: false })}>Processor only</button></div>
             <span className="hint">The graphics card renders several times faster. If videos come out wrong (sound out of step, glitches), switch to Processor only and re-render.</span></div>
+          <div className="field"><span className="label-text">Viral pre-edit</span>
+            <div className="seg" role="group" aria-label="Viral pre-edit" style={{ alignSelf: "flex-start" }}>
+              <button className={s.processing.viral_preedit ? "on" : ""} onClick={() => up("processing", { viral_preedit: true })}>On</button>
+              <button className={s.processing.viral_preedit ? "" : "on"} onClick={() => up("processing", { viral_preedit: false })}>Off</button></div>
+            <span className="hint">Every new clip gets a headline box at the top for the whole clip, is trimmed to its strongest 18 to 30 seconds, and opens on sound, matching clips that passed 200k views. You can change any of it in the editor.</span></div>
         </div>
       </div>
 

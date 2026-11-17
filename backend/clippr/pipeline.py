@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
-from . import describe, events, grade, identify, moments, notify
+from . import describe, events, grade, identify, moments, notify, preedit
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
@@ -26,7 +26,7 @@ from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
 from .media.render import Layer, OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
-from .models import Clip, ClipOutput, Creator, DestinationAccount, Job, LongformVideo, MediaItem, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
+from .models import AuditLog, Clip, ClipOutput, Creator, DestinationAccount, Job, LongformVideo, MediaItem, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
 from .routing import destination_creator_ids, pages_for, source_creator_ids
 from .schemas import VIDEO_HEIGHT, ClipEdit, OverlaySettings, lenient
 
@@ -620,6 +620,13 @@ class Pipeline:
         framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur, creator_id),
                            **self._dead_air(source, start, dur, words)).model_dump()
         words = [w for w in words if not deadair.FILLER.match(w.text.strip())]  # "um" never shows in captions
+        lead = ""
+        with self.ctx.db.session() as s:
+            viral = load_settings(s).processing.viral_preedit
+        if viral:
+            # A long video's own title is about the whole video, not this moment: the moment's line leads instead.
+            lead = preedit.headline("" if longform_id else post_title, title, creator_name, " ".join(w.text for w in words))
+            framing = preedit.apply(framing, words, self._loudness(source, start, dur), lead)
         renders: dict[str, Path] = {}
         planned = []
         for did, platform, name, handle, st in dest_info:
@@ -641,7 +648,7 @@ class Pipeline:
             s.flush()
             for did, platform, st, fmt_raw, ov, path in planned:
                 info = probe(path)
-                ptitle, desc = describe.build(platform, post_title, creator_name, st, stream_date, game)
+                ptitle, desc = describe.build(platform, preedit.caption_source(lead, post_title), creator_name, st, stream_date, game)
                 s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=ptitle, description=desc,
                                  video_title=title, overlay=ov, format=fmt_raw,
                                  file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))
@@ -698,6 +705,8 @@ class Pipeline:
             shift = start - edit["start"]  # words were timed from the original cut
             start, dur = edit["start"], edit["end"] - edit["start"]
             zoom, pan, speed, texts = edit["zoom"], (edit["pan_x"], edit["pan_y"]), edit["speed"], edit["texts"]
+            if edit.get("hide_title"):
+                title_text = ""  # the clip's own headline replaces the page title
             files = self._library_files([edit.get("bottom_media")] + [ly["media_id"] for ly in edit.get("layers") or []])
             if edit.get("layout") == "stacked" and edit.get("cam"):
                 cam = edit["cam"]
@@ -749,8 +758,9 @@ class Pipeline:
             ref = clip.reference
             outs = s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip_id)).all()
             ov = lenient(OverlaySettings, outs[0].overlay if outs else None).model_dump()
-            has_title = bool(outs and ov["title"]["enabled"] and (outs[0].video_title or "").strip())
-            title_text = outs[0].video_title if has_title else ""
+            boxed = [t["text"] for t in e.get("texts") or [] if t.get("box")]
+            has_title = bool(boxed) or bool(outs and ov["title"]["enabled"] and (outs[0].video_title or "").strip() and not e.get("hide_title"))
+            title_text = boxed[0] if boxed else outs[0].video_title if has_title else ""
             facts = dict(source=Path(clip.source_path), start=start, dur=dur, rel=rel, speed=speed,
                          words=[(w["start"] + shift, w["end"] + shift, w["text"]) for w in clip.words or []],
                          captions=bool(ov["captions"]["enabled"] and clip.words), title=has_title, title_text=title_text,
@@ -792,6 +802,60 @@ class Pipeline:
     def _render_inputs(o: ClipOutput, clip: Clip) -> str:
         """Everything a re-render depends on, to tell whether a finished render is still the latest wanted."""
         return json.dumps([o.format, o.overlay, o.video_title, clip.words, clip.edit], sort_keys=True, default=str)
+
+    def _loudness(self, source: Path, start: float, dur: float):
+        try:
+            return grade.loudness(source, start, dur)
+        except Exception:
+            log.exception("couldn't measure loudness; the pre-edit keeps the clip's length")
+            return None
+
+    def preedit_ready(self) -> dict:
+        """Give the viral pre-edit to clips already waiting in Ready to Upload. Skips clips that already have it
+        and clips the user changed in the editor (their edit wins). Pages already uploaded keep their video."""
+        with self.ctx.db.session() as s:
+            if not load_settings(s).processing.viral_preedit:
+                return {"skipped": "off"}
+            edited = {int(x) for x in s.scalars(select(AuditLog.entity_id).where(AuditLog.action == "clip.edited")) if x.isdigit()}
+            ids = [c.id for c in s.scalars(select(Clip).where(Clip.status == "ready")) if c.id not in edited
+                   and not (c.edit or {}).get("preedited")]
+        done = 0
+        for cid in ids:
+            try:
+                done += self.preedit_clip(cid)
+            except Exception:
+                log.exception("pre-edit failed for clip %s; it keeps its current edit", cid)
+        return {"preedited": done}
+
+    def preedit_clip(self, cid: int) -> int:
+        with self.ctx.db.session() as s:
+            clip = s.get(Clip, cid)
+            if not clip or not clip.source_path or not Path(clip.source_path).exists():
+                return 0
+            base = clip.source_start or 0.0
+            e = dict(clip.edit or ClipEdit(start=base, end=base + (clip.source_duration or 0.0)).model_dump())
+            words = [Word(w["start"] - (e["start"] - base), w["end"] - (e["start"] - base), w["text"]) for w in clip.words or []]
+            source = Path(clip.source_path)
+            ref = clip.reference
+            post_title = (ref.title if ref else "") if not clip.longform_id else ""
+            creator = clip.creator.name if clip.creator else ""
+            title = clip.title
+        lead = preedit.headline(post_title, title, creator, " ".join(w.text for w in words))
+        new = ClipEdit(**preedit.apply(e, words, self._loudness(source, e["start"], e["end"] - e["start"]), lead)).model_dump()
+        with self.ctx.db.session() as s:
+            clip = s.get(Clip, cid)
+            clip.edit = new
+            outs = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)) if o.status == "ready"]
+            for o in outs:
+                if o.platform != "youtube":
+                    tags = " ".join(describe.original_hashtags(o.description))
+                    _, o.description = describe.build(o.platform, preedit.caption_source(lead, tags), creator, {}, None, "")
+                o.render_state, o.render_error = "rendering", None
+            s.flush()
+            if outs:
+                self.ctx.jobs.enqueue("clip.rerender", {"output_ids": [o.id for o in outs]}, max_attempts=1, session=s)
+            audit(s, "clip.preedited", "clip", cid)
+        return 1
 
     def restore_lost_outputs(self) -> dict:
         """Give back clips their pages' videos if they have none: an earlier update's database change deleted them
@@ -985,6 +1049,7 @@ def register(ctx: Any) -> Pipeline:
     q.register("storage.cleanup", lambda jc, pl: p.cleanup())
     q.register("longform.make", lambda jc, pl: p.make_longform(pl["longform_id"], jc.cancelled))
     q.register("clips.restore", lambda jc, pl: p.restore_lost_outputs())
+    q.register("clips.preedit", lambda jc, pl: p.preedit_ready())
     q.register("clip.rerender", lambda jc, pl: p.rerender(pl["output_ids"]))
     q.register("metrics.fetch", lambda jc, pl: p.fetch_metrics(pl["output_id"]))
     q.register("metrics.refresh", lambda jc, pl: p.refresh_metrics())

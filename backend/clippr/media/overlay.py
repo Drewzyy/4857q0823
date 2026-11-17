@@ -195,7 +195,10 @@ def build_ass(width: int, height: int, overlay: dict, title_text: str, words: li
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        style("Title", t), style("Caption", c), "",
+        style("Title", t), style("Caption", c),
+        # A headline box: dark text on white, the box drawn by libass around each line (BorderStyle 3).
+        f"Style: Box,{FONTS['poppins'][1]},{round(76 * scale)},&H00141414,&H00141414,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,"
+        f"{14 * scale:.1f},0,5,{round(90 * scale)},{round(90 * scale)},0,1", "",
         "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     if t["enabled"] and title_text.strip():
@@ -213,6 +216,11 @@ def build_ass(width: int, height: int, overlay: dict, title_text: str, words: li
         if tx["end"] <= tx["start"] or tx["start"] >= duration:
             continue
         y = round(height * tx["y_percent"] / 100)
+        if tx.get("box"):
+            body = text_for(tx["text"], tx["all_caps"], "poppins", round(tx["size"] * scale), y, tx["start"], min(tx["end"], duration))
+            lines.append(f"Dialogue: 3,{_ts(tx['start'])},{_ts(min(tx['end'], duration))},Box,,0,0,0,,"
+                         f"{{\\pos({width // 2},{y})\\fs{round(tx['size'] * scale)}}}{body}")
+            continue
         style = (f"{{\\pos({width // 2},{y})\\fn{FONTS[tx['font']][1]}\\fs{round(tx['size'] * scale)}\\c{_ass_color(tx['color'])}"
                  f"\\3c{_ass_color('#000000')}\\bord{tx['outline'] * scale:.1f}}}")
         body = text_for(tx["text"], tx["all_caps"], tx["font"], round(tx["size"] * scale), y, tx["start"], min(tx["end"], duration))

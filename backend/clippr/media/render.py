@@ -89,7 +89,7 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         src_v = "[cutv]"
     timing = f"setpts=PTS/{speed:.4f},fps={fps:.3f}"
     stacked = H > W and (cam or bottom)  # vertical outputs only
-    if stacked:  # content on top, facecam or gameplay underneath, no blurred background
+    if stacked:  # facecam on top and content under it, or content on top and gameplay under it; no blurred background
         from .facecam import CAM_SHARE
         hb = int(H * (CAM_SHARE if cam else SPLIT_SHARE)) // 2 * 2
         ht = H - hb
@@ -99,7 +99,7 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         if cam:
             cx, cy, cw, ch = cam
             vf = (f"{pre}{src_v}{timing},split=2[a][c];[a]{top}[t];"
-                  f"[c]crop=iw*{cw:.4f}:ih*{ch:.4f}:iw*{cx:.4f}:ih*{cy:.4f},{fill}[m];[t][m]vstack[base]")
+                  f"[c]crop=iw*{cw:.4f}:ih*{ch:.4f}:iw*{cx:.4f}:ih*{cy:.4f},{fill}[m];[m][t]vstack[base]")  # the face leads, like top gaming clips
         else:
             k = add_input("-stream_loop", "-1", "-i", str(bottom.resolve()))
             vf = f"{pre}{src_v}{timing},{top}[t];[{k}:v]fps={fps:.3f},{fill}[m];[t][m]vstack=shortest=1[base]"

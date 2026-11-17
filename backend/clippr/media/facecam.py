@@ -1,6 +1,6 @@
 """Find a streamer's facecam: a small face that stays in one corner or edge while other content fills the screen.
 
-When one is found the clip is laid out stacked: the content on top, the facecam scaled up underneath. A face in
+When one is found the clip is laid out stacked: the facecam scaled up on top, the content underneath. A face in
 the middle of the frame or filling much of it is the streamer just talking to camera, so the normal framing stays.
 Detection is OpenCV's YuNet face model (bundled, MIT licensed; handles turned and partly covered faces), with
 the older Haar model as a fallback, on a dozen frames. No network, about a second per clip. When it misses, the

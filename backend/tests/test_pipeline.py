@@ -84,6 +84,21 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     local = datetime(2026, 11, 7, 20, tzinfo=timezone.utc).astimezone()
     assert tdesc == (f"He actually did it 😭\n\nFollow for more\n\nStreamer: Streamer A\nStreamed {local:%b} {local.day}, {local.year}"
                      "\n\n#gaming #clips #vyralclips"), tdesc
+
+    # The viral pre-edit: one headline box for the whole clip in place of the page title, opening on sound.
+    from clippr.models import Clip
+    with ctx.db.session() as s:
+        clip = s.get(Clip, clips[0]["id"])
+        e = dict(clip.edit)
+        assert e["preedited"] and e["hide_title"] and e["texts"][0]["box"] and e["texts"][0]["text"] == "He actually did it 😭"
+        # A clip from before the pre-edit gets it once at startup, and is re-rendered.
+        clip.edit = {**e, "preedited": False, "hide_title": False, "texts": []}
+    assert ctx.pipeline.preedit_ready() == {"preedited": 1}
+    drain(ctx)
+    assert ctx.pipeline.preedit_ready() == {"preedited": 0}  # never twice
+    with ctx.db.session() as s:
+        assert s.get(Clip, clips[0]["id"]).edit["texts"][0]["box"]
+    assert all(o["render_state"] == "ready" for o in c.get("/api/clips").json()[0]["outputs"])
     assert "@someone" not in tdesc
     assert outs["youtube"]["title"] == "He actually did it 😭"
     assert outs["youtube"]["description"].endswith("\n\n#vyralclips #shorts")  # generic #fyp dropped
@@ -101,9 +116,9 @@ def test_new_post_becomes_ready_to_upload_clip(env):
         path = Path(s.get(ClipOutput, outs["tiktok"]["id"]).file_path)
     info = probe(path)
     assert 22.5 < info.duration < 25.5 and info.has_audio
-    # The white title is really burned in at the top during the first seconds, and gone after 5 s.
+    # The headline box is really burned in at the top, and stays for the whole clip (the pre-edit).
     assert white_pixels(path, 2.0) > 2000
-    assert white_pixels(path, 7.0) < 50
+    assert white_pixels(path, 7.0) > 2000
     assert yellow_pixels(path, 1.2, top=False) > 2000  # yellow caption "NO WAY HE" in the lower part
     assert info.fps == 30  # the stream is 30 fps; never padded with fake frames
 

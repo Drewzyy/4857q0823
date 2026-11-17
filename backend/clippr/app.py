@@ -86,6 +86,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
             ctx.jobs.start(workers=7)
             ctx.inbox.start()
             ctx.jobs.enqueue("clips.restore", {}, max_attempts=1)  # brings back page videos a past update lost
+            ctx.jobs.enqueue("clips.preedit", {}, max_attempts=1)  # clips made before the pre-edit get it once
         yield
         ctx.inbox.stop()
         ctx.jobs.stop()

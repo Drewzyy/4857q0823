@@ -199,6 +199,11 @@ def edit_video_text(oid: int, body: VideoTextIn, c=Depends(ctx), s: Session = De
             t.overlay = ov
     if body.video_title is not None:
         o.video_title = body.video_title.strip()
+    e = dict(clip.edit or {})
+    if e.get("hide_title") and (body.video_title is not None or (body.overlay or {}).get("title")):
+        # The user chose this title themselves: it replaces the pre-edit headline on every page of the clip.
+        clip.edit = {**e, "hide_title": False, "texts": [t for t in e.get("texts") or [] if not t.get("box")]}
+        targets = list({t.id: t for t in [*targets, *_live_outputs(s, clip.id)]}.values())
     for t in targets:
         t.render_state, t.render_error = "rendering", None
     s.flush()
