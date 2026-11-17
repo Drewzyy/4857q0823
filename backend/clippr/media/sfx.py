@@ -35,6 +35,15 @@ SOUNDS: dict[str, tuple[str, str, float, str, str]] = {
 }
 
 
+def is_sound_name(name: str) -> bool:
+    """A built-in sound, or one of the user's own from the library ("lib:<id>")."""
+    return name in SOUNDS or bool(re.fullmatch(r"lib:\d{1,9}", name))
+
+
+def library_id(name: str) -> int | None:
+    return int(name[4:]) if name.startswith("lib:") else None
+
+
 def path(name: str, folder: Path) -> Path:
     """The sound as a WAV file, made the first time it's needed and kept in `folder`."""
     if name not in SOUNDS:

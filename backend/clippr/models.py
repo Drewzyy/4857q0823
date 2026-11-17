@@ -120,12 +120,13 @@ class LongformVideo(Base):
 
 
 class MediaItem(Base):
-    """A video or picture the user added to the library: gameplay for split screen, animations, stickers."""
+    """A video, picture or sound the user added to the library: gameplay for split screen, animations, stickers,
+    sound effects."""
 
     __tablename__ = "media_items"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
-    kind: Mapped[str] = mapped_column(String(10))  # video | image
+    kind: Mapped[str] = mapped_column(String(10))  # video | image | audio
     path: Mapped[str] = mapped_column(Text)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -21,7 +21,7 @@ export interface Source {
 export type FontKey = "montserrat" | "anton" | "bebas" | "poppins";
 export interface TextStyle { enabled: boolean; font: FontKey; size: number; color: string; outline_color: string; outline: number; all_caps: boolean; y_percent: number }
 export interface Overlay { title: TextStyle & { duration: number }; captions: TextStyle & { words_per_caption: number }; signature_emoji?: string }
-export interface SoundT { name: string; label: string; use: string; seconds: number }
+export interface SoundT { name: string; label: string; use: string; seconds: number; mine: boolean }
 export interface SoundEditT { name: string; at: number; volume: number }
 export interface DestinationSettings {
   overlay: Overlay;
@@ -47,7 +47,7 @@ export interface AppSettings {
   captions: { accuracy: "fast" | "accurate" | "best"; language: string };
   monitoring: { enabled: boolean; interval_minutes: number; streams_to_search: number; max_clip_seconds: number; twitch_min_views: number; twitch_clips_per_check: number };
   storage: { retention_days: number };
-  processing: { max_concurrent_jobs: number; cut_dead_air: boolean; hardware_encoding: boolean; viral_preedit: boolean; sound_effects: "off" | "auto" };
+  processing: { max_concurrent_jobs: number; cut_dead_air: boolean; hardware_encoding: boolean; viral_preedit: boolean; sound_effects: "off" | "auto"; auto_sound: string };
   intake: { clipboard: boolean };
 }
 export interface RefPost {
@@ -77,7 +77,7 @@ export interface ClipT {
 }
 export interface TextOverlayT { text: string; start: number; end: number; y_percent: number; size: number; color: string; font: FontKey; all_caps: boolean; outline: number; box?: boolean; headline?: boolean }
 export interface LayerT { media_id: number; start: number; end: number; x: number; y: number; width: number }
-export interface MediaItemT { id: number; name: string; kind: "video" | "image"; width: number | null; height: number | null; duration: number | null; available: boolean }
+export interface MediaItemT { id: number; name: string; kind: "video" | "image" | "audio"; width: number | null; height: number | null; duration: number | null; available: boolean }
 export interface PresetData { texts: TextOverlayT[]; layers: LayerT[]; bottom_media: number | null }
 export interface PresetT { id: number; name: string; data: PresetData }
 export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked" | "split"; cam: number[] | null; bottom_media: number | null; cut_dead_air: boolean; gaps: number[][]; cuts: number[][]; thumb_at: number | null; layers: LayerT[]; texts: TextOverlayT[]; hide_title?: boolean; preedited?: boolean; sounds: SoundEditT[] }
@@ -195,7 +195,8 @@ export const api = {
   addToLibrary: (file: File) => { const fd = new FormData(); fd.append("file", file); return request<MediaItemT>("POST", "/library", fd); },
   removeFromLibrary: (id: number) => request<void>("DELETE", `/library/${id}`),
   sounds: () => request<SoundT[]>("GET", "/sounds"),
-  soundUrl: (name: string) => `/api/media/sounds/${encodeURIComponent(name)}?t=${encodeURIComponent(token())}`,
+  soundUrl: (name: string) => name.startsWith("lib:") ? `/api/media/library/${name.slice(4)}?t=${encodeURIComponent(token())}`
+    : `/api/media/sounds/${encodeURIComponent(name)}?t=${encodeURIComponent(token())}`,
   libraryUrl: (id: number) => `/api/media/library/${id}?t=${encodeURIComponent(token())}`,
   presets: () => request<PresetT[]>("GET", "/presets"),
   addPreset: (name: string, data: PresetData) => request<PresetT>("POST", "/presets", { name, data }),

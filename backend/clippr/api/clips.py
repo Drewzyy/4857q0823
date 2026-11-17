@@ -438,10 +438,13 @@ def check_now(sid: int, c=Depends(ctx), s: Session = Depends(db)):
 
 
 @router.get("/sounds")
-def list_sounds():
-    """The sound effects a clip can use (Vyral's own, made on this computer)."""
+def list_sounds(s: Session = Depends(db)):
+    """The sound effects a clip can use: Vyral's own (made on this computer), then the user's from the library."""
     from ..media.sfx import catalog
-    return catalog()
+    from ..models import MediaItem
+    mine = [{"name": f"lib:{m.id}", "label": m.name, "use": "your sound", "seconds": m.duration or 0, "mine": True}
+            for m in s.scalars(select(MediaItem).where(MediaItem.kind == "audio").order_by(MediaItem.name)) if Path(m.path).exists()]
+    return [{**x, "mine": False} for x in catalog()] + mine
 
 
 @router.get("/media/sounds/{name}")  # under /media: the page's audio player passes the token in the URL

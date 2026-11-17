@@ -626,7 +626,8 @@ class Pipeline:
         if proc.viral_preedit:
             # A long video's own title is about the whole video, not this moment: the moment's line leads instead.
             lead, quote = preedit.plan_headline("" if longform_id else post_title, title, creator_name, " ".join(w.text for w in words))
-            framing = preedit.apply(framing, words, self._loudness(source, start, dur), lead, quote, proc.sound_effects == "auto")
+            framing = preedit.apply(framing, words, self._loudness(source, start, dur), lead, quote, proc.sound_effects == "auto",
+                                    proc.auto_sound)
         renders: dict[str, Path] = {}
         planned = []
         for did, platform, name, handle, st in dest_info:
@@ -721,8 +722,15 @@ class Pipeline:
             def at(t: float) -> float:  # source time from the cut's start to finished-clip time
                 return (t - deadair.removed_before(t, rel)) / speed
             words = [Word(at(w.start + shift), at(w.end + shift), w.text) for w in words if not deadair.inside(w.start + shift, rel)]
-            sounds = [(sfx.path(x["name"], self._dir("sfx")), at(x["at"] - start), x["volume"]) for x in edit.get("sounds") or []
-                      if start <= x["at"] < start + dur and not deadair.inside(x["at"] - start, rel)]
+            mine = self._library_files([sfx.library_id(x["name"]) for x in edit.get("sounds") or []])
+            for x in edit.get("sounds") or []:
+                if not (start <= x["at"] < start + dur) or deadair.inside(x["at"] - start, rel):
+                    continue
+                lid = sfx.library_id(x["name"])
+                if lid is None:
+                    sounds.append((sfx.path(x["name"], self._dir("sfx")), at(x["at"] - start), x["volume"]))
+                elif lid in mine:  # a sound removed from the library is skipped
+                    sounds.append((mine[lid][0], at(x["at"] - start), x["volume"]))
         out_dur = (dur - sum(b - a for a, b in rel)) / speed
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         placed: list = []
@@ -827,12 +835,12 @@ class Pipeline:
         done = 0
         for cid in ids:
             try:
-                done += self.preedit_clip(cid, proc.sound_effects == "auto")
+                done += self.preedit_clip(cid, proc.sound_effects == "auto", proc.auto_sound)
             except Exception:
                 log.exception("pre-edit failed for clip %s; it keeps its current edit", cid)
         return {"preedited": done}
 
-    def preedit_clip(self, cid: int, sound: bool = True) -> int:
+    def preedit_clip(self, cid: int, sound: bool = True, choice: str = "") -> int:
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             if not clip or not clip.source_path or not Path(clip.source_path).exists():
@@ -846,7 +854,7 @@ class Pipeline:
             creator = clip.creator.name if clip.creator else ""
             title = clip.title
         lead, quote = preedit.plan_headline(post_title, title, creator, " ".join(w.text for w in words))
-        new = ClipEdit(**preedit.apply(e, words, self._loudness(source, e["start"], e["end"] - e["start"]), lead, quote, sound)).model_dump()
+        new = ClipEdit(**preedit.apply(e, words, self._loudness(source, e["start"], e["end"] - e["start"]), lead, quote, sound, choice)).model_dump()
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             clip.edit = new

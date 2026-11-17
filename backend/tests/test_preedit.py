@@ -108,3 +108,29 @@ def test_sounds_are_listed_and_served(env):
     assert r.status_code == 200 and r.headers["content-type"] == "audio/wav" and len(r.content) > 10000
     assert c.get("/api/media/sounds/../../etc/passwd").status_code in (404, 422)
     assert c.get("/api/media/sounds/nope").status_code == 404
+
+
+def test_your_own_sounds_upload_list_and_render(env, tmp_path):
+    from pathlib import Path
+    from clippr.media.ffmpeg import run
+    ctx, c, fake = env
+    mp3 = tmp_path / "vine boom.mp3"
+    run(["-f", "lavfi", "-i", "sine=f=60:d=1", str(mp3)])
+    r = c.post("/api/library", files={"file": ("vine boom.mp3", mp3.read_bytes())})
+    assert r.status_code == 201 and r.json()["kind"] == "audio", r.text
+    lid = r.json()["id"]
+    long = tmp_path / "song.mp3"
+    run(["-f", "lavfi", "-i", "sine=f=300:d=61", str(long)])
+    assert c.post("/api/library", files={"file": ("song.mp3", long.read_bytes())}).status_code == 422  # a song, not a sound
+    mine = [x for x in c.get("/api/sounds").json() if x["mine"]]
+    assert mine == [{"name": f"lib:{lid}", "label": "vine boom", "use": "your sound", "seconds": mine[0]["seconds"], "mine": True}]
+    assert ClipEdit(start=0, end=5, sounds=[{"name": f"lib:{lid}", "at": 1}]).sounds[0].name == f"lib:{lid}"
+    assert ctx.pipeline._library_files([lid])[lid][0].exists()
+    # Chosen in Settings, it's what lands on the big moment.
+    db = np.full(300, -30.0); db[180:190] = -8
+    e = preedit.apply(ClipEdit(start=0, end=30).model_dump(), [], db, "x", sound=True, choice=f"lib:{lid}")
+    assert e["sounds"][0]["name"] == f"lib:{lid}" and 17.5 <= e["sounds"][0]["at"] <= 18.5
+    assert c.put("/api/settings", json={"processing": {"auto_sound": f"lib:{lid}"}}).status_code == 200
+    assert c.put("/api/settings", json={"processing": {"auto_sound": "../x"}}).status_code == 422
+    Path(ctx.pipeline._library_files([lid])[lid][0]).unlink()
+    assert ctx.pipeline._library_files([lid]) == {}  # removed from disk: skipped at render, never a crash

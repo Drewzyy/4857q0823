@@ -372,3 +372,19 @@ test("video editor: add a sound effect at the playhead and save", async ({ page 
   await page.getByRole("button", { name: "Save & render" }).click();
   await expect(page.getByText(/Saved\. Re-rendering/)).toBeVisible();
 });
+
+test("video editor: add your own sound file and use it", async ({ page }) => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const mp3 = join(mkdtempSync(join(tmpdir(), "vyral-snd-")), "my boom.mp3");
+  execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "sine=f=60:d=1", mp3]);
+  await page.goto("/editor");
+  await page.getByRole("link", { name: /He did NOT just say that/ }).click();
+  await page.getByLabel("Sound files").setInputFiles(mp3);
+  await expect(page.getByText("Sound added. It's in the list for every clip.")).toBeVisible();
+  await expect(page.getByLabel("Sound to add")).toHaveValue(/^lib:\d+$/);
+  await page.getByRole("button", { name: "Add at playhead" }).click();
+  await expect(page.getByRole("button", { name: "Remove my boom" })).toBeVisible();
+});

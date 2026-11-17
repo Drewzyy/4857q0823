@@ -124,8 +124,10 @@ def auto_sound(db: np.ndarray | None, a: float, b: float, speech: str) -> tuple[
     return "boom", round(peak, 2)
 
 
-def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, quote: bool = False, sound: bool = False) -> dict:
-    """The pre-edit on a clip's edit (start/end in source seconds; words and db from edit['start'])."""
+def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, quote: bool = False, sound: bool = False,
+          choice: str = "") -> dict:
+    """The pre-edit on a clip's edit (start/end in source seconds; words and db from edit['start']).
+    choice: the sound to use on big moments (Settings), "" to pick one by the moment."""
     e = dict(edit)
     if e.get("preedit_version", 1 if e.get("preedited") else 0) >= VERSION:
         return e
@@ -147,7 +149,10 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     if sound and not e.get("sounds"):
         pick = auto_sound(db, a, b, " ".join(w.text for w in words))
         if pick:
-            e["sounds"] = [{"name": pick[0], "at": round(edit["start"] + pick[1], 3), "volume": 0.6}]
+            name, when = pick
+            if choice and choice != name:  # the user's pick, landing on the moment itself
+                name, when = choice, (when + 1.5 if name == "riser" else when)
+            e["sounds"] = [{"name": name, "at": round(edit["start"] + when, 3), "volume": 0.6}]
     e["texts"] = texts[:20]
     e["preedited"], e["preedit_version"] = True, VERSION
     return e

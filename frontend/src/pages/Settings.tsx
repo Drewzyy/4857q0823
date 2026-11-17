@@ -82,6 +82,7 @@ function General() {
               <button className={s.processing.sound_effects === "auto" ? "on" : ""} onClick={() => up("processing", { sound_effects: "auto" })}>One on the big moment</button>
               <button className={s.processing.sound_effects === "off" ? "on" : ""} onClick={() => up("processing", { sound_effects: "off" })}>None</button></div>
             <span className="hint">Vyral adds at most one, on the clip's biggest reaction, and only when something clearly stands out. More than that tends to feel forced. Add, move or remove sounds in the editor.</span></div>
+          {s.processing.sound_effects === "auto" && <SoundChoice value={s.processing.auto_sound} onChange={(v) => up("processing", { auto_sound: v })} />}
         </div>
       </div>
 
@@ -360,5 +361,18 @@ function Shortcuts() {
     <div className="card" style={{ maxWidth: 520 }}>
       {rows.map(([k, d]) => <div key={k} className="list-row"><span className="kbd">{k}</span><span className="muted">{d}</span></div>)}
     </div>
+  );
+}
+
+function SoundChoice({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const sounds = useQuery({ queryKey: ["sounds"], queryFn: api.sounds });
+  return (
+    <div className="field"><label htmlFor="auto-sound">Sound for big moments</label>
+      <select id="auto-sound" className="select" style={{ width: 260 }} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Vyral picks by the moment</option>
+        <optgroup label="Vyral's">{(sounds.data ?? []).filter((x) => !x.mine).map((x) => <option key={x.name} value={x.name}>{x.label}</option>)}</optgroup>
+        {(sounds.data ?? []).some((x) => x.mine) && <optgroup label="Yours">{(sounds.data ?? []).filter((x) => x.mine).map((x) => <option key={x.name} value={x.name}>{x.label}</option>)}</optgroup>}
+      </select>
+      <span className="hint">Add your own sounds from the Sound effects card in the editor; they show up here.</span></div>
   );
 }

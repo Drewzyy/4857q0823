@@ -9,7 +9,8 @@ const r1 = (v: number) => Math.round(v * 10) / 10;
 export function useLibrary() {
   const library = useQuery({ queryKey: ["library"], queryFn: api.library });
   const presets = useQuery({ queryKey: ["presets"], queryFn: api.presets });
-  return { items: library.data ?? [], presets: presets.data ?? [] };
+  // Sounds live in the library too, but they're picked in the Sound effects card, not as layers or gameplay.
+  return { items: (library.data ?? []).filter((m) => m.kind !== "audio"), presets: presets.data ?? [] };
 }
 
 /** A library layer as it looks in the preview, while it's on screen. */

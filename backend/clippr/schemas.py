@@ -122,6 +122,7 @@ class ProcessingSettings(Strict):
     cut_dead_air: bool = True  # cut stretches with no sound out of new clips
     viral_preedit: bool = True  # headline, strongest stretch, open on sound (see preedit.py)
     sound_effects: Literal["off", "auto"] = "auto"  # one sound effect on the biggest moment of each new clip
+    auto_sound: str = Field("", max_length=40, pattern=r"^(|[a-z_]{1,30}|lib:\d{1,9})$")  # "" = picked by the moment
     hardware_encoding: bool = True  # render on the graphics card when this computer has a working video encoder
 
 
@@ -187,8 +188,8 @@ class SoundEdit(Strict):
 
     @model_validator(mode="after")
     def _known(self):
-        from .media.sfx import SOUNDS
-        if self.name not in SOUNDS:
+        from .media.sfx import is_sound_name
+        if not is_sound_name(self.name):
             raise ValueError(f"unknown sound {self.name!r}")
         return self
 

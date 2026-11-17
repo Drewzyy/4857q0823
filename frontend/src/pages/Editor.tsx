@@ -448,7 +448,7 @@ function EditorBody({ data }: { data: EditorData }) {
 
           <EditorExtras e={e} patch={patch} at={out} outLen={outLen} toast={toast} />
 
-          <SoundsCard e={e} patch={patch} at={t} seek={seek} />
+          <SoundsCard e={e} patch={patch} at={t} seek={seek} toast={toast} />
 
           <div className="card stack">
             <div className="row"><h2>Text</h2><span className="spacer" /><button className="btn sm" disabled={e.texts.length >= 20} onClick={addText}><Plus size={13} />Add text</button></div>

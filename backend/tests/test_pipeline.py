@@ -92,7 +92,7 @@ def test_new_post_becomes_ready_to_upload_clip(env):
         e = dict(clip.edit)
         assert e["preedited"] and e["hide_title"] and e["texts"][0]["box"] and e["texts"][0]["text"] == "He actually did it 😭"
         # A clip from before the pre-edit gets it once at startup, and is re-rendered.
-        clip.edit = {**e, "preedited": False, "hide_title": False, "texts": []}
+        clip.edit = {**e, "preedited": False, "preedit_version": 0, "hide_title": False, "texts": [], "sounds": []}
     assert ctx.pipeline.preedit_ready() == {"preedited": 1}
     drain(ctx)
     assert ctx.pipeline.preedit_ready() == {"preedited": 0}  # never twice
