@@ -162,6 +162,14 @@ def _clean(text: str, caps: bool, keep_emoji: bool = False) -> str:
     return text.upper() if caps else text
 
 
+_TRAILING_EMOJI = re.compile("[\\s\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+$")
+
+
+def with_signature(text: str, sig: str) -> str:
+    """The headline ending on the page's own emoji instead of the one Vyral picked."""
+    return f"{_TRAILING_EMOJI.sub('', text).rstrip()} {sig.strip()}" if sig.strip() else text
+
+
 def build_ass(width: int, height: int, overlay: dict, title_text: str, words: list[Word], duration: float, texts: list[dict] | None = None,
               emoji_cache: Path | None = None, emoji_out: list | None = None) -> str:
     """emoji_cache: where emoji pictures are kept; with it, emoji in the title and texts are kept, and
@@ -212,9 +220,12 @@ def build_ass(width: int, height: int, overlay: dict, title_text: str, words: li
             if w.end <= 0 or w.start >= duration:
                 continue
             lines.append(f"Dialogue: 0,{_ts(w.start)},{_ts(min(w.end, duration))},Caption,,0,0,0,,{{\\pos({width // 2},{y})}}{_clean(w.text, c['all_caps'])}")
+    sig = (overlay.get("signature_emoji") or "").strip()
     for tx in texts or []:  # extra text added in the video editor
         if tx["end"] <= tx["start"] or tx["start"] >= duration:
             continue
+        if sig and tx.get("headline"):  # this page's own emoji ends the headline, like a brand
+            tx = {**tx, "text": with_signature(tx["text"], sig)}
         y = round(height * tx["y_percent"] / 100)
         if tx.get("box"):
             body = text_for(tx["text"], tx["all_caps"], "poppins", round(tx["size"] * scale), y, tx["start"], min(tx["end"], duration))

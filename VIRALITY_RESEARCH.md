@@ -76,3 +76,34 @@ what Vyral's pre-edit (backend/clippr/preedit.py) does about it:
 | Added music, sound effects or zooms | 0 of 8 | None added |
 | Facecam on top, gameplay under it, headline on the seam | 2 of 2 gaming clips | Stacked layout now puts the facecam on top (it was underneath) |
 | Loudness | -17 LUFS typical | Clips are normalized to -14 LUFS (TikTok's target), a little louder |
+
+## Attention and retention: what's solid and what isn't (November 2026)
+
+What the evidence supports, strongest first, and what Vyral does with it:
+
+1. **High-arousal emotion gets shared.** Berger and Milkman (2012, Journal of Marketing Research) found content that
+   triggers awe, amusement, anger or anxiety is shared more than calm or sad content. Vyral: the moment finder
+   and grader score reactions (loudness peaks, a raised voice, reaction words), and the headline emoji follows
+   the emotion.
+2. **A gap in what you know pulls attention.** Loewenstein's information-gap theory (1994): people keep watching to
+   close a gap someone opened. The winning headlines do exactly this: "Lacy couldn't believe what...",
+   "Jason reacts to...": who and what, never the ending. Vyral: the grader's Headline part rewards a full
+   sentence (6 to 20 words) with setup words, or a quoted line; the headline comes from the source post when
+   there is one.
+3. **The first seconds decide.** TikTok says its feed weighs how much of a video people watch. Vendor benchmarks
+   (Socialinsider 2024 as quoted by others) put completion at about 92% under 15 s, 84% at 16 to 30 s and 68%
+   at 31 to 60 s. Treat the exact numbers as rough. Vyral: opens on sound, cuts silent openings and filler,
+   scores the hook, keeps clips 15 to 45 s.
+4. **One recognizable format builds a following.** Both pages studied use the same headline style and emoji on
+   every post, and clip one circle of streamers. That's observation from 18 clips, not a study. Vyral: a
+   signature emoji per page; pages take the streamers ticked for them.
+5. **Sound effects.** None of the 18 clips used one. They're common in meme edits (the vine boom is the best
+   known) but there's no good data that they raise views for stream clips, and overuse reads as forced.
+   Vyral: one at most, on the biggest moment, only when something clearly stands out; off in Settings; add or
+   move them in the editor. The sounds are Vyral's own, made on the computer from scratch in the styles editors
+   use (boom, bass drop, whoosh, record scratch, ding, riser, pop, crickets). The famous meme sounds themselves
+   are recordings someone owns, so they aren't bundled.
+
+What isn't solid: specific "3-second retention" thresholds (70%, 85%...) and "84% of views predicted by..." claims
+come from vendor blogs without methods. The reliable test is your own: Analytics compares pages, so run one page
+with sound effects and one without for a week and keep what wins.

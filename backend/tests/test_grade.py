@@ -32,7 +32,7 @@ def test_a_slow_quiet_long_clip_is_low_and_says_why():
     g = grade(db=db, words=[(40, 41, "hi")], length=150, has_captions=False, has_title=False)
     assert g.tier in ("C", "D"), g
     assert len(g.tips) == 3 and "closer to the action" in g.tips[0]  # the biggest fix (the hook) comes first
-    assert next(p for p in g.parts if p["name"] == "Captions and title")["points"] == 0
+    assert next(p for p in g.parts if p["name"] == "Headline")["points"] == 0
 
 
 def test_stream_clip_views_count_as_proof():
@@ -53,7 +53,7 @@ def test_emotion_and_a_curious_opening_score_higher():
     assert "awe" in next(p for p in hyped.parts if p["name"] == "Energy and emotion")["note"]
 
 
-def test_slow_intros_and_long_titles_lose_points():
+def test_slow_intros_lose_points_and_full_teasing_headlines_win():
     db = _db(30)
     quick = [(0.1, 0.4, "no"), (0.5, 0.8, "way"), (0.9, 1.2, "he"), (1.3, 1.6, "did")]
     slow = [(0.1, 0.4, "hey"), (0.5, 0.8, "guys"), (0.9, 1.2, "welcome"), (1.3, 1.6, "back")]
@@ -63,5 +63,8 @@ def test_slow_intros_and_long_titles_lose_points():
               title="So this is what happened when we finally tried to do the craziest heist in the game")
     assert part(a, "Hook in the first 3 seconds")["points"] > part(b, "Hook in the first 3 seconds")["points"]
     assert "slow intro" in part(b, "Hook in the first 3 seconds")["note"]
-    assert part(a, "Captions and title")["points"] > part(b, "Captions and title")["points"]
-    assert any("3 to 7 words" in t for t in b.tips) or part(b, "Captions and title")["points"] < 5
+    # Top clip pages write a full sentence that says who and what without the ending; a bare label scores less.
+    c = grade(db=db, words=quick, length=30, has_captions=True, has_title=True, title="Lacy couldn't believe what Kai did after the stream ended")
+    assert part(c, "Headline")["points"] > part(a, "Headline")["points"]
+    quote = grade(db=db, words=quick, length=30, has_captions=True, has_title=True, title="\u201cYou're not growing\u201d 😭")
+    assert part(quote, "Headline")["points"] == 5

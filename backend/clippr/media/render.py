@@ -47,7 +47,8 @@ SPLIT_SHARE = 0.5  # gameplay under the stream takes the bottom half
 def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = None, duration: float | None = None,
            overlay_dir: Path | None = None, zoom: float = 1.0, pan: tuple[float, float] = (0.5, 0.5), speed: float = 1.0,
            video_height: float = 0.0, cam: list[float] | None = None, bottom: Path | None = None,
-           gaps: list[tuple[float, float]] | None = None, layers: list[Layer] = (), use_hardware: bool = True) -> Path:
+           gaps: list[tuple[float, float]] | None = None, layers: list[Layer] = (), use_hardware: bool = True,
+           sounds: list[tuple[Path, float, float]] = ()) -> Path:
     """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in).
     video_height: how much of the frame's height the sharp video fills (0.45 = 45%). A wide stream is trimmed at
     the sides (where pan says) to get there; 0 or anything below the stream's full-width height keeps it whole.
@@ -140,17 +141,33 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         args += extra
     args += ["-filter_complex", vf, "-map", "[v]"]
     if info.has_audio:
-        tempo = (f"atempo={speed:.4f}," if abs(speed - 1) > 1e-3 else "") + "loudnorm=I=-14:TP=-1.5:LRA=11"
-        if keep:
-            n = len(keep)
-            au = (f"[0:a:0]asplit={n}" + "".join(f"[ak{i}]" for i in range(n)) + ";") if n > 1 else ""
-            for i, (a, b) in enumerate(keep):
-                au += f"{'[ak%d]' % i if n > 1 else '[0:a:0]'}atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[as{i}];"
-            au += "".join(f"[as{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1,{tempo}[aout]"
+        tempo = f"atempo={speed:.4f}" if abs(speed - 1) > 1e-3 else "anull"
+        level = "loudnorm=I=-14:TP=-1.5:LRA=11"
+        if keep or sounds:
+            if keep:
+                n = len(keep)
+                au = (f"[0:a:0]asplit={n}" + "".join(f"[ak{i}]" for i in range(n)) + ";") if n > 1 else ""
+                for i, (a, b) in enumerate(keep):
+                    au += f"{'[ak%d]' % i if n > 1 else '[0:a:0]'}atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[as{i}];"
+                au += "".join(f"[as{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1,{tempo}[amain]"
+            else:
+                au = f"[0:a:0]{tempo}[amain]"
+            # Sound effects (times in the finished clip) are mixed in before the loudness is evened out.
+            first = len(inputs) + 1
+            fc = args.index("-filter_complex")
+            args[fc:fc] = [x for path, _, _ in sounds for x in ("-i", str(Path(path).resolve()))]  # inputs go before the outputs
+            for j, (_, at, vol) in enumerate(sounds):
+                ms = max(0, round(at * 1000))
+                au += f";[{first + j}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={ms}|{ms},volume={vol:.2f}[sx{j}]"
+            if sounds:
+                au += (";[amain]aformat=sample_rates=48000:channel_layouts=stereo[am];[am]" + "".join(f"[sx{j}]" for j in range(len(sounds)))
+                       + f"amix=inputs={len(sounds) + 1}:duration=first:normalize=0,{level}[aout]")
+            else:
+                au += f";[amain]{level}[aout]"
             args[args.index("-filter_complex") + 1] += ";" + au
             args += ["-map", "[aout]"]
         else:
-            args += ["-map", "0:a:0", "-af", tempo]
+            args += ["-map", "0:a:0", "-af", f"{tempo},{level}"]
         args += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
     if inputs:  # looping gameplay and pictures never end on their own: stop with the clip
         args += ["-shortest"]

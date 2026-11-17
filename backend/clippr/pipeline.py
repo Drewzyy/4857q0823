@@ -21,7 +21,7 @@ from . import describe, events, grade, identify, moments, notify, preedit
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
-from .media import deadair, facecam, match, overlay
+from .media import deadair, facecam, match, overlay, sfx
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
 from .media.render import Layer, OutputFormat, render, thumbnail
@@ -622,11 +622,11 @@ class Pipeline:
         words = [w for w in words if not deadair.FILLER.match(w.text.strip())]  # "um" never shows in captions
         lead = ""
         with self.ctx.db.session() as s:
-            viral = load_settings(s).processing.viral_preedit
-        if viral:
+            proc = load_settings(s).processing
+        if proc.viral_preedit:
             # A long video's own title is about the whole video, not this moment: the moment's line leads instead.
-            lead = preedit.headline("" if longform_id else post_title, title, creator_name, " ".join(w.text for w in words))
-            framing = preedit.apply(framing, words, self._loudness(source, start, dur), lead)
+            lead, quote = preedit.plan_headline("" if longform_id else post_title, title, creator_name, " ".join(w.text for w in words))
+            framing = preedit.apply(framing, words, self._loudness(source, start, dur), lead, quote, proc.sound_effects == "auto")
         renders: dict[str, Path] = {}
         planned = []
         for did, platform, name, handle, st in dest_info:
@@ -699,6 +699,7 @@ class Pipeline:
         cam = bottom = None
         rel: list[tuple[float, float]] = []
         layers: list[Layer] = []
+        sounds: list = []
         zoom, pan, speed, texts, video_height = 1.0, (0.5, 0.5), 1.0, [], 0.0  # no edit: a clip from before framing was saved
         if edit:
             video_height = edit.get("video_height", 0)  # edits saved before framing existed were fit to frame
@@ -720,6 +721,8 @@ class Pipeline:
             def at(t: float) -> float:  # source time from the cut's start to finished-clip time
                 return (t - deadair.removed_before(t, rel)) / speed
             words = [Word(at(w.start + shift), at(w.end + shift), w.text) for w in words if not deadair.inside(w.start + shift, rel)]
+            sounds = [(sfx.path(x["name"], self._dir("sfx")), at(x["at"] - start), x["volume"]) for x in edit.get("sounds") or []
+                      if start <= x["at"] < start + dur and not deadair.inside(x["at"] - start, rel)]
         out_dur = (dur - sum(b - a for a, b in rel)) / speed
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         placed: list = []
@@ -731,7 +734,8 @@ class Pipeline:
         with self.ctx.db.session() as s:
             use_hardware = load_settings(s).processing.hardware_encoding
         render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan,
-               speed=speed, video_height=video_height, cam=cam, bottom=bottom, gaps=rel, layers=layers, use_hardware=use_hardware)
+               speed=speed, video_height=video_height, cam=cam, bottom=bottom, gaps=rel, layers=layers, use_hardware=use_hardware,
+               sounds=sounds)
         cover = 1.0
         if edit and edit.get("thumb_at") is not None:
             t = min(max(edit["thumb_at"] - start, 0.0), dur)
@@ -758,7 +762,7 @@ class Pipeline:
             ref = clip.reference
             outs = s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip_id)).all()
             ov = lenient(OverlaySettings, outs[0].overlay if outs else None).model_dump()
-            boxed = [t["text"] for t in e.get("texts") or [] if t.get("box")]
+            boxed = [t["text"] for t in e.get("texts") or [] if t.get("box") or t.get("headline")]
             has_title = bool(boxed) or bool(outs and ov["title"]["enabled"] and (outs[0].video_title or "").strip() and not e.get("hide_title"))
             title_text = boxed[0] if boxed else outs[0].video_title if has_title else ""
             facts = dict(source=Path(clip.source_path), start=start, dur=dur, rel=rel, speed=speed,
@@ -814,20 +818,21 @@ class Pipeline:
         """Give the viral pre-edit to clips already waiting in Ready to Upload. Skips clips that already have it
         and clips the user changed in the editor (their edit wins). Pages already uploaded keep their video."""
         with self.ctx.db.session() as s:
-            if not load_settings(s).processing.viral_preedit:
+            proc = load_settings(s).processing
+            if not proc.viral_preedit:
                 return {"skipped": "off"}
             edited = {int(x) for x in s.scalars(select(AuditLog.entity_id).where(AuditLog.action == "clip.edited")) if x.isdigit()}
             ids = [c.id for c in s.scalars(select(Clip).where(Clip.status == "ready")) if c.id not in edited
-                   and not (c.edit or {}).get("preedited")]
+                   and (c.edit or {}).get("preedit_version", 1 if (c.edit or {}).get("preedited") else 0) < preedit.VERSION]
         done = 0
         for cid in ids:
             try:
-                done += self.preedit_clip(cid)
+                done += self.preedit_clip(cid, proc.sound_effects == "auto")
             except Exception:
                 log.exception("pre-edit failed for clip %s; it keeps its current edit", cid)
         return {"preedited": done}
 
-    def preedit_clip(self, cid: int) -> int:
+    def preedit_clip(self, cid: int, sound: bool = True) -> int:
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             if not clip or not clip.source_path or not Path(clip.source_path).exists():
@@ -840,8 +845,8 @@ class Pipeline:
             post_title = (ref.title if ref else "") if not clip.longform_id else ""
             creator = clip.creator.name if clip.creator else ""
             title = clip.title
-        lead = preedit.headline(post_title, title, creator, " ".join(w.text for w in words))
-        new = ClipEdit(**preedit.apply(e, words, self._loudness(source, e["start"], e["end"] - e["start"]), lead)).model_dump()
+        lead, quote = preedit.plan_headline(post_title, title, creator, " ".join(w.text for w in words))
+        new = ClipEdit(**preedit.apply(e, words, self._loudness(source, e["start"], e["end"] - e["start"]), lead, quote, sound)).model_dump()
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             clip.edit = new

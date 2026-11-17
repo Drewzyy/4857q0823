@@ -70,6 +70,10 @@ export function OverlayEditor({ value, onChange, title }: { value: Overlay; onCh
         <StyleFields label="Captions" s={value.captions} onChange={setC} extra={
           <div className="field"><label htmlFor="cap-words">Words at a time: {value.captions.words_per_caption}</label>
             <input id="cap-words" type="range" min={1} max={6} value={value.captions.words_per_caption} onChange={(e) => setC({ words_per_caption: Number(e.target.value) })} /></div>} />
+        <div className="field"><label htmlFor="sig-emoji">Signature emoji</label>
+          <input id="sig-emoji" className="input" style={{ width: 140 }} maxLength={16} value={value.signature_emoji ?? ""} placeholder="😭❤️"
+            onChange={(e) => onChange({ ...value, signature_emoji: e.target.value })} />
+          <span className="hint">Ends every headline on this page, like a brand. Top clip pages use the same one on every post. Leave empty to let Vyral pick per clip.</span></div>
         <p className="small faint">The preview is approximate. The video uses the same fonts, so the real result matches closely.</p>
       </div>
     </div>

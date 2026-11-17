@@ -7,6 +7,7 @@ import { Empty, ErrorNote, Loading, relTime, useToast } from "../components/ui";
 import { EditorExtras, LayerPreview, useLibrary } from "../components/EditorExtras";
 import { GradeBadge, GradeCard } from "../components/GradeBadge";
 import { VideoTextPanel } from "../components/VideoTextPanel";
+import { SoundsCard } from "../components/SoundsCard";
 
 const FONTS: [FontKey, string][] = [["montserrat", "Montserrat Black"], ["anton", "Anton"], ["bebas", "Bebas Neue"], ["poppins", "Poppins ExtraBold"]];
 const SWATCHES = ["#FFFFFF", "#FFE500", "#F97316", "#22C55E", "#38BDF8", "#EC4899", "#000000"];
@@ -153,7 +154,7 @@ function EditorBody({ data }: { data: EditorData }) {
         if (camMode && vw && v.readyState >= 2) {
           const k = stk.current?.getContext("2d");
           if (k && cur.cam) {
-            const W = k.canvas.width, H = k.canvas.height, hb = Math.round(H * 0.4), ht = H - hb;
+            const W = k.canvas.width, H = k.canvas.height, hb = Math.round(H * 0.4);
             const [x, y, w, h] = cur.cam, bw = w * vw, bh = h * vh, ba = W / hb;
             const sw = Math.min(bw, bh * ba), sh = Math.min(bh, bw / ba);
             k.drawImage(v, x * vw + (bw - sw) / 2, y * vh + (bh - sh) / 2, sw, sh, 0, 0, W, hb);
@@ -446,6 +447,8 @@ function EditorBody({ data }: { data: EditorData }) {
           <GradeCard grade={data.grade} />
 
           <EditorExtras e={e} patch={patch} at={out} outLen={outLen} toast={toast} />
+
+          <SoundsCard e={e} patch={patch} at={t} seek={seek} />
 
           <div className="card stack">
             <div className="row"><h2>Text</h2><span className="spacer" /><button className="btn sm" disabled={e.texts.length >= 20} onClick={addText}><Plus size={13} />Add text</button></div>

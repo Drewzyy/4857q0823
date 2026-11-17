@@ -9,8 +9,8 @@ ear, November 2026). What they shared:
   "Lacy couldn't believe Dani from Outside drank a random person's drink 😭". Third person, names the
   streamer, says what happens without giving away the payoff, and ends on one or two emoji.
 - Gaming clips put the streamer's face on top and the game under it, headline on the seam.
-- Almost no cuts (one or two in a 20-second clip), no zooms, no added music or sound effects. The real
-  reaction carries it, so Vyral adds none either.
+- Almost no cuts (one or two in a 20-second clip), no zooms, no music. None of the 18 had sound effects; Vyral
+  adds one at most, on the biggest moment, and only when something clearly stands out (Settings can turn it off).
 The page's own title style is left off when the headline is used, so there's one title, not two. Captions
 follow the page's setting. Everything here shows in the editor, where it can be changed or removed.
 """
@@ -24,11 +24,13 @@ from .describe import clean_title
 from .grade import arousal
 from .media.facecam import CAM_SHARE
 
+VERSION = 2  # 2: sound effects, quote headlines, up to 45 s
 STEP = 0.1
-LONGEST = 30.0      # trimmed when longer than this
-TARGET = 26.0       # length of the trimmed clip
+LONGEST = 45.0      # trimmed when longer than this (half the second batch of top clips ran 35 to 50 s)
+TARGET = 34.0       # length of the trimmed clip: room for the setup, still short enough to finish
 SHORTEST = 12.0     # never trimmed below this
 HEADLINE_Y = 17     # % from the top
+QUOTE_Y, QUOTE_SIZE = 58, 66  # a quote headline: white, mid-frame
 HEADLINE_SIZE = 76  # pixels on a 1080-wide video: about 3% of the height per line, like the top clips
 EMOJI = {"amusement": "😭", "awe": "😳", "anger": "😤", "anxiety": "😬"}
 SHOCK = re.compile(r"\b(wtf|what the|no way|bro|oh my god|omg|are you serious|insane|crazy)\b", re.I)
@@ -46,21 +48,26 @@ def _sentence_case(text: str, creator: str | None) -> str:
 
 
 def headline(post_title: str, clip_title: str, creator: str | None, speech: str = "") -> str:
-    """The headline for the top of the clip. The source post's own caption is used when it's a real sentence
-    (other clip pages write exactly this kind of line); else the clip's title, quoted with the streamer's name."""
+    return plan_headline(post_title, clip_title, creator, speech)[0]
+
+
+def plan_headline(post_title: str, clip_title: str, creator: str | None, speech: str = "") -> tuple[str, bool]:
+    """(headline, is_quote). The source post's own caption is used when it's a real sentence (other clip pages
+    write exactly this kind of line) and goes in the white box. Otherwise the line said in the clip is quoted,
+    which top pages show as plain white text across the middle: "You're not growing" 😭❤️."""
     base = _sentence_case(clean_title(post_title or "", None), creator) if post_title else ""
+    quote = False
     if len(base.split()) < 4 or base.lower().startswith(("stream moment", "clip")):
-        line = _sentence_case(clean_title(clip_title or "", None), creator)
-        if creator and creator.split()[0].lower() not in line.lower():
-            line = f"{creator}: “{line.rstrip('.')}”" if line else f"{creator} moment"
-        base = line
+        line = _sentence_case(clean_title(clip_title or "", None), creator).strip(" “”\"")
+        quote = bool(line) and len(line.split()) <= 12
+        base = f"“{line.rstrip('.')}”" if quote else (line or (f"{creator} moment" if creator else ""))
     base = base[:100].rstrip(" ,;:-")
     if not HAS_EMOJI.search(base):
         text = f"{base} {speech}"
         feels = arousal(text)
         mark = "💀" if SHOCK.search(text) and not feels else EMOJI.get(feels[0], "😳") if feels else "😳"
         base = f"{base} {mark}"
-    return base
+    return base, quote
 
 
 def best_window(db: np.ndarray | None, words: list, dur: float) -> tuple[float, float]:
@@ -97,23 +104,52 @@ def best_window(db: np.ndarray | None, words: list, dur: float) -> tuple[float, 
     return round(start, 2), round(end, 2)
 
 
-def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str) -> dict:
+def auto_sound(db: np.ndarray | None, a: float, b: float, speech: str) -> tuple[str, float] | None:
+    """One sound effect for the biggest moment in [a, b) (seconds from the clip's start), or None when nothing
+    stands out enough to deserve one. (name, when it starts.) A riser starts early so it peaks on the moment."""
+    if db is None or len(db) < 20:
+        return None
+    i, j = int(a / STEP), min(len(db), int(b / STEP))
+    level = np.convolve(db - np.median(db[i:j]), np.ones(5) / 5, mode="same")[i:j]
+    if not len(level) or level.max() < 8:  # a calm clip: a sound effect would feel forced
+        return None
+    peak = a + float(np.argmax(level)) * STEP
+    if peak - a < 1.0 or b - peak < 0.5:
+        return None  # right at an edge, it would cover the hook or get cut off
+    feels = arousal(speech)
+    if "anxiety" in feels and peak - a > 2.5:
+        return "riser", round(peak - 1.5, 2)
+    if SHOCK.search(speech) or "awe" in feels:
+        return "bass_drop", round(peak, 2)
+    return "boom", round(peak, 2)
+
+
+def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, quote: bool = False, sound: bool = False) -> dict:
     """The pre-edit on a clip's edit (start/end in source seconds; words and db from edit['start'])."""
     e = dict(edit)
-    if e.get("preedited"):
+    if e.get("preedit_version", 1 if e.get("preedited") else 0) >= VERSION:
         return e
     dur = e["end"] - e["start"]
     a, b = best_window(db, words, dur)
     e["start"], e["end"] = round(e["start"] + a, 3), round(e["start"] + b, 3)
-    texts = [t for t in e.get("texts") or [] if not t.get("box")]
+    texts = [t for t in e.get("texts") or [] if not (t.get("box") or t.get("headline"))]
     if headline_text:
-        # With the facecam on top, the headline sits on the seam between face and gameplay, as the top gaming clips do.
-        y = round(CAM_SHARE * 100) if e.get("layout") == "stacked" and e.get("cam") else HEADLINE_Y
-        texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(b - a + 1, 2), "y_percent": y,
-                         "size": HEADLINE_SIZE, "color": "#141414", "font": "poppins", "all_caps": False, "outline": 0, "box": True})
+        stacked = e.get("layout") == "stacked" and e.get("cam")
+        if quote:  # white words across the middle, above where the captions run
+            texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(b - a + 1, 2), "y_percent": QUOTE_Y,
+                             "size": QUOTE_SIZE, "color": "#FFFFFF", "font": "poppins", "all_caps": False, "outline": 5, "headline": True})
+        else:
+            # With the facecam on top, the headline sits on the seam between face and gameplay, as the top gaming clips do.
+            y = round(CAM_SHARE * 100) if stacked else HEADLINE_Y
+            texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(b - a + 1, 2), "y_percent": y, "size": HEADLINE_SIZE,
+                             "color": "#141414", "font": "poppins", "all_caps": False, "outline": 0, "box": True, "headline": True})
         e["hide_title"] = True
+    if sound and not e.get("sounds"):
+        pick = auto_sound(db, a, b, " ".join(w.text for w in words))
+        if pick:
+            e["sounds"] = [{"name": pick[0], "at": round(edit["start"] + pick[1], 3), "volume": 0.6}]
     e["texts"] = texts[:20]
-    e["preedited"] = True
+    e["preedited"], e["preedit_version"] = True, VERSION
     return e
 
 

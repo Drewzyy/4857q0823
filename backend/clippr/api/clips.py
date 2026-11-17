@@ -435,3 +435,18 @@ def check_now(sid: int, c=Depends(ctx), s: Session = Depends(db)):
 
 
 # ---------------- notifications ----------------
+
+
+@router.get("/sounds")
+def list_sounds():
+    """The sound effects a clip can use (Vyral's own, made on this computer)."""
+    from ..media.sfx import catalog
+    return catalog()
+
+
+@router.get("/media/sounds/{name}")  # under /media: the page's audio player passes the token in the URL
+def sound_file(name: str, c=Depends(ctx)):
+    from ..media import sfx
+    if name not in sfx.SOUNDS:
+        raise ApiError(404, "not_found", "No sound by that name")
+    return FileResponse(sfx.path(name, c.pipeline._dir("sfx")), media_type="audio/wav")

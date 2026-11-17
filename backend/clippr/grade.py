@@ -177,6 +177,11 @@ def _proof(views: int | None, likes: int | None, shares: int | None, posted_at: 
     return level, f"The original has {views:,} views ({per_hour:,.0f} an hour)" + (f" and {likes:,} likes." if likes else ".")
 
 
+# Headline words that set up a question and hold it open (what happened? how did they react?).
+TEASE = re.compile(r"\b(react(s|ed|ion)?|couldn'?t believe|finds? out|after|when|was in shock|speechless|surprise[sd]?|"
+                   r"thought|tells?|asks?|realizes?|sees?|this|response|caught|gets?)\b", re.I)
+
+
 def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: float, has_captions: bool, has_title: bool,
           views: int | None = None, likes: int | None = None, shares: int | None = None, posted_at: datetime | None = None,
           stream_clip: bool = False, motion: np.ndarray | None = None, lift: float | None = None,
@@ -231,14 +236,15 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
         "There are quiet stretches. Turn on Dead air > Cut out, or cut the slow part.")
 
     # Gaming clip tools find under ~20 s lacks setup for the payoff, over ~45 s loses people before the reaction.
-    if 20 <= length <= 45:
+    # 18 clips past 200k views ran 11 to 50 s, most 15 to 45: short enough to finish, long enough to set up.
+    if 15 <= length <= 45:
         fit = 1.0
-    elif length < 20:
-        fit = max(0.0, (length - 8) / 12)
+    elif length < 15:
+        fit = max(0.0, (length - 6) / 9)
     else:
         fit = max(0.0, 1 - (length - 45) / 45)
-    add("Length", fit, 10, f"{length:.0f} s long; 20 to 45 s is the sweet spot.",
-        "Trim it toward 20 to 45 seconds." if length > 45 else "It's very short; give the moment a little setup.")
+    add("Length", fit, 10, f"{length:.0f} s long; 15 to 45 s is the sweet spot.",
+        "Trim it toward 15 to 45 seconds." if length > 45 else "It's very short; give the moment a little setup.")
 
     # The best-performing clips are fast and their first frame is already interesting: the picture is moving.
     if motion is not None and len(motion):
@@ -251,14 +257,18 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
     else:
         add("Visual pace", 0.5, 5, "Couldn't read the picture, so this part is neutral.")
 
-    # On-screen text reads at a glance at 3 to 7 words; a long title is skimmed past.
+    # Every one of 18 clips past 200k views had a headline on screen the whole time: a full sentence (6 to 20
+    # words) saying who and what without the payoff ("Lacy couldn't believe...", "Jason reacts to..."), or the
+    # line that was said, in quotes. That gap between what you're told and what you see is what holds people.
     n_title = len(title.split())
-    title_fit = 1.0 if 3 <= n_title <= 7 else 0.6 if n_title <= 10 else 0.3
-    add("Captions and title", (0.6 if has_captions else 0) + (0.4 * title_fit if has_title else 0), 5,
-        ("Captions on" if has_captions else "No captions")
-        + (f", title on ({n_title} words; 3 to 7 reads at a glance)." if has_title else ", no title."),
-        "Turn captions on: most people scroll with the sound off." if not has_captions else
-        "Shorten the title on the video to 3 to 7 words (Edit text on video in Ready to Upload).")
+    quoted = title.strip().startswith(("\u201c", '"'))
+    title_fit = 1.0 if (6 <= n_title <= 20 or (quoted and n_title >= 2)) else 0.6 if 3 <= n_title <= 25 else 0.3
+    teases = bool(TEASE.search(title)) or quoted
+    add("Headline", (0.75 * title_fit + 0.25 * (1.0 if teases else 0.4) if has_title else 0) * 0.8 + (0.2 if has_captions else 0), 5,
+        (f"Headline on ({n_title} words" + ("; it makes you wonder what happens" if teases else "") + ")" if has_title else "No headline")
+        + (", captions on." if has_captions else ", no captions."),
+        "Add a headline that says who and what without the ending, like \"Lacy couldn't believe what Kai did\" (the editor's Text list)."
+        if not has_title else "Make the headline a full sentence of 6 to 20 words that says who and what, without giving away the ending.")
 
     tail = db[int(len(db) * 0.75):] if len(db) else db
     payoff = min(1.0, max(0.0, (float(np.percentile(tail, 90)) - base + 2) / 8)) if len(tail) else 0.0

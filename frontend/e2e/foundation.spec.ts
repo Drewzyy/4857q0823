@@ -360,3 +360,15 @@ test("ready to upload: filter by grade and put the best first", async ({ page })
   await page.getByRole("button", { name: "Show all" }).click();
   await expect(group.locator("button.filter-btn[aria-pressed=true]")).toHaveCount(0);
 });
+
+test("video editor: add a sound effect at the playhead and save", async ({ page }) => {
+  await page.goto("/editor");
+  await page.getByRole("link", { name: /He did NOT just say that/ }).click();
+  await expect(page.getByRole("heading", { name: "Sound effects" })).toBeVisible();
+  await page.getByLabel("Sound to add").selectOption("scratch");
+  const before = await page.getByRole("button", { name: /^Remove Record scratch/ }).count();
+  await page.getByRole("button", { name: "Add at playhead" }).click();
+  await expect(page.getByRole("button", { name: /^Remove Record scratch/ })).toHaveCount(before + 1);
+  await page.getByRole("button", { name: "Save & render" }).click();
+  await expect(page.getByText(/Saved\. Re-rendering/)).toBeVisible();
+});

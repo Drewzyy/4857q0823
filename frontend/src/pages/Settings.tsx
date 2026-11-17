@@ -76,7 +76,12 @@ function General() {
             <div className="seg" role="group" aria-label="Viral pre-edit" style={{ alignSelf: "flex-start" }}>
               <button className={s.processing.viral_preedit ? "on" : ""} onClick={() => up("processing", { viral_preedit: true })}>On</button>
               <button className={s.processing.viral_preedit ? "" : "on"} onClick={() => up("processing", { viral_preedit: false })}>Off</button></div>
-            <span className="hint">Every new clip gets a headline box at the top for the whole clip, is trimmed to its strongest 18 to 30 seconds, and opens on sound, matching clips that passed 200k views. You can change any of it in the editor.</span></div>
+            <span className="hint">Every new clip gets a headline for the whole clip, is trimmed to its strongest stretch (45 seconds at most), and opens on sound, matching clips that passed 200k views. You can change any of it in the editor.</span></div>
+          <div className="field"><span className="label-text">Sound effects</span>
+            <div className="seg" role="group" aria-label="Sound effects" style={{ alignSelf: "flex-start" }}>
+              <button className={s.processing.sound_effects === "auto" ? "on" : ""} onClick={() => up("processing", { sound_effects: "auto" })}>One on the big moment</button>
+              <button className={s.processing.sound_effects === "off" ? "on" : ""} onClick={() => up("processing", { sound_effects: "off" })}>None</button></div>
+            <span className="hint">Vyral adds at most one, on the clip's biggest reaction, and only when something clearly stands out. More than that tends to feel forced. Add, move or remove sounds in the editor.</span></div>
         </div>
       </div>
 

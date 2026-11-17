@@ -82,6 +82,8 @@ class CaptionStyle(TextStyle):
 class OverlaySettings(Strict):
     title: TitleStyle = Field(default_factory=TitleStyle)
     captions: CaptionStyle = Field(default_factory=CaptionStyle)
+    # Ends every headline on this page, like a brand ("😭❤️"); empty keeps the emoji Vyral picked.
+    signature_emoji: str = Field("", max_length=16)
 
 
 class DestinationSettings(Strict):
@@ -118,7 +120,8 @@ class CaptionEngineSettings(Strict):
 class ProcessingSettings(Strict):
     max_concurrent_jobs: int = Field(2, ge=1, le=16)
     cut_dead_air: bool = True  # cut stretches with no sound out of new clips
-    viral_preedit: bool = True  # headline box, strongest 18-30 s, open on sound (see preedit.py)
+    viral_preedit: bool = True  # headline, strongest stretch, open on sound (see preedit.py)
+    sound_effects: Literal["off", "auto"] = "auto"  # one sound effect on the biggest moment of each new clip
     hardware_encoding: bool = True  # render on the graphics card when this computer has a working video encoder
 
 
@@ -145,6 +148,7 @@ class TextOverlay(Strict):
     all_caps: bool = True
     outline: int = Field(6, ge=0, le=20)
     box: bool = False  # dark text on a white box: the headline look of top-performing clip pages
+    headline: bool = False  # Vyral's headline for this clip (each page can add its signature emoji to it)
 
     @model_validator(mode="after")
     def _ordered(self):
@@ -175,6 +179,20 @@ class LayerEdit(Strict):
         return self
 
 
+class SoundEdit(Strict):
+    """A sound effect, at a moment in the source (seconds, like gaps and cuts, so trims keep it in place)."""
+    name: str = Field(min_length=1, max_length=40)
+    at: float = Field(ge=0)
+    volume: float = Field(0.6, ge=0.05, le=1.5)
+
+    @model_validator(mode="after")
+    def _known(self):
+        from .media.sfx import SOUNDS
+        if self.name not in SOUNDS:
+            raise ValueError(f"unknown sound {self.name!r}")
+        return self
+
+
 class ClipEdit(Strict):
     start: float = Field(ge=0)  # seconds within the downloaded cut
     end: float = Field(gt=0)
@@ -195,7 +213,9 @@ class ClipEdit(Strict):
     texts: list[TextOverlay] = Field(default_factory=list, max_length=20)
     layers: list[LayerEdit] = Field(default_factory=list, max_length=20)
     hide_title: bool = False  # the page's own title is left off (a headline in texts replaces it)
+    sounds: list[SoundEdit] = Field(default_factory=list, max_length=20)
     preedited: bool = False  # Vyral's viral pre-edit has been applied (see preedit.py)
+    preedit_version: int = Field(0, ge=0)  # which version of it; clips get a newer version once
 
 
 class PresetData(Strict):
