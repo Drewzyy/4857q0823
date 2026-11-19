@@ -18,7 +18,7 @@ export default function Sources() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<StreamerT | null>(null);
   const [removing, setRemoving] = useState<StreamerT | null>(null);
-  const refresh = () => ["streamers", "sources", "destinations", "creators", "dashboard"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const refresh = () => ["streamers", "sources", "destinations", "creators", "dashboard", "clips"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   const fail = (e: unknown) => toast("err", e instanceof Error ? e.message : String(e));
   const update = async (id: number, b: Parameters<typeof api.updateStreamer>[1]) => {
     try { await api.updateStreamer(id, b); refresh(); } catch (e) { fail(e); }
@@ -64,7 +64,8 @@ export default function Sources() {
                   <td className="small muted" title={s.channels.map((c) => c.next_check ? `Next check ${relTime(c.next_check)}` : "").join(" ")}>
                     {s.channels.length ? relTime(last) : <span className="faint" title={watchable ? "Turn on Watch to pick up their new clips" : "Only a Twitch or Kick channel link can be watched (twitch.tv/name or kick.com/name). YouTube and single-broadcast links are searched for moments instead. Edit the streamer to add one."}>{watchable ? "Not watched" : "Add a Twitch or Kick channel to watch"}</span>}
                     {error && <span title={error}> <AlertTriangle size={12} color="var(--warn)" /></span>}</td>
-                  <td>{watchable && <Toggle label={`Watch ${s.name}`} checked={s.watching} onChange={(v) => update(s.id, { watching: v })} />}</td>
+                  <td title="Off: stops watching and takes their unposted clips out of Ready to Upload (and away from Muse). On again: they come back.">
+                    {watchable && <Toggle label={`Watch ${s.name}`} checked={s.watching} onChange={(v) => update(s.id, { watching: v })} />}</td>
                   <td><div className="row" style={{ gap: 2, justifyContent: "flex-end" }}>
                     {s.channels.length > 0 && <button className="btn ghost icon" aria-label={`Check ${s.name} now`} title="Check now" onClick={() => checkNow(s)}><RefreshCw size={13} /></button>}
                     <button className="btn ghost icon" aria-label={`Edit ${s.name}`} onClick={() => setEditing(s)}><Pencil size={13} /></button>
@@ -80,7 +81,7 @@ export default function Sources() {
       {(adding || editing) && <StreamerModal streamer={editing} pages={pages.data ?? []}
         onClose={() => { setAdding(false); setEditing(null); }} onDone={() => { setAdding(false); setEditing(null); refresh(); }} />}
       <ConfirmModal open={!!removing} title={`Remove ${removing?.name}?`} danger confirmLabel="Remove"
-        message="Vyral stops watching their channel and their pages stop getting their clips. Clips already made stay in Ready to Upload."
+        message="Vyral stops watching their channel, their pages stop getting their clips, and their clips leave Ready to Upload. Videos already posted aren't touched."
         onClose={() => setRemoving(null)}
         onConfirm={async () => { try { await api.removeStreamer(removing!.id); setRemoving(null); refresh(); } catch (e) { fail(e); } }} />
     </div>

@@ -54,8 +54,8 @@ def reviewed_posts(s: Session, dest_id: int) -> int:
 
 def _output(s: Session, oid: int) -> tuple[ClipOutput, Clip]:
     o = s.get(ClipOutput, oid)
-    if not o or o.status == "expired":
-        raise PostingError("No such video, or it has expired")
+    if not o or o.status in ("expired", "withdrawn"):
+        raise PostingError("No such video, or it has expired or its streamer is turned off")
     return o, s.get(Clip, o.clip_id)
 
 

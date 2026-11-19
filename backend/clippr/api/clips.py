@@ -187,7 +187,7 @@ def _footage_seconds(clip: Clip) -> float:
 
 
 def _live_outputs(s: Session, cid: int) -> list[ClipOutput]:
-    return list(s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid, ClipOutput.status != "expired")).unique())
+    return list(s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid, ClipOutput.status.not_in(("expired", "withdrawn")))).unique())
 
 
 @router.patch("/outputs/{oid}/video")

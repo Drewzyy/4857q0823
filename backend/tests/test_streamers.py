@@ -90,3 +90,29 @@ def test_streamers_sharing_a_channel_can_both_be_watched(env):
     c.delete(f"/api/streamers/{silky['id']}")
     assert [x["username"] for x in c.get("/api/sources").json()] == ["silky"]  # The Core still uses it
     assert c.get("/api/streamers").json()[0]["channels"][0]["username"] == "silky"
+
+
+def test_turning_a_streamer_off_takes_their_clips_down(env):
+    from test_mcp import _clip
+    from clippr.models import Clip, ClipOutput
+    ctx, c, fake = env
+    cid, tt, yt = _clip(ctx, c, fake)
+    with ctx.db.session() as s:
+        creator = s.get(Clip, cid).creator_id
+        posted = s.query(ClipOutput).filter(ClipOutput.destination_id == yt).one()
+        posted.post_url = "https://youtube.com/shorts/x"  # already out: stays
+    assert c.get("/api/clips").json()
+    assert c.patch(f"/api/streamers/{creator}", json={"watching": False}).status_code == 200
+    ready = c.get("/api/clips?status=ready").json()
+    assert all(o["destination"]["id"] == yt for x in ready for o in x["outputs"] if o["status"] == "ready")
+    with ctx.db.session() as s:
+        assert s.query(ClipOutput).filter(ClipOutput.destination_id == tt).one().status == "withdrawn"
+    from clippr import mcp
+    from fastapi.testclient import TestClient
+    from test_mcp import _call
+    mc, tok = TestClient(mcp.create_app(ctx)), mcp.token(ctx)
+    assert all(o["destination"]["id"] != tt for x in _call(mc, tok, "list_ready_clips")[1] for o in x["outputs"])
+    assert _call(mc, tok, "approve_clip", clip_id=cid, destination_id=tt, watched=True)[0]  # can't be approved either
+    c.patch(f"/api/streamers/{creator}", json={"watching": True})
+    with ctx.db.session() as s:
+        assert s.query(ClipOutput).filter(ClipOutput.destination_id == tt).one().status == "ready"  # back on: back again

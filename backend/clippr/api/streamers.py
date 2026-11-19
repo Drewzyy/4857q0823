@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from .. import describe
 from ..audit import audit
 from ..fetch import is_single_video
-from ..models import Clip, Creator, DestinationAccount, ReferenceVideo, SourceAccount
+from ..models import Clip, ClipOutput, Creator, DestinationAccount, ReferenceVideo, SourceAccount
 from ..platforms.urls import SourceInputError, parse_source_input
 from ..routing import destination_creator_ids, source_creator_ids
 from .accounts import _clean_channels
@@ -62,6 +62,18 @@ class CaptionRules(BaseModel):
     @classmethod
     def _words(cls, v: list[str], info) -> list[str]:
         return describe.clean_list(v, info.field_name == "hashtags")
+
+
+def _take_down(s: Session, cid: int, back: bool = False) -> None:
+    """Turning a streamer off takes their clips out of Ready to Upload (and out of Muse's reach); turning them back
+    on puts them back. Videos already posted or handed to Postiz aren't touched."""
+    frm, to = ("withdrawn", "ready") if back else ("ready", "withdrawn")
+    outs = s.scalars(select(ClipOutput).join(Clip, Clip.id == ClipOutput.clip_id).where(
+        Clip.creator_id == cid, ClipOutput.status == frm, ClipOutput.post_url.is_(None), ClipOutput.postiz_post_id.is_(None))).unique().all()
+    for o in outs:
+        o.status = to
+    if outs:
+        audit(s, "streamer.clips_restored" if back else "streamer.clips_taken_down", "creator", cid, {"videos": len(outs)})
 
 
 def _out(s: Session, c: Creator, pages: list[DestinationAccount]) -> dict:
@@ -191,6 +203,7 @@ def update_streamer(cid: int, body: StreamerPatch, s: Session = Depends(db)):
             _sync_channels(s, c)  # a streamer from before: start watching their Twitch or Kick channel now
         for w in _watched(s, cid):
             w.monitoring = "active" if body.watching else "paused"
+        _take_down(s, cid, back=body.watching)
     try:
         s.flush()
     except IntegrityError:
@@ -200,10 +213,11 @@ def update_streamer(cid: int, body: StreamerPatch, s: Session = Depends(db)):
 
 @router.delete("/streamers/{cid}", status_code=204)
 def remove_streamer(cid: int, s: Session = Depends(db)):
-    """Removes the streamer and the channels watched for them. Clips already made stay in Ready to Upload."""
+    """Removes the streamer and the channels watched for them. Their clips leave Ready to Upload (posted ones stay)."""
     c = get_or_404(s, Creator, cid, "Streamer")
     for w in _watched(s, cid):
         _drop(s, w, cid)
+    _take_down(s, cid)
     _set_pages(s, cid, [])
     audit(s, "streamer.removed", "creator", cid, {"name": c.name})
     s.delete(c)

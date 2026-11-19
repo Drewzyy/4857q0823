@@ -292,7 +292,7 @@ class ClipOutput(Base):
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fps: Mapped[float | None] = mapped_column(nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="ready")  # ready | uploaded | expired
+    status: Mapped[str] = mapped_column(String(16), default="ready")  # ready | uploaded | expired | withdrawn (streamer turned off)
     video_title: Mapped[str] = mapped_column(Text, default="")  # the title burned into the top of the video
     overlay: Mapped[dict[str, Any]] = mapped_column(default=dict)
     format: Mapped[dict[str, Any]] = mapped_column(default=dict)
