@@ -623,12 +623,16 @@ class Pipeline:
         words = [w for w in words if not deadair.FILLER.match(w.text.strip())]  # "um" never shows in captions
         with self.ctx.db.session() as s:
             proc = load_settings(s).processing
+            # What the live campaigns this clip will be tagged to ask of the video, before it is cut and titled.
+            rules = campaigns.coming_rules(s, creator_id, stream_date, " ".join([post_title if reference_id else "", *(w.text for w in words), game]))
         title = describe.clean_title(title, creator_name)
         if proc.viral_preedit:
             # Our own title from what's said and what happens, never the Twitch clip's or the source post's words.
             db = self._loudness(source, start, dur)
-            title, quote = titles.make_title(words, creator_name, preedit.peak_moment(db, 0, dur))
-            framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first)
+            title, quote = titles.make_title(words, creator_name, preedit.peak_moment(db, 0, dur), rules["overlay_mentions"])
+            framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first,
+                                    rules["min_seconds"], rules["max_seconds"])
+            captions_note = " ".join(filter(None, [captions_note, campaigns.too_short(rules, framing["end"] - framing["start"])]))
         renders: dict[str, Path] = {}
         planned = []
         for did, platform, name, handle, st in dest_info:
@@ -895,24 +899,31 @@ class Pipeline:
                 log.exception("pre-edit failed for clip %s; it keeps its current edit", cid)
         return {"preedited": done}
 
-    def preedit_clip(self, cid: int, sound: bool = True, choice: str = "", hook: bool = True) -> int:
+    def preedit_clip(self, cid: int, sound: bool = True, choice: str = "", hook: bool = True, redo: bool = False) -> int:
+        """redo: cut and title it again from the whole footage (a campaign's rules changed what it should be)."""
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             if not clip or not clip.source_path or not Path(clip.source_path).exists():
                 return 0
             base = clip.source_start or 0.0
             e = dict(clip.edit or ClipEdit(start=base, end=base + (clip.source_duration or 0.0)).model_dump())
+            if redo:
+                e.update(start=base, end=base + (clip.source_duration or 0.0), preedited=False, preedit_version=0, sounds=[], hook=None, punch=None)
+            rules = campaigns.clip_rules_of(s, clip)
             words = [Word(w["start"] - (e["start"] - base), w["end"] - (e["start"] - base), w["text"]) for w in clip.words or []]
             source = Path(clip.source_path)
             ref = clip.reference
             tags_from = ref.title if ref else ""  # its hashtags carry over
             creator = clip.creator.name if clip.creator else ""
         db = self._loudness(source, e["start"], e["end"] - e["start"])
-        title, quote = titles.make_title(words, creator, preedit.peak_moment(db, 0, e["end"] - e["start"]))
-        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook)).model_dump()
+        title, quote = titles.make_title(words, creator, preedit.peak_moment(db, 0, e["end"] - e["start"]), rules["overlay_mentions"])
+        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, rules["min_seconds"], rules["max_seconds"])).model_dump()
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             clip.edit, clip.title = new, title
+            note = campaigns.too_short(rules, new["end"] - new["start"])
+            if note and note not in clip.captions_note:
+                clip.captions_note = f"{clip.captions_note} {note}".strip()
             outs = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)) if o.status == "ready"]
             for o in outs:
                 o.title, o.description = describe.build(o.platform, title, tags_from, dict(o.destination.settings or {}) if o.destination else {},
@@ -924,6 +935,20 @@ class Pipeline:
                 self.ctx.jobs.enqueue("clip.rerender", {"output_ids": [o.id for o in outs]}, max_attempts=1, session=s)
             audit(s, "clip.preedited", "clip", cid)
         return 1
+
+    def recut_clip(self, cid: int) -> dict:
+        """A clip was tagged to a campaign whose video rules it doesn't follow: cut and title it again to follow them.
+        A clip you edited yourself is left as it is (your edit wins), with a note."""
+        with self.ctx.db.session() as s:
+            proc = load_settings(s).processing
+            clip = s.get(Clip, cid)
+            if not clip or clip.status != "ready" or campaigns.complies(clip, campaigns.clip_rules_of(s, clip)):
+                return {"skipped": "nothing to change"}
+            if s.scalar(select(AuditLog.id).where(AuditLog.action == "clip.edited", AuditLog.entity_id == str(cid)).limit(1)) or not proc.viral_preedit:
+                note = "Doesn't follow the length or on-screen name a campaign asks for. Fix it in the editor."
+                clip.captions_note = clip.captions_note if note in clip.captions_note else f"{clip.captions_note} {note}".strip()
+                return {"skipped": "edited by you"}
+        return {"recut": self.preedit_clip(cid, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first, redo=True)}
 
     def restore_lost_outputs(self) -> dict:
         """Give back clips their pages' videos if they have none: an earlier update's database change deleted them
@@ -1117,6 +1142,7 @@ def register(ctx: Any) -> Pipeline:
     q = ctx.jobs
     q.register("monitor.tick", lambda jc, pl: p.tick())
     q.register("source.check", lambda jc, pl: p.check_source(pl["source_id"]))
+    q.register("clip.recut", lambda jc, pl: p.recut_clip(pl["clip_id"]))
     q.register("clip.build", lambda jc, pl: p.build_clip(pl["reference_id"], pl.get("vod_url"), pl.get("waits", 0), jc.cancelled,
                                                          pl.get("allow_duplicate", False)))
     q.register("intake.link", lambda jc, pl: p.intake_link(pl["url"], pl.get("creator_id")))

@@ -350,6 +350,8 @@ class Campaign(Base):
     submit_within_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     destination_ids: Mapped[list[Any]] = mapped_column(default=list)  # your pages that post for it; empty = any
     rules: Mapped[str] = mapped_column(Text, default="")
+    # What the campaign asks of the video itself: {min_seconds, max_seconds, overlay_mentions, language, no_logos, focus_creator}
+    clip_rules: Mapped[dict[str, Any]] = mapped_column(default=dict)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
     creator: Mapped[Creator | None] = relationship(lazy="joined")

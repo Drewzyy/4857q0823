@@ -107,6 +107,8 @@ function CampaignDetail({ c, onChange }: { c: CampaignT; onChange: () => void })
       <div className="small muted">
         {c.required_hashtags.length > 0 && <div>Captions must use {c.required_hashtags.join(" ")}</div>}
         {c.must_mention.length > 0 && <div>Captions must mention {c.must_mention.join(", ")}</div>}
+        {(c.clip_rules.min_seconds > 0 || c.clip_rules.max_seconds > 0) && <div>Videos {c.clip_rules.min_seconds > 0 && `at least ${c.clip_rules.min_seconds}s`}{c.clip_rules.min_seconds > 0 && c.clip_rules.max_seconds > 0 && ", "}{c.clip_rules.max_seconds > 0 && `at most ${c.clip_rules.max_seconds}s`}</div>}
+        {c.clip_rules.overlay_mentions.length > 0 && <div>The video's text must name {c.clip_rules.overlay_mentions.join(", ")}</div>}
         {c.submit_within_minutes && <div>Submit within {c.submit_within_minutes} minutes of posting</div>}
         {c.footage_from && <div>Footage from {c.footage_from}{c.ends_at ? ` until ${c.ends_at}` : ""}</div>}
       </div>
@@ -157,16 +159,18 @@ function CampaignDetail({ c, onChange }: { c: CampaignT; onChange: () => void })
 }
 
 type Form = Omit<CampaignFields, "creator_id" | "min_views" | "required_hashtags" | "must_mention" | "keywords" | "submit_within_minutes"> & {
-  creator_id: string; min_views: string; hashtags: string; mention: string; keywords: string; submit: string;
+  creator_id: string; min_views: string; hashtags: string; mention: string; keywords: string; submit: string; overlay: string;
 };
 const words = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 const blank: Form = {
   name: "", tag: "", creator_id: "", status: "live", pool: "", min_views: "", platforms: [], audience: "", footage_from: null, ends_at: null, hashtags: "",
-  mention: "", keywords: "", join_url: "", discord_url: "", guidelines_url: "", submit: "", destination_ids: [], rules: "",
+  mention: "", keywords: "", join_url: "", discord_url: "", guidelines_url: "", submit: "", destination_ids: [], rules: "", overlay: "",
+  clip_rules: { min_seconds: 0, max_seconds: 0, overlay_mentions: [], language: "", no_logos: false, focus_creator: false },
 };
 const fromCampaign = (c: CampaignT): Form => ({
   ...c, creator_id: c.creator ? String(c.creator.id) : "", min_views: c.min_views ? String(c.min_views) : "", hashtags: c.required_hashtags.join(", "),
   mention: c.must_mention.join(", "), keywords: c.keywords.join(", "), submit: c.submit_within_minutes ? String(c.submit_within_minutes) : "",
+  overlay: c.clip_rules.overlay_mentions.join(", "),
 });
 
 function CampaignModal({ campaign, open, onClose, onSaved }: { campaign: CampaignT | null; open: boolean; onClose: () => void; onSaved: () => void }) {
@@ -185,6 +189,7 @@ function CampaignModal({ campaign, open, onClose, onSaved }: { campaign: Campaig
     <div className="field"><label htmlFor={`cp-${key}`}>{label}</label>
       <input id={`cp-${key}`} className="input" value={(f[key] as string | null) ?? ""} onChange={(e) => setF({ ...f, [key]: e.target.value })} {...props} /></div>
   );
+  const setRules = (r: Partial<CampaignFields["clip_rules"]>) => setF({ ...f, clip_rules: { ...f.clip_rules, ...r } });
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
   const fill = async () => {
@@ -195,7 +200,9 @@ function CampaignModal({ campaign, open, onClose, onSaved }: { campaign: Campaig
         platforms: p.platforms?.length ? p.platforms : f.platforms, min_views: p.min_views ? String(p.min_views) : f.min_views, audience: p.audience || f.audience,
         footage_from: p.footage_from || f.footage_from, hashtags: p.required_hashtags?.length ? p.required_hashtags.join(", ") : f.hashtags,
         mention: p.must_mention?.length ? p.must_mention.join(", ") : f.mention, submit: p.submit_within_minutes ? String(p.submit_within_minutes) : f.submit,
-        join_url: p.join_url || f.join_url, discord_url: p.discord_url || f.discord_url, guidelines_url: p.guidelines_url || f.guidelines_url, rules: p.rules || f.rules });
+        join_url: p.join_url || f.join_url, discord_url: p.discord_url || f.discord_url, guidelines_url: p.guidelines_url || f.guidelines_url, rules: p.rules || f.rules,
+        keywords: p.keywords?.length ? p.keywords.join(", ") : f.keywords, overlay: p.clip_rules?.overlay_mentions.length ? p.clip_rules.overlay_mentions.join(", ") : f.overlay,
+        clip_rules: p.clip_rules ?? f.clip_rules });
       toast(p.creator && !p.creator_id ? "info" : "ok", p.creator && !p.creator_id
         ? `${p.creator} isn't one of your streamers yet. Pick one below.` : "Filled in. Check each field, then add a short tag.");
     } catch (e) { fail(e); } finally { setBusy(false); }
@@ -207,6 +214,7 @@ function CampaignModal({ campaign, open, onClose, onSaved }: { campaign: Campaig
       min_views: Number(f.min_views) || 0, platforms: f.platforms, audience: f.audience.trim(), footage_from: f.footage_from || null, ends_at: f.ends_at || null,
       required_hashtags: words(f.hashtags), must_mention: words(f.mention), keywords: words(f.keywords), join_url: f.join_url.trim(), discord_url: f.discord_url.trim(),
       guidelines_url: f.guidelines_url.trim(), submit_within_minutes: Number(f.submit) || null, destination_ids: f.destination_ids, rules: f.rules,
+      clip_rules: { ...f.clip_rules, overlay_mentions: words(f.overlay) },
     };
     setBusy(true);
     try {
@@ -242,6 +250,20 @@ function CampaignModal({ campaign, open, onClose, onSaved }: { campaign: Campaig
         <div className="row wrap">{text("footage_from", "Footage from", { type: "date" })}{text("ends_at", "Ends", { type: "date" })}{text("submit", "Submit within (minutes)", { type: "number", min: 1 })}</div>
         <div className="row wrap">{text("hashtags", "Required hashtags", { placeholder: "#LACY" })}{text("mention", "Must mention", { placeholder: "LACY" })}{text("keywords", "Keywords in the footage", { placeholder: "gta" })}</div>
         <div className="row wrap">{text("join_url", "Join Campaign link", { type: "url" })}{text("discord_url", "Discord link", { type: "url" })}{text("guidelines_url", "Guidelines link", { type: "url" })}</div>
+        <div className="field"><span className="label-text">What the video has to be (Vyral cuts and titles new clips to fit)</span>
+          <div className="row wrap">
+            <div className="field"><label htmlFor="cp-minsec">Shortest (seconds)</label>
+              <input id="cp-minsec" className="input" type="number" min={0} max={3600} value={f.clip_rules.min_seconds || ""} onChange={(e) => setRules({ min_seconds: Number(e.target.value) || 0 })} /></div>
+            <div className="field"><label htmlFor="cp-maxsec">Longest (seconds)</label>
+              <input id="cp-maxsec" className="input" type="number" min={0} max={3600} value={f.clip_rules.max_seconds || ""} onChange={(e) => setRules({ max_seconds: Number(e.target.value) || 0 })} /></div>
+            {text("overlay", "Names on the video", { placeholder: "LACY" })}
+          </div>
+          <div className="row wrap">
+            <label className="row small"><input type="checkbox" checked={f.clip_rules.language === "English"} onChange={(e) => setRules({ language: e.target.checked ? "English" : "" })} />English only</label>
+            <label className="row small"><input type="checkbox" checked={f.clip_rules.no_logos} onChange={(e) => setRules({ no_logos: e.target.checked })} />No logos or watermarks</label>
+            <label className="row small"><input type="checkbox" checked={f.clip_rules.focus_creator} onChange={(e) => setRules({ focus_creator: e.target.checked })} />The streamer is the main focus</label>
+          </div>
+          <span className="small faint">Length and names change how new clips are cut and titled. English, logos and focus are kept with the campaign for you to check.</span></div>
         <div className="field"><span className="label-text">Your pages that post for it (none picked: any page)</span>
           <div className="row wrap">{(pages.data ?? []).map((d) => (
             <label key={d.id} className="row small"><input type="checkbox" checked={f.destination_ids.includes(d.id)}

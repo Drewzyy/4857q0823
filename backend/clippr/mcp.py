@@ -168,7 +168,7 @@ def list_campaigns(ctx, a):
         for l in s.scalars(select(CampaignClip)):
             tagged.setdefault(l.campaign_id, []).append(l.clip_id)
         return [{"id": c.id, "name": c.name, "tag": c.tag, "creator": c.creator.name if c.creator else None, "live": c.status == "live",
-                 "min_views": c.min_views, "required_hashtags": c.required_hashtags, "must_mention": c.must_mention, "join_url": c.join_url,
+                 "min_views": c.min_views, "required_hashtags": c.required_hashtags, "must_mention": c.must_mention, "clip_rules": c.clip_rules, "join_url": c.join_url,
                  "tagged_clip_ids": tagged.get(c.id, [])} for c in s.scalars(select(Campaign)).unique()]
 
 

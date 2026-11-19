@@ -79,10 +79,11 @@ export interface LongformT {
   status: "new" | "processing" | "ready" | "failed"; status_detail: string; duration: number | null; created_at: string; moments: LongformMoment[];
 }
 export type CampaignPlatform = "tiktok" | "instagram" | "youtube" | "x";
+export interface ClipRules { min_seconds: number; max_seconds: number; overlay_mentions: string[]; language: string; no_logos: boolean; focus_creator: boolean }
 export interface CampaignFields {
   name: string; tag: string; creator_id: number | null; status: "live" | "ended"; pool: string; min_views: number; platforms: CampaignPlatform[];
   audience: string; footage_from: string | null; ends_at: string | null; required_hashtags: string[]; must_mention: string[]; keywords: string[];
-  join_url: string; discord_url: string; guidelines_url: string; submit_within_minutes: number | null; destination_ids: number[]; rules: string;
+  join_url: string; discord_url: string; guidelines_url: string; submit_within_minutes: number | null; destination_ids: number[]; rules: string; clip_rules: ClipRules;
 }
 export interface CampaignT extends Omit<CampaignFields, "creator_id"> { id: number; creator: { id: number; name: string } | null; views: number }
 export interface CampaignPage { output_id: number; platform: Platform; page: string | null; post_url: string | null; qualifies: boolean; reasons: string[]; views: number | null }

@@ -5,7 +5,7 @@ from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -18,8 +18,29 @@ from .deps import ApiError, ctx, db, get_or_404
 
 router = APIRouter()
 FIELDS = ("name", "tag", "status", "pool", "min_views", "platforms", "audience", "footage_from", "ends_at", "required_hashtags", "must_mention",
-          "keywords", "join_url", "discord_url", "guidelines_url", "submit_within_minutes", "destination_ids", "rules")
+          "keywords", "join_url", "discord_url", "guidelines_url", "submit_within_minutes", "destination_ids", "rules")  # and clip_rules, which _out fills in whole
 URL = {"pattern": r"^(https?://\S+)?$", "max_length": 500}  # only web links: they become buttons
+
+
+class ClipRules(BaseModel):
+    """What a campaign asks of the video itself. 0 or empty means no rule."""
+    min_seconds: int = Field(0, ge=0, le=3600)
+    max_seconds: int = Field(0, ge=0, le=3600)
+    overlay_mentions: list[str] = Field(default_factory=list, max_length=10)
+    language: str = Field("", max_length=40)
+    no_logos: bool = False
+    focus_creator: bool = False
+
+    @field_validator("overlay_mentions")
+    @classmethod
+    def _names(cls, v: list[str]) -> list[str]:
+        return describe.clean_list(v)
+
+    @model_validator(mode="after")
+    def _order(self):
+        if self.max_seconds and self.min_seconds > self.max_seconds:
+            raise ValueError("The shortest length can't be longer than the longest")
+        return self
 
 
 class CampaignPatch(BaseModel):
@@ -41,6 +62,7 @@ class CampaignPatch(BaseModel):
     submit_within_minutes: int | None = Field(None, ge=1, le=100_000)
     destination_ids: list[int] = Field(default_factory=list, max_length=100)
     rules: str = Field("", max_length=20_000)
+    clip_rules: ClipRules = Field(default_factory=ClipRules)
 
     @field_validator("required_hashtags", "must_mention", "keywords")
     @classmethod
@@ -60,7 +82,7 @@ class CampaignUpdate(CampaignPatch):
 
 def _out(s: Session, c: Campaign) -> dict:
     return {"id": c.id, "creator": {"id": c.creator.id, "name": c.creator.name} if c.creator else None, **{f: getattr(c, f) for f in FIELDS},
-            "views": campaigns.campaign_views(s, c)}
+            "clip_rules": ClipRules(**(c.clip_rules or {})).model_dump(), "views": campaigns.campaign_views(s, c)}
 
 
 def _check(s: Session, data: dict, cid: int | None = None) -> None:
@@ -154,7 +176,11 @@ class LinkIn(BaseModel):
 @router.post("/campaigns/{cid}/clips", status_code=201)
 def link_clip(cid: int, body: LinkIn, c=Depends(ctx), s: Session = Depends(db)):
     camp = get_or_404(s, Campaign, cid, "Campaign")
-    campaigns.tag(s, camp, get_or_404(s, Clip, body.clip_id, "Clip"), "you")
+    clip = get_or_404(s, Clip, body.clip_id, "Clip")
+    campaigns.tag(s, camp, clip, "you")
+    s.flush()
+    if not campaigns.complies(clip, campaigns.clip_rules_of(s, clip)):  # its length or title breaks the campaign's video rules
+        c.jobs.enqueue("clip.recut", {"clip_id": clip.id}, max_attempts=1, session=s)
     c.jobs.enqueue("campaigns.check", {}, max_attempts=1, session=s)  # it may already be posted and qualify
     return {"ok": True}
 

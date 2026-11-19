@@ -286,3 +286,148 @@ def test_every_new_clip_of_a_streamer_follows_their_rules(env):
     for o in clip["outputs"]:
         assert o["description"].endswith("#STREAMERA"), o["description"]
         assert "Clipped by Vyral" in o["description"] and describe.has_name(o["description"] + o["video_title"], "Streamer A")
+
+
+BULLETS = """## Summer Clip-Off Campaign
+**Streamer:** Kai
+**Platforms:**
+- TikTok
+- YouTube Shorts
+Total prize pool: $5,000
+Requirements:
+1. Videos must be between 15 and 60 seconds long
+2. English captions only
+3. No logos or watermarks from other clippers
+4. Kai must be the main focus of the video
+5. Use the hashtags #KaiClips and #Valorant in your caption
+6. Do not use #fyp
+7. Text on screen must mention Kai's name
+Minimum 250K views required. Submit within 2 hours of posting.
+What to look for:
+- VALORANT clutches
+Join here: https://whop.com/kai-clips/."""
+
+PLAIN = """LACY x Clipping
+Creator: Lacy
+Max 90s. Clips should be under 1 minute and at least 10 sec
+Please mention the creator's name in your post
+Min. 2M views
+Required hashtags:
+- #lacy
+- #gta
+Platform: X, Twitter"""
+
+
+def test_parse_reads_rules_in_other_layouts():
+    p = campaigns.parse(BULLETS)
+    assert p["name"] == "Summer Clip-Off Campaign" and p["creator"] == "Kai" and p["pool"] == "$5,000" and p["platforms"] == ["tiktok", "youtube"]
+    assert p["min_views"] == 250_000 and p["submit_within_minutes"] == 120 and p["join_url"] == "https://whop.com/kai-clips/"
+    assert p["required_hashtags"] == ["#KaiClips", "#Valorant"]  # not the #fyp it says not to use
+    assert p["must_mention"] == [] and p["keywords"] == ["VALORANT"]  # the name is for the video's text, not the caption
+    assert p["clip_rules"] == {"min_seconds": 15, "max_seconds": 60, "overlay_mentions": ["Kai"], "language": "English", "no_logos": True, "focus_creator": True}
+
+    p = campaigns.parse(PLAIN)
+    assert p["name"] == "LACY x Clipping" and p["creator"] == "Lacy" and p["platforms"] == ["x"] and p["min_views"] == 2_000_000
+    assert p["must_mention"] == ["Lacy"] and p["required_hashtags"] == ["#lacy", "#gta"]  # "the creator's name" is the streamer's
+    assert p["clip_rules"] == {"min_seconds": 10, "max_seconds": 60, "overlay_mentions": [], "language": "", "no_logos": False, "focus_creator": False}
+
+    r = campaigns.parse(POST)["clip_rules"]  # the first example: the name is wanted in the caption and on the video
+    assert r["overlay_mentions"] == ["LACY"] and r["language"] == "English" and r["max_seconds"] == 0 and campaigns.parse(POST)["keywords"] == ["GTA"]
+    assert campaigns.parse("Submit within 30 minutes of posting your clip")["clip_rules"]["max_seconds"] == 0  # a deadline isn't a length
+    assert campaigns.parse("Videos can't be longer than 2 minutes")["clip_rules"]["max_seconds"] == 120
+
+
+def test_strictest_rules_win():
+    a = camp(clip_rules={"min_seconds": 10, "max_seconds": 90, "overlay_mentions": ["LACY"]})
+    b = camp(clip_rules={"min_seconds": 20, "max_seconds": 60, "overlay_mentions": ["Lacy", "Dani"]})
+    assert campaigns.merge_clip_rules([a, b]) == {"min_seconds": 20, "max_seconds": 60, "overlay_mentions": ["LACY", "Lacy", "Dani"]}
+    assert campaigns.merge_clip_rules([]) == {"min_seconds": 0, "max_seconds": 0, "overlay_mentions": []}
+    assert campaigns.merge_clip_rules([camp(clip_rules={"min_seconds": 50, "max_seconds": 30})])["min_seconds"] == 30  # never above the longest
+    assert campaigns.fits(camp(keywords=["gta"]), 1, date(2026, 11, 20), "Lacy plays GTA") and not campaigns.fits(camp(), 1, date(2026, 11, 1), "")
+
+
+def test_titles_and_cuts_follow_a_campaigns_length_and_names():
+    import numpy as np
+    from clippr import preedit, titles
+    from clippr.media.overlay import Word
+    words = [Word(6.0 + i * 0.4, 6.3 + i * 0.4, t) for i, t in enumerate("no way he actually did that".split())]
+    quote, is_quote = titles.make_title(words, "Lacy", 6.5, ["LACY"])
+    assert is_quote and quote.startswith("LACY: “No way") and titles.make_title(words, "Lacy", 6.5)[0].startswith("“No way")  # named only when asked
+    assert titles.make_title(words, "Lacy", 6.5, ["Dani", "Lacy"])[0].startswith("Dani and Lacy: ")
+    assert titles.make_title([], "Lacy", None, ["LACY"])[0].count("Lacy") == 1 and "Dani" in titles.make_title([], "Lacy", None, ["Dani"])[0]  # a summary already names the streamer
+    db = np.full(600, -30.0)
+    db[300:320] = -5  # a moment at 30 s of a 60 s clip
+    a, b = preedit.best_window(db, [], 60.0, max_s=15)
+    assert b - a <= 15 and a < 30 < b
+    a, b = preedit.best_window(db, [], 60.0, min_s=44)
+    assert b - a >= 44
+    assert preedit.best_window(None, [], 8.0, min_s=30) == (0.0, 8.0)  # the footage is all there is
+    assert preedit.best_window(None, [], 40.0, max_s=20)[1] - preedit.best_window(None, [], 40.0, max_s=20)[0] == 20  # even with no loudness to go by
+
+
+def test_rules_api_validates_and_returns_the_clip_rules(client):
+    lacy = client.post("/api/creators", json={"name": "Lacy"}).json()["id"]
+    assert client.post("/api/campaigns", json=body(lacy, clip_rules={"min_seconds": 60, "max_seconds": 30})).status_code == 422
+    assert client.post("/api/campaigns", json=body(lacy, clip_rules={"overlay_mentions": ["x" * 61]})).status_code == 422
+    assert client.post("/api/campaigns", json=body(lacy, clip_rules={"max_seconds": -1})).status_code == 422
+    made = client.post("/api/campaigns", json=body(lacy, clip_rules={"max_seconds": 60, "overlay_mentions": [" LACY ", ""], "no_logos": True})).json()
+    assert made["clip_rules"] == {"min_seconds": 0, "max_seconds": 60, "overlay_mentions": ["LACY"], "language": "", "no_logos": True, "focus_creator": False}
+    assert client.get("/api/campaigns").json()[0]["clip_rules"]["max_seconds"] == 60
+    assert client.patch(f"/api/campaigns/{made['id']}", json={"status": "ended"}).json()["clip_rules"]["max_seconds"] == 60  # kept when not sent
+    assert client.patch(f"/api/campaigns/{made['id']}", json={"clip_rules": {"min_seconds": 5}}).json()["clip_rules"]["max_seconds"] == 0
+    assert client.post("/api/campaigns/parse", json={"text": BULLETS}).json()["clip_rules"]["min_seconds"] == 15
+
+
+def clip_seconds(e: dict) -> float:
+    return e["end"] - e["start"] + (e["hook"][1] - e["hook"][0] if e.get("hook") else 0)
+
+
+@respx.mock
+def test_a_new_clip_is_cut_and_titled_for_its_campaign(env):
+    ctx, c, fake = env
+    respx.post(HOOK).mock(return_value=httpx.Response(204))
+    cid, sid, *_ = setup_accounts(c)
+    rules = {"max_seconds": 14, "overlay_mentions": ["STREAMER A"], "no_logos": True}
+    c.post("/api/campaigns", json=body(cid, tag="streamera", name="Streamer A Pool", footage_from="2020-01-01", must_mention=[], clip_rules=rules))
+    fake.posts = [RemotePost("old1", "https://www.tiktok.com/@a.clips/video/old1", "old one")]
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("new1", "https://www.tiktok.com/@a.clips/video/new1", "He actually did it"), *fake.posts]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    [clip] = c.get("/api/clips").json()
+    assert clip["title"].startswith("STREAMER A: “No way he actually did that")  # its name is on the video, the quote word for word
+    with ctx.db.session() as s:
+        e = s.get(Clip, clip["id"]).edit
+    assert e["texts"][0]["text"] == clip["title"] and 0 < clip_seconds(e) <= 14, e  # cut to the campaign's longest (the teaser counts)
+
+
+@respx.mock
+def test_tagging_a_clip_that_breaks_the_rules_cuts_it_again(env):
+    ctx, c, fake = env
+    respx.post(HOOK).mock(return_value=httpx.Response(204))
+    cid, sid, *_ = setup_accounts(c)
+    fake.posts = [RemotePost("old1", "https://www.tiktok.com/@a.clips/video/old1", "old one")]
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("new1", "https://www.tiktok.com/@a.clips/video/new1", "He actually did it"), *fake.posts]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    [clip] = c.get("/api/clips").json()
+    with ctx.db.session() as s:
+        before = clip_seconds(s.get(Clip, clip["id"]).edit)
+    assert before > 8 and not clip["title"].startswith("STREAMER A")
+    camp_id = c.post("/api/campaigns", json=body(cid, tag="late", name="Late one", footage_from="2020-01-01", must_mention=[],
+                                                  clip_rules={"max_seconds": 8, "overlay_mentions": ["STREAMER A"]})).json()["id"]
+    assert c.post(f"/api/campaigns/{camp_id}/clips", json={"clip_id": clip["id"]}).status_code == 201
+    drain(ctx)
+    [clip] = c.get("/api/clips").json()
+    with ctx.db.session() as s:
+        e = s.get(Clip, clip["id"]).edit
+    assert clip["title"].startswith("STREAMER A: ") and 0 < clip_seconds(e) <= 8 and e["texts"][0]["text"] == clip["title"]
+    assert all(o["video_title"] == clip["title"] and o["render_state"] == "ready" for o in clip["outputs"])
+    assert campaigns.complies(Clip(edit=e, title=clip["title"]), {"min_seconds": 0, "max_seconds": 8, "overlay_mentions": ["STREAMER A"]})
+
+
+def test_a_game_abbreviation_matches_twitchs_full_name():
+    from clippr.campaigns import _searchable
+    assert "gta" in _searchable("He finally got the plane in Grand Theft Auto V")
+    assert "gta" not in _searchable("just chatting with chat")

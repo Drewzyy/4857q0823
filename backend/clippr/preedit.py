@@ -34,19 +34,23 @@ HEADLINE_SIZE = 76  # pixels on a 1080-wide video: about 3% of the height per li
 SHOCK = re.compile(r"\b(wtf|what the|no way|bro|oh my god|omg|are you serious|insane|crazy)\b", re.I)
 
 
-def best_window(db: np.ndarray | None, words: list, dur: float) -> tuple[float, float]:
+def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0, max_s: float = 0) -> tuple[float, float]:
     """(start, end) in seconds from the clip's start: the whole clip, or for a long one the TARGET-second stretch
-    ending just after its loudest moment, opening on a new sentence. Always starts on sound."""
+    ending just after its loudest moment, opening on a new sentence. Always starts on sound. min_s and max_s are a
+    campaign's length rules (0 = none): the window is kept inside them, and is only shorter than min_s when the
+    clip itself is."""
+    hi = max_s or float("inf")
+    shortest, longest, target = (min(max(x, min_s), hi) for x in (SHORTEST, LONGEST, TARGET))
     start, end = 0.0, dur
-    if db is not None and len(db) > int(SHORTEST / STEP) and dur > LONGEST:
+    if db is not None and len(db) > int(shortest / STEP) and dur > longest:
         level = np.convolve(db - np.median(db), np.ones(10) / 10, mode="same")
         peak = float(np.argmax(level[: int((dur - 1) / STEP)])) * STEP
-        end = min(dur, max(peak + 4.0, TARGET))
+        end = min(dur, max(peak + 4.0, target))
         # Settle the payoff: finish the sentence being said.
         later = [w.end for w in words if peak < w.end <= end + 3]
         if later:
             end = min(dur, max(end, later[-1] + 0.3) if later[-1] - peak < 8 else end)
-        start = max(0.0, end - TARGET)
+        start = max(0.0, end - target)
         firsts = [w.start for i, w in enumerate(words)
                   if start - 2 <= w.start <= min(start + 4, peak - 6)
                   and (i == 0 or w.start - words[i - 1].end > 0.35 or words[i - 1].text.rstrip().endswith((".", "!", "?")))]
@@ -76,8 +80,12 @@ def best_window(db: np.ndarray | None, words: list, dur: float) -> tuple[float, 
     lead = min(min(found), start + 5.0) if found else start  # a long silent opening is more likely a problem than intent
     if lead - start > 0.3:
         start = lead - 0.15
-    if end - start < SHORTEST:
-        start = max(0.0, end - SHORTEST)
+    if end - start < shortest:
+        start = max(0.0, end - shortest)
+    if min_s and end - start < min(min_s, hi):  # the clip was ended early (the climax settled): the campaign wants more, if there is any
+        end = min(dur, start + min(min_s, hi))
+    if end - start > hi:  # the climax trim or the sound opening can leave more than the campaign allows
+        start = end - hi
     return round(start, 2), round(end, 2)
 
 
@@ -152,14 +160,15 @@ def pick_hook(db: np.ndarray | None, words: list, a: float, b: float) -> tuple[f
 
 
 def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, quote: bool = False, sound: bool = False,
-          choice: str = "", hook: bool = False) -> dict:
+          choice: str = "", hook: bool = False, min_s: float = 0, max_s: float = 0) -> dict:
     """The pre-edit on a clip's edit (start/end in source seconds; words and db from edit['start']).
-    choice: the sound to use on big moments (Settings), "" to pick one by the moment."""
+    choice: the sound to use on big moments (Settings), "" to pick one by the moment. min_s, max_s: a campaign's
+    length rules (best_window); the teaser counts toward the length, so it's left out when it wouldn't fit."""
     e = dict(edit)
     if e.get("preedit_version", 1 if e.get("preedited") else 0) >= VERSION:
         return e
     dur = e["end"] - e["start"]
-    a, b = best_window(db, words, dur)
+    a, b = best_window(db, words, dur, min_s, max_s)
     e["start"], e["end"] = round(e["start"] + a, 3), round(e["start"] + b, 3)
     texts = [t for t in e.get("texts") or [] if not (t.get("box") or t.get("headline"))]
     if headline_text:
@@ -186,7 +195,7 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
         e["punch"] = [round(edit["start"] + peak - 0.15, 3), round(edit["start"] + min(b, peak + 1.4), 3)]
     if hook and not e.get("hook"):
         h = pick_hook(db, words, a, b)
-        if h:
+        if h and (not max_s or b - a + h[1] - h[0] <= max_s):
             e["hook"] = [round(edit["start"] + h[0], 3), round(edit["start"] + h[1], 3)]
     e["preedited"], e["preedit_version"] = True, VERSION
     return e

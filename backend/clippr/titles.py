@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import zlib
 
+from .describe import has_name
 from .grade import arousal
 from .moments import HYPE
 
@@ -77,8 +78,9 @@ def best_quote(words: list, peak: float | None = None) -> tuple[str, float] | No
     return best if best and best[1] >= 5 else None
 
 
-def make_title(words: list, creator: str | None, peak: float | None = None) -> tuple[str, bool]:
-    """(title, is a quote). words: the transcript (start, end, text); peak: seconds of the big moment, if known."""
+def make_title(words: list, creator: str | None, peak: float | None = None, names: list[str] = ()) -> tuple[str, bool]:
+    """(title, is a quote). words: the transcript (start, end, text); peak: seconds of the big moment, if known.
+    names: what a campaign wants named on the video; any the title doesn't say are added."""
     said = " ".join(w.text for w in words)
     mood = _mood(said)
     quote = best_quote(words, peak)
@@ -90,7 +92,12 @@ def make_title(words: list, creator: str | None, peak: float | None = None) -> t
             if creator:
                 line = re.sub(re.escape(creator), creator, line, flags=re.I)
         line = line[:1].upper() + line[1:]
-        return f"“{line}” {EMOJI[_mood(line) if _mood(line) != 'plain' else mood]}", True
+        title = f"“{line}” {EMOJI[_mood(line) if _mood(line) != 'plain' else mood]}"
+        missing = [n for n in names if not has_name(title, n)]
+        return (f"{' and '.join(missing)}: {title}" if missing else title), True
     options = SUMMARIES[mood]
     pick = options[zlib.crc32(said.encode()) % len(options)]  # varied across clips, the same for one clip every time
-    return pick.format(n=(creator or "The streamer").strip()), False
+    who = (creator or "The streamer").strip()
+    if not all(has_name(who, n) for n in names):  # the campaign's name for the streamer is the one on screen
+        who = " and ".join(names)
+    return pick.format(n=who), False
