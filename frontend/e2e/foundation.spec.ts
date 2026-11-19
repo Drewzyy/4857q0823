@@ -18,6 +18,7 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   await expect(card.getByText(/Deletes in 30 days/)).toBeVisible();
 
   // The preview plays the real rendered file.
+  await card.getByRole("button", { name: "Play preview" }).click();  // players load only when asked: the page stays fast
   const video = card.locator("video");
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1 && v.duration > 10)).toBe(true);
   expect(await video.evaluate((v: HTMLVideoElement) => v.videoHeight)).toBe(1920);
@@ -128,6 +129,7 @@ test("the API refuses requests without the window token", async ({ request }) =>
 test("edit the title, its style and the caption words in the video editor", async ({ page }) => {
   await page.goto("/ready");
   const card = page.locator(".card", { hasText: "He did NOT just say that" }).first();
+  await card.getByRole("button", { name: "Play preview" }).click();
   const video = card.locator("video");
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1)).toBe(true);
   const before = await video.getAttribute("src");
@@ -146,7 +148,12 @@ test("edit the title, its style and the caption words in the video editor", asyn
   await panel.getByRole("button", { name: "Re-render with changes" }).click();
   await expect(page.getByText(/Re-rendering\. The new version/)).toBeVisible();
   await page.goto("/ready");
-  await expect.poll(async () => page.locator(".card", { hasText: "He did NOT just say that" }).first().locator("video").getAttribute("src"), { timeout: 40_000 }).not.toBe(before);
+  await expect.poll(async () => {
+    const c = page.locator(".card", { hasText: "He did NOT just say that" }).first();
+    const play = c.getByRole("button", { name: "Play preview" });
+    if (await play.isVisible()) await play.click();
+    return c.locator("video").getAttribute("src", { timeout: 2000 }).catch(() => before);
+  }, { timeout: 40_000 }).not.toBe(before);
   // Fix a caption word: applies to every page.
   await page.goto("/editor");
   await page.getByRole("link", { name: /He did NOT just say that/ }).first().click();
@@ -334,6 +341,28 @@ test("long-form: paste a link or drop in a file", async ({ page }) => {
   if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
   await page.getByRole("button", { name: "Remove podcast-ep-12" }).click();
   await expect(page.getByText("podcast-ep-12", { exact: true })).toHaveCount(0);
+});
+
+test("ready to upload: new clips wait behind a button instead of moving the page", async ({ page }) => {
+  // After the first look, one more clip shows up, as if it were made while you were reviewing.
+  let calls = 0;
+  await page.route(/\/api\/clips\?status=ready$/, async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    calls += 1;
+    if (calls === 1) return route.fulfill({ response: res, json: body });
+    const all = await (await route.fetch({ url: route.request().url().replace("status=ready", "status=all") })).json();
+    await route.fulfill({ response: res, json: [{ ...all[0], id: 999999, title: "A clip made just now" }, ...body] });
+  });
+  await page.goto("/ready");
+  await expect(page.locator(".card").first()).toBeVisible();
+  const before = await page.locator(".card h2").allTextContents();
+  const button = page.getByRole("button", { name: /^1 new clip$/ });
+  await expect(button).toBeVisible({ timeout: 25_000 });  // the next background refresh found it
+  expect(await page.locator(".card h2").allTextContents()).toEqual(before);  // the page didn't move
+  await button.click();
+  await expect(button).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "A clip made just now" })).toBeVisible();
 });
 
 test("ready to upload: filter by grade and put the best first", async ({ page }) => {

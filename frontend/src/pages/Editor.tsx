@@ -7,7 +7,7 @@ import { Empty, ErrorNote, Loading, relTime, useToast } from "../components/ui";
 import { EditorExtras, LayerPreview, useLibrary } from "../components/EditorExtras";
 import { GradeBadge, GradeCard } from "../components/GradeBadge";
 import { VideoTextPanel } from "../components/VideoTextPanel";
-import { SoundsCard } from "../components/SoundsCard";
+import { HookCard, SoundsCard } from "../components/SoundsCard";
 
 const FONTS: [FontKey, string][] = [["montserrat", "Montserrat Black"], ["anton", "Anton"], ["bebas", "Bebas Neue"], ["poppins", "Poppins ExtraBold"]];
 const SWATCHES = ["#FFFFFF", "#FFE500", "#F97316", "#22C55E", "#38BDF8", "#EC4899", "#000000"];
@@ -447,6 +447,8 @@ function EditorBody({ data }: { data: EditorData }) {
           <GradeCard grade={data.grade} />
 
           <EditorExtras e={e} patch={patch} at={out} outLen={outLen} toast={toast} />
+
+          <HookCard e={e} patch={patch} at={t} seek={seek} />
 
           <SoundsCard e={e} patch={patch} at={t} seek={seek} toast={toast} />
 

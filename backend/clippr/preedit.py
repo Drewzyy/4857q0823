@@ -24,7 +24,7 @@ from .describe import clean_title
 from .grade import arousal
 from .media.facecam import CAM_SHARE
 
-VERSION = 2  # 2: sound effects, quote headlines, up to 45 s
+VERSION = 3  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front
 STEP = 0.1
 LONGEST = 45.0      # trimmed when longer than this (half the second batch of top clips ran 35 to 50 s)
 TARGET = 34.0       # length of the trimmed clip: room for the setup, still short enough to finish
@@ -124,8 +124,51 @@ def auto_sound(db: np.ndarray | None, a: float, b: float, speech: str) -> tuple[
     return "boom", round(peak, 2)
 
 
+HOOK_MIN, HOOK_MAX = 3.0, 6.0
+
+
+def pick_hook(db: np.ndarray | None, words: list, a: float, b: float) -> tuple[float, float] | None:
+    """The best few seconds of [a, b) (seconds from the clip's start) to show first, or None when the clip already
+    opens on its best part or nothing stands out. Scored on the reaction (loudness against the clip's own level,
+    how sharp the spike is) and on what's said (reaction words, fast talking). Snapped to whole words."""
+    from .moments import HYPE
+    if db is None or b - a < 15:
+        return None
+    i, j = int(a / STEP), min(len(db), int(b / STEP))
+    level = db[i:j] - np.median(db[i:j])
+
+    def score(s0: float, s1: float) -> float:
+        seg = level[int((s0 - a) / STEP):int((s1 - a) / STEP)]
+        if not len(seg):
+            return -1e9
+        said = " ".join(w.text for w in words if s0 <= w.start < s1)
+        return (float(np.percentile(seg, 90)) + 0.5 * float(seg.mean()) + 4 * len(HYPE.findall(said))
+                + 1.5 * min(3.0, sum(1 for w in words if s0 <= w.start < s1) / max(1.0, s1 - s0)))
+
+    opening = score(a, a + 5)
+    best, at = -1e9, None
+    for t in np.arange(a + 6, b - HOOK_MIN, 0.5):  # never the opening itself: that's already first
+        for length in (4.0, 5.0, 6.0):
+            if t + length <= b:
+                v = score(t, t + length)
+                if v > best:
+                    best, at = v, (float(t), float(t + length))
+    if at is None or best < opening + 3 or float(np.percentile(level, 99)) < 6:
+        return None  # the opening is as good, or the clip is flat: a hook wouldn't earn its place
+    s0, s1 = at
+    # Whole words: start on the word nearest the window's start, end after the word running at its end.
+    starts = [w.start for w in words if s0 - 1 <= w.start <= s0 + 1]
+    if starts:
+        s0 = max(a, min(starts, key=lambda x: abs(x - at[0])) - 0.1)
+    ends = [w.end for w in words if s1 - 1 <= w.end <= s1 + 1.5]
+    if ends:
+        s1 = min(b, min(ends, key=lambda x: abs(x - at[1])) + 0.15)
+    s1 = min(s1, s0 + HOOK_MAX + 0.5)
+    return (round(s0, 2), round(s1, 2)) if s1 - s0 >= HOOK_MIN else None
+
+
 def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, quote: bool = False, sound: bool = False,
-          choice: str = "") -> dict:
+          choice: str = "", hook: bool = False) -> dict:
     """The pre-edit on a clip's edit (start/end in source seconds; words and db from edit['start']).
     choice: the sound to use on big moments (Settings), "" to pick one by the moment."""
     e = dict(edit)
@@ -138,12 +181,12 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     if headline_text:
         stacked = e.get("layout") == "stacked" and e.get("cam")
         if quote:  # white words across the middle, above where the captions run
-            texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(b - a + 1, 2), "y_percent": QUOTE_Y,
+            texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(b - a + HOOK_MAX + 2, 2), "y_percent": QUOTE_Y,
                              "size": QUOTE_SIZE, "color": "#FFFFFF", "font": "poppins", "all_caps": False, "outline": 5, "headline": True})
         else:
             # With the facecam on top, the headline sits on the seam between face and gameplay, as the top gaming clips do.
             y = round(CAM_SHARE * 100) if stacked else HEADLINE_Y
-            texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(b - a + 1, 2), "y_percent": y, "size": HEADLINE_SIZE,
+            texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(b - a + HOOK_MAX + 2, 2), "y_percent": y, "size": HEADLINE_SIZE,
                              "color": "#141414", "font": "poppins", "all_caps": False, "outline": 0, "box": True, "headline": True})
         e["hide_title"] = True
     if sound and not e.get("sounds"):
@@ -154,6 +197,10 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
                 name, when = choice, (when + 1.5 if name == "riser" else when)
             e["sounds"] = [{"name": name, "at": round(edit["start"] + when, 3), "volume": 0.6}]
     e["texts"] = texts[:20]
+    if hook and not e.get("hook"):
+        h = pick_hook(db, words, a, b)
+        if h:
+            e["hook"] = [round(edit["start"] + h[0], 3), round(edit["start"] + h[1], 3)]
     e["preedited"], e["preedit_version"] = True, VERSION
     return e
 

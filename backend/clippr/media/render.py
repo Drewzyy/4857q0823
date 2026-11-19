@@ -48,7 +48,7 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
            overlay_dir: Path | None = None, zoom: float = 1.0, pan: tuple[float, float] = (0.5, 0.5), speed: float = 1.0,
            video_height: float = 0.0, cam: list[float] | None = None, bottom: Path | None = None,
            gaps: list[tuple[float, float]] | None = None, layers: list[Layer] = (), use_hardware: bool = True,
-           sounds: list[tuple[Path, float, float]] = ()) -> Path:
+           sounds: list[tuple[Path, float, float]] = (), hook: tuple[float, float] | None = None) -> Path:
     """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in).
     video_height: how much of the frame's height the sharp video fills (0.45 = 45%). A wide stream is trimmed at
     the sides (where pan says) to get there; 0 or anything below the stream's full-width height keeps it whole.
@@ -73,15 +73,17 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
     # stream's frame rate wobbles (counting frames instead drifted by seconds on Twitch and Kick footage).
     src_v, pre = "[0:v]", ""
     keep: list[tuple[float, float]] = []
-    if gaps:
+    if gaps or hook:
         total = duration if duration is not None else (info.duration or 0.0)
         pos = 0.0
-        for a, b in sorted(gaps):
+        for a, b in sorted(gaps or []):
             if a > pos + 0.04:
                 keep.append((pos, min(a, total)))
             pos = max(pos, b)
         if total > pos + 0.04:
             keep.append((pos, total))
+        if hook:  # the hook (seconds from `start`) plays first, then the clip from its start
+            keep.insert(0, (max(0.0, hook[0]), min(total, hook[1])))
         n = len(keep)
         pre = f"[0:v]split={n}" + "".join(f"[vk{i}]" for i in range(n)) + ";" if n > 1 else ""
         for i, (a, b) in enumerate(keep):

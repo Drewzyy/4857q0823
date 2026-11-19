@@ -87,15 +87,26 @@ class OverlaySettings(Strict):
 
 
 class DestinationSettings(Strict):
+    # Which kinds of clips this page takes (a streamer's kind, set under Source Accounts): regular, gaming, podcast.
+    content_kinds: list[Literal["regular", "gaming", "podcast"]] = Field(default_factory=lambda: ["regular", "gaming", "podcast"])
+    postiz_integration_id: str = Field("", max_length=80)  # this page's channel in Postiz
+    # Auto-post: approved, safe clips go out without your phone approval. Off unless you turn it on, which the app
+    # allows only after 5 reviewed posts on this page went out fine.
+    auto_post: bool = False
+    daily_cap: int = Field(3, ge=1, le=20)
     default_caption: str = Field("", max_length=2200)
     hashtags: list[str] = Field(default_factory=list, max_length=30)
     format: ExportFormat = Field(default_factory=ExportFormat)
     overlay: OverlaySettings = Field(default_factory=OverlaySettings)
 
 
-def default_destination_settings(platform: str) -> dict:
+def default_destination_settings(platform: str, handle: str = "") -> dict:
+    from .routing import DEFAULT_KINDS
     s = DestinationSettings()
     s.format.fps = 60  # keep smooth source footage smooth; lower-fps sources are never upsampled
+    kinds = DEFAULT_KINDS.get(handle.lstrip("@").lower())
+    if kinds:
+        s.content_kinds = kinds
     return s.model_dump()
 
 
@@ -121,6 +132,7 @@ class ProcessingSettings(Strict):
     max_concurrent_jobs: int = Field(2, ge=1, le=16)
     cut_dead_air: bool = True  # cut stretches with no sound out of new clips
     viral_preedit: bool = True  # headline, strongest stretch, open on sound (see preedit.py)
+    hook_first: bool = True  # show the clip's best few seconds first, then play it from the start
     sound_effects: Literal["off", "auto"] = "auto"  # one sound effect on the biggest moment of each new clip
     auto_sound: str = Field("", max_length=40, pattern=r"^(|[a-z_]{1,30}|lib:\d{1,9})$")  # "" = picked by the moment
     hardware_encoding: bool = True  # render on the graphics card when this computer has a working video encoder
@@ -130,7 +142,24 @@ class IntakeSettings(Strict):
     clipboard: bool = True  # a copied TikTok / YouTube Shorts video link is made into a clip
 
 
+class SafetySettings(Strict):
+    """Your blocklist, applied to every new clip on top of the built-in checks (see safety.py)."""
+    banned_words: list[str] = Field(default_factory=list, max_length=500)
+    banned_scenes: list[str] = Field(default_factory=list, max_length=200)  # phrases in what's said or the clip's titles
+    banned_games: list[str] = Field(default_factory=list, max_length=100)  # games whose clips never go out
+
+
+class PostingSettings(Strict):
+    postiz_url: str = Field("https://api.postiz.com", max_length=300, pattern=r"^https?://[^\s]+$")
+    auto_post_kill_switch: bool = False  # on: nothing posts by itself, whatever each page's Auto-post says
+    mcp_enabled: bool = True  # the local bridge Muse connects to (127.0.0.1 only, token required)
+    mcp_port: int = Field(47821, ge=1024, le=65535)
+    min_virality: int = Field(50, ge=0, le=100)  # clips scoring lower don't go to review
+
+
 class AppSettings(Strict):
+    safety: SafetySettings = Field(default_factory=SafetySettings)
+    posting: PostingSettings = Field(default_factory=PostingSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
     captions: CaptionEngineSettings = Field(default_factory=CaptionEngineSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
@@ -215,6 +244,8 @@ class ClipEdit(Strict):
     layers: list[LayerEdit] = Field(default_factory=list, max_length=20)
     hide_title: bool = False  # the page's own title is left off (a headline in texts replaces it)
     sounds: list[SoundEdit] = Field(default_factory=list, max_length=20)
+    # A few seconds (source seconds) shown first as a teaser, then the clip plays from its start.
+    hook: list[float] | None = Field(None, min_length=2, max_length=2)
     preedited: bool = False  # Vyral's viral pre-edit has been applied (see preedit.py)
     preedit_version: int = Field(0, ge=0)  # which version of it; clips get a newer version once
 

@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .api import accounts, analytics, clips, inbox, library, longform, notifications, streamers, system, updates
+from .api import posting as posting_api
 from .api.system import load_settings
 from .fetch import Fetcher, YtDlpFetcher
 from .media.transcribe import Transcriber, WhisperTranscriber
@@ -41,6 +42,7 @@ class AppContext:
     transcriber: Transcriber = None  # type: ignore[assignment]
     pipeline: Any = None
     inbox: Any = None
+    mcp: Any = None
 
 
 def build_context(config: Config, secrets: SecretStore | None = None, fetcher=None, transcriber=None) -> AppContext:
@@ -63,6 +65,10 @@ def build_context(config: Config, secrets: SecretStore | None = None, fetcher=No
     from .discord_inbox import DiscordInbox
 
     ctx.inbox = DiscordInbox(ctx)
+    from . import mcp, posting
+
+    posting.register(ctx)
+    ctx.mcp = mcp.Server(ctx)
 
     def heavy_limit() -> int:
         with database.session() as s:
@@ -87,7 +93,9 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
             ctx.inbox.start()
             ctx.jobs.enqueue("clips.restore", {}, max_attempts=1)  # brings back page videos a past update lost
             ctx.jobs.enqueue("clips.preedit", {}, max_attempts=1)  # clips made before the pre-edit get it once
+            ctx.mcp.start()  # the local bridge for Muse (Settings can turn it off)
         yield
+        ctx.mcp.stop()
         ctx.inbox.stop()
         ctx.jobs.stop()
 
@@ -139,7 +147,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         log.exception("unhandled error")
         return JSONResponse({"error": {"code": "internal", "message": "Something went wrong. Details are in the app log."}}, status_code=500)
 
-    for r in (accounts.router, streamers.router, library.router, longform.router, system.router, clips.router, updates.router, analytics.router, inbox.router, notifications.router):
+    for r in (accounts.router, streamers.router, library.router, longform.router, system.router, clips.router, updates.router, analytics.router, inbox.router, notifications.router, posting_api.router):
         app.include_router(r, prefix="/api")
 
     dist = cfg.frontend_dist

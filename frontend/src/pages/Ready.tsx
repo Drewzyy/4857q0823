@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle2, Clapperboard, Clock, Copy, Download, ExternalLink, FolderDown, Trash2, Type, Undo2 } from "lucide-react";
+import { ArrowUp, Check, CheckCircle2, Clapperboard, Clock, Copy, Download, ExternalLink, FolderDown, Play, Trash2, Type, Undo2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, PLATFORM_LABEL, type ClipOutputT, type ClipT } from "../lib/api";
 import { bytes, ConfirmModal, Empty, ErrorNote, Loading, PlatformBadge, relTime, useToast } from "../components/ui";
@@ -30,22 +30,32 @@ export default function Ready() {
   const qc = useQueryClient();
   const toast = useToast();
   const clips = useQuery({
-    queryKey: ["clips", tab], queryFn: () => api.clips(tab),
-    // Poll quickly while a video is being re-rendered so the new version appears right away.
-    refetchInterval: (q) => (q.state.data?.some((c) => c.outputs.some((o) => o.render_state === "rendering")) ? 2500 : 15_000),
+    queryKey: ["clips", tab], queryFn: () => api.clips(tab), refetchOnWindowFocus: false,
+    // A little faster while a video re-renders, so the new version shows up soon after it's done.
+    refetchInterval: (q) => (q.state.data?.some((c) => c.outputs.some((o) => o.render_state === "rendering")) ? 5000 : 15_000),
   });
   const [removing, setRemoving] = useState<ClipT | null>(null);
-  const refresh = () => ["clips", "dashboard"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const refresh = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ["clips", tab], exact: true });
+    void qc.invalidateQueries({ queryKey: ["dashboard"] });
+  }, [qc, tab]);
   // Grades to show (none ticked = all) and whether the best come first. Remembered between visits.
   const [grades, setGrades] = useState<string[]>(() => saved("ready.grades", []));
   const [bestFirst, setBestFirst] = useState<boolean>(() => saved("ready.bestFirst", false));
   useEffect(() => save("ready.grades", grades), [grades]);
   useEffect(() => save("ready.bestFirst", bestFirst), [bestFirst]);
-  const all = clips.data ?? [];
-  const tierOf = (c: ClipT) => c.grade?.tier ?? "none";
-  const counts = Object.fromEntries([...TIERS, "none"].map((t) => [t, all.filter((c) => tierOf(c) === t).length]));
-  const shown = grades.length ? all.filter((c) => grades.includes(tierOf(c))) : all;
-  const list = bestFirst ? [...shown].sort((a, b) => (b.grade?.score ?? -1) - (a.grade?.score ?? -1)) : shown;
+  // Clips made while you're reviewing wait behind a "new clips" button instead of pushing the page around.
+  const [seen, setSeen] = useState<Set<number> | null>(null);
+  useEffect(() => setSeen(null), [tab]);
+  useEffect(() => { if (!seen && clips.data) setSeen(new Set(clips.data.map((c) => c.id))); }, [seen, clips.data]);
+  const fresh = useMemo(() => (seen ? (clips.data ?? []).filter((c) => !seen.has(c.id)) : []), [seen, clips.data]);
+  const showNew = () => { setSeen(new Set((clips.data ?? []).map((c) => c.id))); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const all = useMemo(() => (seen ? (clips.data ?? []).filter((c) => seen.has(c.id)) : clips.data ?? []), [seen, clips.data]);
+  const counts = useMemo(() => Object.fromEntries([...TIERS, "none"].map((t) => [t, all.filter((c) => (c.grade?.tier ?? "none") === t).length])), [all]);
+  const list = useMemo(() => {
+    const shown = grades.length ? all.filter((c) => grades.includes(c.grade?.tier ?? "none")) : all;
+    return bestFirst ? [...shown].sort((a, b) => (b.grade?.score ?? -1) - (a.grade?.score ?? -1)) : shown;
+  }, [all, grades, bestFirst]);
   const toggle = (t: string) => setGrades((g) => (g.includes(t) ? g.filter((x) => x !== t) : [...g, t]));
 
   return (
@@ -71,6 +81,10 @@ export default function Ready() {
           <label className="check small"><input type="checkbox" checked={bestFirst} onChange={(e) => setBestFirst(e.target.checked)} />Best first</label>
         </div>
       )}
+      {fresh.length > 0 && (
+        <button className="btn primary sm" style={{ position: "sticky", top: 8, zIndex: 5, margin: "0 auto 12px", display: "flex" }} onClick={showNew}>
+          <ArrowUp size={13} />{fresh.length} new clip{fresh.length === 1 ? "" : "s"}</button>
+      )}
       {clips.error && <ErrorNote error={clips.error} />}
       {clips.isLoading ? <Loading /> : all.length > 0 && list.length === 0 ? (
         <div className="card"><Empty icon={<Download size={28} />} title="No clips with those grades">
@@ -81,7 +95,7 @@ export default function Ready() {
         </Empty></div>
       ) : (
         <div className="stack" style={{ gap: 16 }}>
-          {list.map((c) => <ClipCard key={c.id} clip={c} tab={tab} onChange={refresh} onRemove={() => setRemoving(c)} toast={toast} />)}
+          {list.map((c) => <ClipCard key={c.id} clip={c} tab={tab} onChange={refresh} onRemove={setRemoving} toast={toast} />)}
         </div>
       )}
       <ConfirmModal open={!!removing} title="Delete this clip?" danger confirmLabel="Delete"
@@ -94,7 +108,8 @@ export default function Ready() {
   );
 }
 
-function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: Tab; onChange: () => void; onRemove: () => void; toast: ReturnType<typeof useToast> }) {
+// Memoized: a new clip arriving or another card changing doesn't redraw this one.
+const ClipCard = memo(function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: Tab; onChange: () => void; onRemove: (c: ClipT) => void; toast: ReturnType<typeof useToast> }) {
   const outputs = clip.outputs.filter((o) => tab === "expired" || o.status === tab);
   const [active, setActive] = useState(outputs[0]?.id);
   const current = outputs.find((o) => o.id === active) ?? outputs[0];
@@ -106,8 +121,7 @@ function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: 
           <div className="empty" style={{ aspectRatio: "9 / 16", background: "var(--bg-2)", borderRadius: 10, justifyContent: "center" }}>
             <span className="spinner" /><span className="small">Re-rendering with your changes…</span></div>
         ) : current?.available ? (
-          <video key={`${current.id}-${current.version}`} src={api.mediaUrl(current.id, false, current.version)} controls preload="metadata" playsInline
-            style={{ width: "100%", aspectRatio: `${current.width ?? 9} / ${current.height ?? 16}`, background: "#000", borderRadius: 10 }} />
+          <Preview key={`${current.id}-${current.version}`} o={current} />
         ) : (
           <div className="empty" style={{ aspectRatio: "9 / 16", background: "var(--bg-2)", borderRadius: 10, justifyContent: "center" }}>
             <Clock size={22} /><span className="small">Video deleted after {daysLeftLabel(clip)}</span></div>
@@ -119,7 +133,7 @@ function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: 
           <h2 className="ellipsis" style={{ flex: 1, minWidth: 0 }}>{clip.title}</h2>
           {clip.creator && <span className="chip"><span className="dot" style={{ background: clip.creator.color }} />{clip.creator.name}</span>}
           {clip.editable && <Link className="btn sm" to={`/editor/${clip.id}`}><Clapperboard size={13} />Edit video</Link>}
-          <button className="btn ghost icon" aria-label="Delete clip" onClick={onRemove}><Trash2 size={14} /></button>
+          <button className="btn ghost icon" aria-label="Delete clip" onClick={() => onRemove(clip)}><Trash2 size={14} /></button>
         </div>
         <div className="row wrap small muted" style={{ gap: 14 }}>
           {ref?.source && <span>From <a href={ref.url} target="_blank" rel="noopener noreferrer">@{ref.source.username}'s post <ExternalLink size={11} /></a></span>}
@@ -145,7 +159,7 @@ function ClipCard({ clip, tab, onChange, onRemove, toast }: { clip: ClipT; tab: 
       </div>
     </div>
   );
-}
+});
 
 function daysLeftLabel(c: ClipT) {
   const days = Math.round((new Date(c.expires_at).getTime() - new Date(c.created_at).getTime()) / 86400000);
@@ -186,6 +200,23 @@ function PostLink({ o, onChange, toast }: { o: ClipOutputT; onChange: () => void
   );
 }
 
+/** A cover picture with a play button; the video player only loads when you press play. Loading a player for
+ *  every clip at once is what made this page crawl. */
+function Preview({ o }: { o: ClipOutputT }) {
+  const [playing, setPlaying] = useState(false);
+  const style = { width: "100%", aspectRatio: `${o.width ?? 9} / ${o.height ?? 16}`, background: "#000", borderRadius: 10 } as const;
+  if (playing) return <video src={api.mediaUrl(o.id, false, o.version)} controls autoPlay playsInline style={style} />;
+  return (
+    <button className="preview-cover" aria-label="Play preview" onClick={() => setPlaying(true)}
+      style={{ ...style, position: "relative", padding: 0, border: 0, cursor: "pointer", overflow: "hidden", display: "block" }}>
+      {o.has_thumbnail && <img src={api.thumbUrl(o.id, false, o.version)} alt="" loading="lazy" decoding="async"
+        style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+      <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+        <span style={{ background: "rgba(0,0,0,.55)", borderRadius: 999, padding: 14, display: "grid" }}><Play size={22} color="#fff" fill="#fff" /></span></span>
+    </button>
+  );
+}
+
 function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
   const [title, setTitle] = useState(o.title);
   const [desc, setDesc] = useState(o.description);
@@ -193,7 +224,13 @@ function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT
   const [busy, setBusy] = useState(false);
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: api.health, staleTime: Infinity });
   const dirty = title !== o.title || desc !== o.description;
-  useEffect(() => { setTitle(o.title); setDesc(o.description); }, [o.title, o.description]);
+  // A background refresh never overwrites what you're typing: only take the saved text when you haven't changed it.
+  const [base, setBase] = useState({ title: o.title, description: o.description });
+  useEffect(() => {
+    if (title === base.title && desc === base.description) { setTitle(o.title); setDesc(o.description); }
+    setBase({ title: o.title, description: o.description });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [o.title, o.description]);
 
   const copy = async (text: string, what: string) => {
     try { await navigator.clipboard.writeText(text); setCopied(what); setTimeout(() => setCopied(null), 1500); }

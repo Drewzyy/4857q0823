@@ -78,6 +78,7 @@ def sample(src: Path, start: float, dur: float) -> tuple[list[list[tuple[int, in
     """Faces in a dozen frames spread over the cut, and the frame size they were found at."""
     try:
         import cv2
+        cv2.setNumThreads(2)  # face finding shares the computer with the app and the encoder
     except ImportError:
         return [], None
     frames: list = []

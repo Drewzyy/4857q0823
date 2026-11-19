@@ -47,6 +47,7 @@ class Creator(Base):
     # User confirmed they're allowed to clip this creator (e.g. part of their clipping program).
     clip_permission: Mapped[bool] = mapped_column(Boolean, default=False)
     facecam: Mapped[list[Any] | None] = mapped_column(nullable=True)  # [x, y, w, h] shares of the stream, set in the editor
+    content_kind: Mapped[str] = mapped_column(String(16), default="regular")  # regular | gaming | podcast: picks the pages
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
@@ -266,6 +267,7 @@ class Clip(Base):
     captions_note: Mapped[str] = mapped_column(Text, default="")
     edit: Mapped[dict[str, Any]] = mapped_column(default=dict)  # video editor: trim, zoom/pan, speed, extra texts
     grade: Mapped[dict[str, Any] | None] = mapped_column(nullable=True)  # grade.Grade: S to D and why
+    safety: Mapped[dict[str, Any] | None] = mapped_column(nullable=True)  # safety.check(): pass | review | fail, and why
     status: Mapped[str] = mapped_column(String(16), default="ready")  # ready | expired
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
@@ -296,6 +298,13 @@ class ClipOutput(Base):
     render_state: Mapped[str] = mapped_column(String(16), default="ready")  # ready | rendering | failed
     render_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     post_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # where you uploaded it (for analytics)
+    review: Mapped[str] = mapped_column(String(16), default="pending")  # pending | approved | rejected
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    reviewed_by: Mapped[str] = mapped_column(String(40), default="")  # "you" or "muse"
+    scheduled_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    postiz_post_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    postiz_state: Mapped[str | None] = mapped_column(String(24), nullable=True)  # draft | queued | published | error
+    postiz_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     uploaded_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 

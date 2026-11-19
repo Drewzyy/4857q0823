@@ -134,3 +134,36 @@ def test_your_own_sounds_upload_list_and_render(env, tmp_path):
     assert c.put("/api/settings", json={"processing": {"auto_sound": "../x"}}).status_code == 422
     Path(ctx.pipeline._library_files([lid])[lid][0]).unlink()
     assert ctx.pipeline._library_files([lid]) == {}  # removed from disk: skipped at render, never a crash
+
+
+def test_the_best_seconds_become_the_hook():
+    db = np.full(300, -30.0)  # 30 s, calm, then the big moment at 20 s
+    db[200:240] = -6
+    words = [Word(t, t + 0.3, "no way" if 200 <= t * 10 < 240 else "so") for t in np.arange(0.2, 29.5, 0.5)]
+    h = preedit.pick_hook(db, words, 0, 30)
+    assert h and 19 <= h[0] <= 21 and preedit.HOOK_MIN <= h[1] - h[0] <= preedit.HOOK_MAX + 0.5
+    flat = np.full(300, -30.0)
+    assert preedit.pick_hook(flat, words, 0, 30) is None  # nothing stands out: no hook
+    loud_open = np.full(300, -30.0); loud_open[0:50] = -6
+    assert preedit.pick_hook(loud_open, [], 0, 30) is None  # it already opens on its best part
+    assert preedit.pick_hook(db, words, 0, 12) is None  # too short to need one
+    e = preedit.apply(ClipEdit(start=100, end=130).model_dump(), words, db, "x", hook=True)
+    assert e["hook"] and 119 <= e["hook"][0] <= 121  # in source seconds
+    assert ClipEdit(**e).hook == e["hook"]
+
+
+def test_render_plays_the_hook_then_the_clip_from_the_start(tmp_path):
+    from clippr.media.ffmpeg import probe, run
+    from clippr.media.render import OutputFormat, render
+    src = tmp_path / "src.mp4"  # silent for 6 s, then a loud tone from 6 to 8 s
+    run(["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=10", "-f", "lavfi",
+         "-i", "sine=f=440:d=10,volume='if(between(t,6,8),1,0.001)':eval=frame", "-c:v", "libx264", "-preset", "ultrafast",
+         "-c:a", "aac", str(src)])
+    out = render(src, tmp_path / "o.mp4", OutputFormat(180, 320, 30), duration=10, hook=(6.0, 8.0), use_hardware=False)
+    assert abs(probe(out).duration - 12.0) < 0.2  # 2 s of hook + the whole 10 s
+    import subprocess
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True).stdout
+    x = np.frombuffer(raw, np.int16).astype(float) / 32768
+    rms = lambda a, b: float(np.sqrt(np.mean(x[int(a * 8000):int(b * 8000)] ** 2)))  # noqa: E731
+    assert rms(0.3, 1.7) > 5 * rms(3, 7)  # the loud part plays first...
+    assert rms(8.3, 9.7) > 5 * rms(3, 7)  # ...and again in its place (2 s later than in the source)

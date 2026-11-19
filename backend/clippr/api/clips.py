@@ -41,6 +41,8 @@ def _output(o: ClipOutput) -> dict:
             "has_thumbnail": bool(o.file_path and Path(o.file_path).with_suffix(".jpg").exists()), "uploaded_at": _dt(o.uploaded_at),
             "video_title": o.video_title, "overlay": lenient(OverlaySettings, o.overlay).model_dump(),
             "render_state": o.render_state, "render_error": o.render_error, "post_url": o.post_url,
+            "review": o.review, "review_note": o.review_note, "reviewed_by": o.reviewed_by,
+            "postiz_state": o.postiz_state, "postiz_error": o.postiz_error,
             # Changes whenever the file is re-rendered, so the preview reloads.
             "version": Path(o.file_path).name if o.file_path else None}
 
@@ -59,15 +61,22 @@ def _reference(r: ReferenceVideo | None) -> dict | None:
 @router.get("/clips")
 def list_clips(status: Literal["ready", "uploaded", "expired", "all"] = "ready", s: Session = Depends(db)):
     out = []
-    for c in s.scalars(select(Clip).order_by(Clip.created_at.desc()).limit(300)).unique():
-        outputs = [_output(o) for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == c.id).order_by(ClipOutput.id)).unique()]
-        if status != "all" and not any(o["status"] == status for o in outputs):
-            continue
+    q = select(Clip).order_by(Clip.created_at.desc()).limit(300)
+    if status != "all":  # filtered in the database, not after loading every clip
+        q = q.where(Clip.id.in_(select(ClipOutput.clip_id).where(ClipOutput.status == status)))
+    clips = list(s.scalars(q).unique())
+    # Every clip's pages in one query (this list is polled while clips are being made).
+    by_clip: dict[int, list[ClipOutput]] = {}
+    if clips:
+        for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id.in_([c.id for c in clips])).order_by(ClipOutput.id)).unique():
+            by_clip.setdefault(o.clip_id, []).append(o)
+    for c in clips:
+        outputs = [_output(o) for o in by_clip.get(c.id, [])]
         out.append({"id": c.id, "title": c.title, "status": c.status, "created_at": _dt(c.created_at), "expires_at": _dt(c.expires_at),
                     "creator": {"id": c.creator.id, "name": c.creator.name, "color": c.creator.color} if c.creator else None,
                     "vod_url": c.vod_url, "vod_start": c.vod_start, "vod_end": c.vod_end, "stream_date": _dt(c.stream_date),
                     "captions_text": " ".join(w["text"] for w in (c.words or [])), "has_captions": bool(c.words),
-                    "captions_note": c.captions_note, "editable": _has_footage(c), "grade": c.grade,
+                    "captions_note": c.captions_note, "editable": _has_footage(c), "grade": c.grade, "safety": c.safety,
                     "reference": _reference(c.reference), "outputs": outputs})
     return out
 
@@ -232,10 +241,9 @@ def clip_source(cid: int, s: Session = Depends(db)):
     return FileResponse(_footage(get_or_404(s, Clip, cid, "Clip")), media_type="video/mp4")
 
 
-@router.put("/clips/{cid}/edit")
-def save_edit(cid: int, body: ClipEdit, c=Depends(ctx), s: Session = Depends(db)):
-    """Save the editor's changes and re-render every page of this clip."""
-    clip = get_or_404(s, Clip, cid, "Clip")
+def apply_edit(s: Session, jobs, clip: Clip, body: ClipEdit, by: str = "you") -> int:
+    """Save an edit (from the editor or from Muse) and re-render every page of the clip. The transcript is kept,
+    so nothing is transcribed again. An approval was for the exact video, so a changed video needs approving again."""
     if body.end > _footage_seconds(clip) + 0.05 or body.end - body.start < 1:
         raise ApiError(422, "validation", "The clip must be at least 1 second long and inside the downloaded footage")
     from ..media.deadair import relative
@@ -243,13 +251,21 @@ def save_edit(cid: int, body: ClipEdit, c=Depends(ctx), s: Session = Depends(db)
     if kept < 1:
         raise ApiError(422, "validation", "Your cuts leave less than 1 second of clip")
     clip.edit = body.model_dump()
-    outs = _live_outputs(s, cid)
+    outs = _live_outputs(s, clip.id)
     for o in outs:
         o.render_state, o.render_error = "rendering", None
+        if o.review == "approved" and not o.postiz_post_id:
+            o.review = "pending"
     s.flush()
-    c.jobs.enqueue("clip.rerender", {"output_ids": [o.id for o in outs]}, max_attempts=1, session=s)
-    audit(s, "clip.edited", "clip", cid)
-    return {"rendering": len(outs)}
+    jobs.enqueue("clip.rerender", {"output_ids": [o.id for o in outs]}, max_attempts=1, session=s)
+    audit(s, "clip.edited", "clip", clip.id, {"by": by})
+    return len(outs)
+
+
+@router.put("/clips/{cid}/edit")
+def save_edit(cid: int, body: ClipEdit, c=Depends(ctx), s: Session = Depends(db)):
+    """Save the editor's changes and re-render every page of this clip."""
+    return {"rendering": apply_edit(s, c.jobs, get_or_404(s, Clip, cid, "Clip"), body)}
 
 
 class CaptionsIn(BaseModel):

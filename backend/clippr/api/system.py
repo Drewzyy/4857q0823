@@ -22,7 +22,22 @@ router = APIRouter()
 SETTINGS_KEY = "app"
 
 
-def _dir_size(path: Path, limit: int = 200_000) -> int:
+_SIZE_CACHE: dict[str, tuple[float, int]] = {}
+
+
+def _dir_size(path: Path, limit: int = 200_000, max_age: float = 120) -> int:
+    """Disk used by the data folder. Walking every file is slow, and the dashboard asks every few seconds: the
+    answer is kept for two minutes."""
+    import time
+    hit = _SIZE_CACHE.get(str(path))
+    if hit and time.monotonic() - hit[0] < max_age:
+        return hit[1]
+    total = _walk_size(path, limit)
+    _SIZE_CACHE[str(path)] = (time.monotonic(), total)
+    return total
+
+
+def _walk_size(path: Path, limit: int) -> int:
     total, n = 0, 0
     for root, _, files in os.walk(path):
         for f in files:

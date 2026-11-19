@@ -11,6 +11,8 @@ overlay.clean_words (repeats, overlaps, stray punctuation, known filler phrases)
 """
 from __future__ import annotations
 
+import os
+
 import logging
 import threading
 from pathlib import Path
@@ -49,7 +51,9 @@ class WhisperTranscriber:
                     from faster_whisper import WhisperModel
 
                     self.model_dir.mkdir(parents=True, exist_ok=True)
-                    self._models = {name: WhisperModel(name, device="cpu", compute_type="int8", download_root=str(self.model_dir))}
+                    self._models = {name: WhisperModel(name, device="cpu", compute_type="int8", download_root=str(self.model_dir),
+                                                       # leave cores free for the app and the rest of the computer
+                                                       cpu_threads=max(1, (os.cpu_count() or 4) // 2))}
                 except Exception as e:
                     log.exception("speech model %s failed to load", name)
                     raise TranscribeError(f"Couldn't load the speech model ({type(e).__name__}). Check your internet connection for the one-time download.")

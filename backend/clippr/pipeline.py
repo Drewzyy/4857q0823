@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
-from . import describe, events, grade, identify, moments, notify, preedit
+from . import describe, events, grade, identify, moments, notify, preedit, safety
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
@@ -627,7 +627,7 @@ class Pipeline:
             # A long video's own title is about the whole video, not this moment: the moment's line leads instead.
             lead, quote = preedit.plan_headline("" if longform_id else post_title, title, creator_name, " ".join(w.text for w in words))
             framing = preedit.apply(framing, words, self._loudness(source, start, dur), lead, quote, proc.sound_effects == "auto",
-                                    proc.auto_sound)
+                                    proc.auto_sound, proc.hook_first)
         renders: dict[str, Path] = {}
         planned = []
         for did, platform, name, handle, st in dest_info:
@@ -639,8 +639,9 @@ class Pipeline:
                                             work / f"ov{len(renders)}", framing)
             planned.append((did, platform, st, fmt_raw, ov, renders[key]))
 
+        infos = {p: probe(p) for p in {x[5] for x in planned}}  # read before the write starts: FFmpeg is slow, the lock is shared
         with self.ctx.db.session() as s:
-            clip = Clip(reference_id=reference_id, longform_id=longform_id, creator_id=creator_id, title=title, edit=framing,
+            clip = Clip(reference_id=reference_id, longform_id=longform_id, creator_id=creator_id, title=title, edit=framing, safety={"game": game},
                         vod_url=vod_url, vod_start=vod_start, vod_end=vod_end, stream_date=stream_date, status="ready",
                         files_dir=str(clip_dir), source_path=str(source), source_start=start, source_duration=dur,
                         words=[w.to_dict() for w in words], captions_note=captions_note,
@@ -648,7 +649,7 @@ class Pipeline:
             s.add(clip)
             s.flush()
             for did, platform, st, fmt_raw, ov, path in planned:
-                info = probe(path)
+                info = infos[path]
                 ptitle, desc = describe.build(platform, preedit.caption_source(lead, post_title), creator_name, st, stream_date, game)
                 s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=ptitle, description=desc,
                                  video_title=title, overlay=ov, format=fmt_raw,
@@ -701,6 +702,7 @@ class Pipeline:
         rel: list[tuple[float, float]] = []
         layers: list[Layer] = []
         sounds: list = []
+        hook, lead = None, 0.0
         zoom, pan, speed, texts, video_height = 1.0, (0.5, 0.5), 1.0, [], 0.0  # no edit: a clip from before framing was saved
         if edit:
             video_height = edit.get("video_height", 0)  # edits saved before framing existed were fit to frame
@@ -719,19 +721,28 @@ class Pipeline:
             removed = (edit.get("gaps") or [] if edit.get("cut_dead_air") else []) + (edit.get("cuts") or [])
             rel = deadair.relative(removed, start, dur)
 
+            hook = hook_span(edit, start, dur)
+            lead = (hook[1] - hook[0]) / speed if hook else 0.0  # the hook plays first, so the rest starts this much later
+
             def at(t: float) -> float:  # source time from the cut's start to finished-clip time
-                return (t - deadair.removed_before(t, rel)) / speed
-            words = [Word(at(w.start + shift), at(w.end + shift), w.text) for w in words if not deadair.inside(w.start + shift, rel)]
+                return lead + (t - deadair.removed_before(t, rel)) / speed
+            in_hook = (lambda t: hook[0] <= t < hook[1]) if hook else (lambda t: False)
+            hook_words = [Word((w.start + shift - hook[0]) / speed, (w.end + shift - hook[0]) / speed, w.text)
+                          for w in words if in_hook(w.start + shift)] if hook else []
+            words = hook_words + [Word(at(w.start + shift), at(w.end + shift), w.text) for w in words if not deadair.inside(w.start + shift, rel)]
             mine = self._library_files([sfx.library_id(x["name"]) for x in edit.get("sounds") or []])
             for x in edit.get("sounds") or []:
-                if not (start <= x["at"] < start + dur) or deadair.inside(x["at"] - start, rel):
+                if not (start <= x["at"] < start + dur):
                     continue
                 lid = sfx.library_id(x["name"])
-                if lid is None:
-                    sounds.append((sfx.path(x["name"], self._dir("sfx")), at(x["at"] - start), x["volume"]))
-                elif lid in mine:  # a sound removed from the library is skipped
-                    sounds.append((mine[lid][0], at(x["at"] - start), x["volume"]))
-        out_dur = (dur - sum(b - a for a, b in rel)) / speed
+                f = sfx.path(x["name"], self._dir("sfx")) if lid is None else mine[lid][0] if lid in mine else None
+                if f is None:
+                    continue  # a sound removed from the library is skipped
+                if in_hook(x["at"] - start):  # it plays in the hook too
+                    sounds.append((f, (x["at"] - start - hook[0]) / speed, x["volume"]))
+                if not deadair.inside(x["at"] - start, rel):
+                    sounds.append((f, at(x["at"] - start), x["volume"]))
+        out_dur = (dur - sum(b - a for a, b in rel)) / speed + lead
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         placed: list = []
         if use_text:
@@ -743,11 +754,11 @@ class Pipeline:
             use_hardware = load_settings(s).processing.hardware_encoding
         render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan,
                speed=speed, video_height=video_height, cam=cam, bottom=bottom, gaps=rel, layers=layers, use_hardware=use_hardware,
-               sounds=sounds)
+               sounds=sounds, hook=hook)
         cover = 1.0
         if edit and edit.get("thumb_at") is not None:
             t = min(max(edit["thumb_at"] - start, 0.0), dur)
-            cover = (t - deadair.removed_before(t, rel)) / speed
+            cover = lead + (t - deadair.removed_before(t, rel)) / speed
         try:
             thumbnail(out, min(cover, max(out_dur - 0.1, 0)))
         except FFmpegError:
@@ -777,17 +788,24 @@ class Pipeline:
                          words=[(w["start"] + shift, w["end"] + shift, w["text"]) for w in clip.words or []],
                          captions=bool(ov["captions"]["enabled"] and clip.words), title=has_title, title_text=title_text,
                          views=ref.views if ref else None, likes=ref.likes if ref else None, shares=ref.shares if ref else None,
-                         posted_at=ref.posted_at if ref else None, stream_clip=bool(ref and ref.platform in STREAM_CLIP_PLATFORMS))
+                         posted_at=ref.posted_at if ref else None, stream_clip=bool(ref and ref.platform in STREAM_CLIP_PLATFORMS),
+                         hook=hook_span(e, start, dur) if e else None)
+        hook = facts["hook"]
         try:
             db = grade.loudness(facts["source"], facts["start"], facts["dur"], facts["rel"])
+            if hook:  # graded as it plays: the hook first
+                db = np.concatenate([grade.loudness(facts["source"], facts["start"] + hook[0], hook[1] - hook[0]), db])
         except FFmpegError:
             log.exception("grading failed")
             return None
+        lead = (hook[1] - hook[0]) / facts["speed"] if hook else 0.0
 
         def at(t: float) -> float:
-            return (t - deadair.removed_before(t, facts["rel"])) / facts["speed"]
-        words = [(at(a), at(b), w) for a, b, w in facts["words"] if 0 <= a < facts["dur"] and not deadair.inside(a, facts["rel"])]
-        length = (facts["dur"] - sum(b - a for a, b in facts["rel"])) / facts["speed"]
+            return lead + (t - deadair.removed_before(t, facts["rel"])) / facts["speed"]
+        words = ([((a - hook[0]) / facts["speed"], (b - hook[0]) / facts["speed"], w) for a, b, w in facts["words"] if hook[0] <= a < hook[1]]
+                 if hook else [])
+        words += [(at(a), at(b), w) for a, b, w in facts["words"] if 0 <= a < facts["dur"] and not deadair.inside(a, facts["rel"])]
+        length = (facts["dur"] - sum(b - a for a, b in facts["rel"])) / facts["speed"] + lead
         if abs(facts["speed"] - 1) > 1e-3:  # speed changes the clip's timing, not its loudness
             db = db[np.round(np.arange(0, len(db), facts["speed"])).astype(int).clip(0, len(db) - 1)] if len(db) else db
         mo, loop = grade.picture(facts["source"], facts["start"], facts["dur"])
@@ -799,6 +817,30 @@ class Pipeline:
             clip = s.get(Clip, clip_id)
             if clip:
                 clip.grade = result
+        self.check_safety(clip_id)
+        return result
+
+    def check_safety(self, clip_id: int, game: str | None = None) -> dict | None:
+        """Run the pre-post safety check (safety.py) on the clip as it now stands and store it. A failed clip is
+        quarantined: it stays failed through later edits and re-renders, and is logged with why."""
+        with self.ctx.db.session() as s:
+            clip = s.get(Clip, clip_id)
+            if not clip:
+                return None
+            prev = clip.safety or {}
+            game = game if game is not None else prev.get("game", "")
+            outs = s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip_id)).all()
+            e = clip.edit or {}
+            texts = [clip.title, *(t["text"] for t in e.get("texts") or []), *(o.video_title for o in outs), *(o.title for o in outs),
+                     *(o.description for o in outs), clip.reference.title if clip.reference else ""]
+            transformed = bool(clip.words) or any(t.get("headline") or t.get("box") for t in e.get("texts") or [])
+            result = safety.check(permission=clip.creator.clip_permission if clip.creator else None, words=clip.words or [],
+                                  texts=texts, game=game, reupload_untransformed=bool(clip.reference) and not transformed,
+                                  blocklist=load_settings(s).safety.model_dump(), previous=prev)
+            result["game"] = game
+            clip.safety = result
+            if result["status"] == "fail" and prev.get("status") != "fail":
+                audit(s, "clip.quarantined", "clip", clip_id, {"reasons": [f"{f['category']}: {f['reason']}" for f in result["flags"] if f["level"] == "fail"]})
         return result
 
     def _library_files(self, ids: list[int | None]) -> dict[int, tuple[Path, bool]]:
@@ -835,12 +877,12 @@ class Pipeline:
         done = 0
         for cid in ids:
             try:
-                done += self.preedit_clip(cid, proc.sound_effects == "auto", proc.auto_sound)
+                done += self.preedit_clip(cid, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first)
             except Exception:
                 log.exception("pre-edit failed for clip %s; it keeps its current edit", cid)
         return {"preedited": done}
 
-    def preedit_clip(self, cid: int, sound: bool = True, choice: str = "") -> int:
+    def preedit_clip(self, cid: int, sound: bool = True, choice: str = "", hook: bool = True) -> int:
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             if not clip or not clip.source_path or not Path(clip.source_path).exists():
@@ -854,7 +896,7 @@ class Pipeline:
             creator = clip.creator.name if clip.creator else ""
             title = clip.title
         lead, quote = preedit.plan_headline(post_title, title, creator, " ".join(w.text for w in words))
-        new = ClipEdit(**preedit.apply(e, words, self._loudness(source, e["start"], e["end"] - e["start"]), lead, quote, sound, choice)).model_dump()
+        new = ClipEdit(**preedit.apply(e, words, self._loudness(source, e["start"], e["end"] - e["start"]), lead, quote, sound, choice, hook)).model_dump()
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             clip.edit = new
@@ -1046,6 +1088,15 @@ def own_post(s, url: str) -> bool:
 
 def _link_platform(url: str) -> str:
     return "youtube" if "youtu" in url else "instagram" if "instagram.com" in url else "tiktok"
+
+
+def hook_span(edit: dict, start: float, dur: float) -> tuple[float, float] | None:
+    """The edit's hook as seconds from `start`, if it's inside the clip and long enough to mean something."""
+    h = edit.get("hook")
+    if not h:
+        return None
+    a, b = max(0.0, h[0] - start), min(dur, h[1] - start)
+    return (a, b) if b - a >= 1.0 else None
 
 
 def register(ctx: Any) -> Pipeline:

@@ -63,3 +63,25 @@ export function SoundsCard({ e, patch, at, seek, toast }: { e: ClipEditT; patch:
     </div>
   );
 }
+
+/** The hook: a few seconds shown first as a teaser, then the clip plays from its start (source seconds, like the trim). */
+export function HookCard({ e, patch, at, seek }: { e: ClipEditT; patch: (p: Partial<ClipEditT>, key?: string) => void; at: number; seek: (s: number) => void }) {
+  const h = e.hook && e.hook[1] > e.start && e.hook[0] < e.end ? e.hook : null;
+  const canSet = at >= e.start && at + 3 <= e.end;
+  return (
+    <div className="card stack">
+      <div className="row"><h2>Hook</h2><span className="spacer" />
+        <button className="btn sm" disabled={!canSet} title={canSet ? "Uses the 5 seconds from the playhead" : "Move the playhead inside the kept part, 3 s or more before its end"}
+          onClick={() => patch({ hook: [Math.round(at * 100) / 100, Math.round(Math.min(e.end, at + 5) * 100) / 100] })}>Hook from playhead</button>
+        {h && <button className="btn ghost sm" onClick={() => patch({ hook: null })}>No hook</button>}
+      </div>
+      {h ? (
+        <div className="row small" style={{ gap: 8 }}>
+          <span>Plays first: {(h[0] - e.start).toFixed(1)} s to {(h[1] - e.start).toFixed(1)} s of the clip ({(h[1] - h[0]).toFixed(1)} s), then the clip from the start.</span>
+          <button className="btn ghost sm" onClick={() => seek(h[0])}>Watch it</button>
+        </div>
+      ) : <p className="small faint">No hook. The clip plays from its start.</p>}
+      <p className="small faint">The best few seconds up front stop the scroll; the clip then shows how it got there. The preview here plays in order; the saved video has the hook first.</p>
+    </div>
+  );
+}

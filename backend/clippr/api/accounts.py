@@ -459,7 +459,7 @@ def add_destination_draft(body: DestinationDraftIn, s: Session = Depends(db)):
     ids = _dest_ids(s, body.creator_ids if body.creator_ids is not None else ([body.creator_id] if body.creator_id else []))
     d = DestinationAccount(platform=body.platform, external_id=f"manual:{uuid.uuid4().hex}", display_name=body.display_name.strip(),
                            handle=_handle(body.handle), creator_id=ids[0] if ids else None, creator_ids=ids,
-                           settings=default_destination_settings(body.platform))
+                           settings=default_destination_settings(body.platform, _handle(body.handle)))
     s.add(d)
     s.flush()
     s.refresh(d)
@@ -479,10 +479,17 @@ def update_destination(did: int, body: DestinationPatch, s: Session = Depends(db
     if "settings" in data:
         try:
             merged = deep_merge(ser.normalized_settings(d.settings), data.pop("settings") or {})
-            d.settings = DestinationSettings.model_validate(merged).model_dump()
+            new = DestinationSettings.model_validate(merged).model_dump()
         except ValidationError as e:
             first = e.errors()[0]
             raise ApiError(422, "validation", f"{'.'.join(str(x) for x in first['loc'])}: {first['msg']}")
+        if new["auto_post"] and not (d.settings or {}).get("auto_post"):
+            from ..posting import can_turn_on_auto_post
+            why = can_turn_on_auto_post(s, d)
+            if why:
+                raise ApiError(409, "auto_post_locked", why)
+            audit(s, "page.auto_post_on", "destination", d.id, {"daily_cap": new["daily_cap"]})
+        d.settings = new
     if "handle" in data:
         data["handle"] = _handle(data["handle"])
     if "display_name" in data:

@@ -33,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .media.ffmpeg import FFmpegError, ffmpeg_exe
+from .media.ffmpeg import SPAWN, FFmpegError, ffmpeg_exe
 
 TIERS = (("S", 85), ("A", 70), ("B", 55), ("C", 40), ("D", 0))
 STEP = 0.1  # loudness is measured every 100 ms
@@ -67,7 +67,7 @@ def loudness(path: Path, start: float, dur: float, gaps: list[tuple[float, float
         return np.concatenate(out) if out else np.zeros(0)
     try:
         raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path),
-                              "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"], capture_output=True, timeout=120, check=True).stdout
+                              "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"], capture_output=True, timeout=120, check=True, **SPAWN).stdout
     except (subprocess.SubprocessError, OSError) as e:
         raise FFmpegError(f"couldn't read the clip's audio ({type(e).__name__})")
     x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768
@@ -112,7 +112,7 @@ def voice_lift(path: Path, start: float, dur: float) -> float | None:
     sr = 8000
     try:
         raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path),
-                              "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"], capture_output=True, timeout=120, check=True).stdout
+                              "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"], capture_output=True, timeout=120, check=True, **SPAWN).stdout
     except (subprocess.SubprocessError, OSError):
         return None
     x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768
@@ -145,7 +145,7 @@ def picture(path: Path, start: float, dur: float) -> tuple[np.ndarray | None, fl
     w, h = 64, 36
     try:
         raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path), "-an",
-                              "-vf", f"fps=2,scale={w}:{h},format=gray", "-f", "rawvideo", "-"], capture_output=True, timeout=120, check=True).stdout
+                              "-vf", f"fps=2,scale={w}:{h},format=gray", "-f", "rawvideo", "-"], capture_output=True, timeout=120, check=True, **SPAWN).stdout
     except (subprocess.SubprocessError, OSError):
         return None, None
     frames = np.frombuffer(raw, dtype=np.uint8)[: len(raw) // (w * h) * w * h].reshape(-1, h, w).astype(np.float32) / 255

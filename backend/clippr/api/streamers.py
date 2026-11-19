@@ -7,6 +7,7 @@ pages that take that streamer's clips. Changing one here keeps the others in ste
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -49,7 +50,7 @@ def _drop(s: Session, src: SourceAccount, cid: int) -> None:
 def _out(s: Session, c: Creator, pages: list[DestinationAccount]) -> dict:
     watched = _watched(s, c.id)
     return {
-        "id": c.id, "name": c.name, "color": c.color, "links": list(c.vod_channels or []),
+        "id": c.id, "name": c.name, "color": c.color, "links": list(c.vod_channels or []), "kind": c.content_kind or "regular",
         "destination_ids": [d.id for d in pages if c.id in destination_creator_ids(d)],
         "watching": any(w.monitoring == "active" for w in watched),
         "channels": [{"id": w.id, "platform": w.platform, "username": w.username, "monitoring": w.monitoring,
@@ -114,6 +115,7 @@ class StreamerIn(BaseModel):
     links: list[str] = Field(min_length=1, max_length=10)
     destination_ids: list[int] = Field(default_factory=list, max_length=100)
     permission: bool = False  # the user confirms they may clip this streamer
+    kind: Literal["regular", "gaming", "podcast"] = "regular"
 
 
 class StreamerPatch(BaseModel):
@@ -121,6 +123,7 @@ class StreamerPatch(BaseModel):
     links: list[str] | None = Field(None, min_length=1, max_length=10)
     destination_ids: list[int] | None = Field(None, max_length=100)
     watching: bool | None = None
+    kind: Literal["regular", "gaming", "podcast"] | None = None
 
 
 @router.get("/streamers")
@@ -136,7 +139,7 @@ def add_streamer(body: StreamerIn, s: Session = Depends(db)):
     links = _clean_channels(body.links)
     if not links:
         raise ApiError(422, "invalid_input", "Add the streamer's Twitch, Kick or YouTube channel link")
-    c = Creator(name=body.name.strip(), vod_channels=links, clip_permission=True)
+    c = Creator(name=body.name.strip(), vod_channels=links, clip_permission=True, content_kind=body.kind)
     s.add(c)
     try:
         s.flush()
@@ -153,6 +156,8 @@ def update_streamer(cid: int, body: StreamerPatch, s: Session = Depends(db)):
     c = get_or_404(s, Creator, cid, "Streamer")
     if body.name is not None:
         c.name = body.name.strip()
+    if body.kind is not None:
+        c.content_kind = body.kind
     if body.links is not None:
         c.vod_channels = _clean_channels(body.links)
         _sync_channels(s, c, watching=any(w.monitoring == "active" for w in _watched(s, cid)) or not _watched(s, cid))
