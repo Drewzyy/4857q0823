@@ -33,9 +33,9 @@ def yellow_pixels(path, t, top):
     return int(((r > 235) & (g > 210) & (b < 60)).sum())
 
 
-def white_pixels(path, t):
+def white_pixels(path, t, lo=0.0, hi=0.25):
     f = _frame(path, t)
-    region = f[: int(f.shape[0] * 0.25)]
+    region = f[int(f.shape[0] * lo): int(f.shape[0] * hi)]
     return int(((region > 240).all(axis=2)).sum())
 
 
@@ -81,31 +81,33 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert outs["tiktok"]["width"] == 1080 and outs["tiktok"]["height"] == 1920
     assert outs["youtube"]["width"] == 720 and outs["youtube"]["height"] == 1280
     tdesc = outs["tiktok"]["description"]
-    local = datetime(2026, 11, 7, 20, tzinfo=timezone.utc).astimezone()
-    assert tdesc == (f"He actually did it 😭\n\nFollow for more\n\nStreamer: Streamer A\nStreamed {local:%b} {local.day}, {local.year}"
-                     "\n\n#gaming #clips #vyralclips"), tdesc
+    quote = "“No way he actually did that right now”"  # the line said in the clip, not the post's own words
+    title = outs["tiktok"]["video_title"]
+    assert title.startswith(quote + " ") and len(title) > len(quote) + 1
+    assert tdesc == f"{title}\n\nFollow for more\n\n#gaming #clips #vyralclips", tdesc
+    assert "Streamer:" not in tdesc and "Streamed" not in tdesc and "He actually did it" not in tdesc
 
     # The viral pre-edit: one headline box for the whole clip in place of the page title, opening on sound.
     from clippr.models import Clip
     with ctx.db.session() as s:
         clip = s.get(Clip, clips[0]["id"])
         e = dict(clip.edit)
-        assert e["preedited"] and e["hide_title"] and e["texts"][0]["box"] and e["texts"][0]["text"] == "He actually did it 😭"
+        assert e["preedited"] and e["hide_title"] and e["texts"][0]["headline"] and not e["texts"][0].get("box") and e["texts"][0]["text"] == title
         # A clip from before the pre-edit gets it once at startup, and is re-rendered.
         clip.edit = {**e, "preedited": False, "preedit_version": 0, "hide_title": False, "texts": [], "sounds": []}
     assert ctx.pipeline.preedit_ready() == {"preedited": 1}
     drain(ctx)
     assert ctx.pipeline.preedit_ready() == {"preedited": 0}  # never twice
     with ctx.db.session() as s:
-        assert s.get(Clip, clips[0]["id"]).edit["texts"][0]["box"]
+        assert s.get(Clip, clips[0]["id"]).edit["texts"][0]["headline"]
     assert all(o["render_state"] == "ready" for o in c.get("/api/clips").json()[0]["outputs"])
     assert "@someone" not in tdesc
-    assert outs["youtube"]["title"] == "He actually did it 😭"
-    assert outs["youtube"]["description"].endswith("\n\n#vyralclips #shorts")  # generic #fyp dropped
+    assert outs["youtube"]["title"] == title
+    assert outs["youtube"]["description"] == "#vyralclips #shorts"  # generic #fyp dropped
 
     # Text on the video: ALL CAPS bold, white title at the top for 5 s, yellow captions from speech.
     tt_out = outs["tiktok"]
-    assert tt_out["video_title"] == "He actually did it 😭"
+    assert tt_out["video_title"] == title
     assert tt_out["overlay"]["title"]["color"] == "#FFFFFF" and tt_out["overlay"]["captions"]["color"] == "#FFE500"
     assert tt_out["overlay"]["title"]["all_caps"] and tt_out["overlay"]["title"]["duration"] == 5
     assert clips[0]["captions_text"] == "no way he actually did that right now" and clips[0]["editable"]
@@ -116,9 +118,9 @@ def test_new_post_becomes_ready_to_upload_clip(env):
         path = Path(s.get(ClipOutput, outs["tiktok"]["id"]).file_path)
     info = probe(path)
     assert 22.5 < info.duration < 25.5 and info.has_audio
-    # The headline box is really burned in at the top, and stays for the whole clip (the pre-edit).
-    assert white_pixels(path, 2.0) > 2000
-    assert white_pixels(path, 7.0) > 2000
+    # The quote headline (white text, mid-frame) is really burned in, and stays for the whole clip (the pre-edit).
+    assert white_pixels(path, 2.0, 0.45, 0.7) > 1000, white_pixels(path, 2.0, 0.45, 0.7)
+    assert white_pixels(path, 7.0, 0.45, 0.7) > 1000
     assert yellow_pixels(path, 1.2, top=False) > 2000  # yellow caption "NO WAY HE" in the lower part
     assert info.fps == 30  # the stream is 30 fps; never padded with fake frames
 
@@ -280,7 +282,8 @@ def test_one_clipping_account_covering_several_streamers(env):
     assert ref["status"] == "ready" and ref["creator"]["name"] == "Streamer B", ref["status_detail"]
     outs = c.get("/api/clips").json()[0]["outputs"]
     assert [o["destination"]["display_name"] for o in outs] == ["B page"]
-    assert "Streamer: Streamer B" in outs[0]["description"]
+    assert outs[0]["description"].startswith("“No way he actually did that right now”")
+    assert "Streamer" not in outs[0]["description"]
     # Removing one streamer keeps the other.
     r = c.patch(f"/api/sources/{src['id']}", json={"creator_ids": [b]}).json()
     assert [x["name"] for x in r["creators"]] == ["Streamer B"]
@@ -871,8 +874,9 @@ def test_database_updates_never_cascade_deletes():
 
 def test_hashtags_are_few_specific_and_the_pages_own_first():
     from clippr.describe import build
-    _, desc = build("tiktok", "insane clutch #fyp #viral #warzone #clutch #fps #ranked", "Streamer A",
+    _, desc = build("tiktok", "“No way he actually did that right now” 💀", "insane clutch #fyp #viral #warzone #clutch #fps #ranked",
                     {"hashtags": ["#streamera", "gaming"]})
+    assert desc.startswith("“No way he actually did that right now” 💀\n\n")
     tags = desc.rsplit("\n\n", 1)[-1].split()
     assert tags == ["#streamera", "#gaming", "#warzone", "#clutch", "#vyralclips"]
 
@@ -897,11 +901,11 @@ def test_retry_makes_a_clip_of_a_moment_that_was_already_made(env):
 def test_the_game_goes_in_the_caption_and_as_a_specific_hashtag():
     from clippr.describe import build, game_tag
     assert game_tag("Grand Theft Auto VI") == "#GrandTheftAutoVI" and game_tag("Just Chatting") == ""
-    _, desc = build("instagram", "he got away #fyp #heist", "Streamer A", {"hashtags": ["#streamera"]}, None, "Grand Theft Auto VI")
-    assert "Game: Grand Theft Auto VI" in desc
+    _, desc = build("instagram", "“He got away” 😳", "he got away #fyp #heist", {"hashtags": ["#streamera"]}, "Grand Theft Auto VI")
+    assert desc.startswith("“He got away” 😳\n\n") and "Game:" not in desc
     assert desc.rsplit("\n\n", 1)[-1].split() == ["#streamera", "#GrandTheftAutoVI", "#heist", "#vyralclips"]
-    _, chat = build("tiktok", "lol", "Streamer A", {}, None, "Just Chatting")
-    assert "Game:" not in chat
+    _, chat = build("tiktok", "“lol” 😳", "lol", {}, "Just Chatting")
+    assert "Game:" not in chat and chat.rsplit("\n\n", 1)[-1] == "#vyralclips"
 
 
 def test_retry_all_remove_and_day_old_dead_ends(env):
