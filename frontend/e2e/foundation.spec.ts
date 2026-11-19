@@ -357,7 +357,7 @@ test("ready to upload: new clips wait behind a button instead of moving the page
   await page.goto("/ready");
   await expect(page.locator(".card").first()).toBeVisible();
   const before = await page.locator(".card h2").allTextContents();
-  const button = page.getByRole("button", { name: /^1 new clip$/ });
+  const button = page.getByRole("button", { name: /^\d+ new clips?$/ });  // earlier tests can make more clips meanwhile
   await expect(button).toBeVisible({ timeout: 25_000 });  // the next background refresh found it
   expect(await page.locator(".card h2").allTextContents()).toEqual(before);  // the page didn't move
   await button.click();

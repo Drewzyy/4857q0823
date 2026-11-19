@@ -293,12 +293,12 @@ function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT
 
 /** The safety check's result: what was flagged and when (seconds into the clip), and what a person has to look at. */
 function SafetyNote({ safety }: { safety: ClipT["safety"] }) {
-  if (!safety || safety.status === "pass") return null;
+  if (!safety?.status || safety.status === "pass") return null;  // not checked yet, or clean
   const fail = safety.status === "fail";
   return (
     <div className={`banner ${fail ? "err" : "warn"} small`} role="status" style={{ flexDirection: "column", gap: 2 }}>
       <strong>{fail ? "Quarantined: this clip won't be reviewed or posted." : "Check before approving:"}</strong>
-      <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>{safety.flags.map((f, i) => (
+      <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>{(safety.flags ?? []).map((f, i) => (
         <li key={i}>{f.category}: {f.reason}{f.at !== null ? ` at ${f.at.toFixed(1)} s` : ""}</li>))}</ul>
     </div>
   );
