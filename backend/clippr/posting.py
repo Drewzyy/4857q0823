@@ -166,6 +166,7 @@ def sync(ctx, oid: int) -> dict:
         if st["state"] == "published":
             o.post_url = st["url"] or o.post_url
             o.status, o.uploaded_at = "uploaded", o.uploaded_at or datetime.now(timezone.utc)
+            ctx.jobs.enqueue("campaigns.check", {}, max_attempts=1, session=s)  # it may now qualify for a campaign
         elif st["state"] in ("queued", "unknown") and (datetime.now(timezone.utc) - around.replace(tzinfo=around.tzinfo or timezone.utc)).days < 3:
             ctx.jobs.enqueue("postiz.sync", {"output_id": oid}, max_attempts=1, delay=300, session=s)  # check again later
     return st

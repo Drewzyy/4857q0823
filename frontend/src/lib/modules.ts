@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Clapperboard, Download, Film, LayoutDashboard, Settings, Upload, Users, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Clapperboard, Megaphone, Download, Film, LayoutDashboard, Settings, Upload, Users, type LucideIcon } from "lucide-react";
 
 export interface ModuleDef {
   path: string; label: string; icon: LucideIcon; group: "Overview" | "Accounts" | "Coming next" | "";
@@ -15,6 +15,7 @@ export const MODULES: ModuleDef[] = [
   { path: "/analytics", label: "Analytics", icon: BarChart3, group: "Overview", status: "ready" },
   { path: "/sources", label: "Source Accounts", icon: Users, group: "Accounts", status: "ready" },
   { path: "/destinations", label: "Destinations", icon: Upload, group: "Accounts", status: "ready" },
+  { path: "/campaigns", label: "Campaigns", icon: Megaphone, group: "Accounts", status: "ready" },
 
   { path: "/settings", label: "Settings", icon: Settings, group: "", status: "ready" },
 ];

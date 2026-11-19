@@ -85,7 +85,7 @@ def test_muse_reviews_approves_and_posts_through_postiz(env, tmp_path):
     names = {t["name"] for t in _rpc(mc, "tools/list", token=tok).json()["result"]["tools"]}
     assert names == {"list_ready_clips", "get_clip", "list_sources", "list_destinations", "list_funnel_routes", "list_clips_for_review",
                      "review_clip", "update_clip", "approve_clip", "reject_clip", "get_posting_package", "send_to_postiz",
-                     "get_post_status", "get_safety_check", "list_quarantined_clips"}
+                     "get_post_status", "get_safety_check", "list_quarantined_clips", "list_campaigns"}
 
     err, ready = _call(mc, tok, "list_ready_clips")
     assert not err and ready[0]["clip_id"] == cid and ready[0]["safety"] in ("pass", "review")

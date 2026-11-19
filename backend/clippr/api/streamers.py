@@ -10,11 +10,12 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .. import describe
 from ..audit import audit
 from ..fetch import is_single_video
 from ..models import Clip, Creator, DestinationAccount, ReferenceVideo, SourceAccount
@@ -47,10 +48,26 @@ def _drop(s: Session, src: SourceAccount, cid: int) -> None:
         s.delete(src)
 
 
+def rules_of(c: Creator) -> dict:
+    return {"hashtags": [], "mention": [], "extra": "", "notes": "", **(c.caption_rules or {})}
+
+
+class CaptionRules(BaseModel):
+    hashtags: list[str] = Field(default_factory=list, max_length=10)
+    mention: list[str] = Field(default_factory=list, max_length=10)
+    extra: str = Field("", max_length=300)
+    notes: str = Field("", max_length=4000)
+
+    @field_validator("hashtags", "mention")
+    @classmethod
+    def _words(cls, v: list[str], info) -> list[str]:
+        return describe.clean_list(v, info.field_name == "hashtags")
+
+
 def _out(s: Session, c: Creator, pages: list[DestinationAccount]) -> dict:
     watched = _watched(s, c.id)
     return {
-        "id": c.id, "name": c.name, "color": c.color, "links": list(c.vod_channels or []), "kind": c.content_kind or "regular",
+        "id": c.id, "name": c.name, "color": c.color, "links": list(c.vod_channels or []), "kind": c.content_kind or "regular", "rules": rules_of(c),
         "destination_ids": [d.id for d in pages if c.id in destination_creator_ids(d)],
         "watching": any(w.monitoring == "active" for w in watched),
         "channels": [{"id": w.id, "platform": w.platform, "username": w.username, "monitoring": w.monitoring,
@@ -116,6 +133,7 @@ class StreamerIn(BaseModel):
     destination_ids: list[int] = Field(default_factory=list, max_length=100)
     permission: bool = False  # the user confirms they may clip this streamer
     kind: Literal["regular", "gaming", "podcast"] = "regular"
+    rules: CaptionRules | None = None
 
 
 class StreamerPatch(BaseModel):
@@ -124,6 +142,7 @@ class StreamerPatch(BaseModel):
     destination_ids: list[int] | None = Field(None, max_length=100)
     watching: bool | None = None
     kind: Literal["regular", "gaming", "podcast"] | None = None
+    rules: CaptionRules | None = None
 
 
 @router.get("/streamers")
@@ -139,7 +158,8 @@ def add_streamer(body: StreamerIn, s: Session = Depends(db)):
     links = _clean_channels(body.links)
     if not links:
         raise ApiError(422, "invalid_input", "Add the streamer's Twitch, Kick or YouTube channel link")
-    c = Creator(name=body.name.strip(), vod_channels=links, clip_permission=True, content_kind=body.kind)
+    c = Creator(name=body.name.strip(), vod_channels=links, clip_permission=True, content_kind=body.kind,
+                caption_rules=body.rules.model_dump() if body.rules else {})
     s.add(c)
     try:
         s.flush()
@@ -158,6 +178,9 @@ def update_streamer(cid: int, body: StreamerPatch, s: Session = Depends(db)):
         c.name = body.name.strip()
     if body.kind is not None:
         c.content_kind = body.kind
+    if body.rules is not None:
+        c.caption_rules = body.rules.model_dump()
+        audit(s, "streamer.rules_changed", "creator", cid)
     if body.links is not None:
         c.vod_channels = _clean_channels(body.links)
         _sync_channels(s, c, watching=any(w.monitoring == "active" for w in _watched(s, cid)) or not _watched(s, cid))

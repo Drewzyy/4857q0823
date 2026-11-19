@@ -94,13 +94,27 @@ function StreamerModal({ streamer, pages, onClose, onDone }: { streamer: Streame
   const [pageIds, setPageIds] = useState<number[]>(streamer?.destination_ids ?? []);
   const [permission, setPermission] = useState(!!streamer);
   const [kind, setKind] = useState<ClipKind>(streamer?.kind ?? "regular");
+  const [tags, setTags] = useState((streamer?.rules.hashtags ?? []).join(" "));
+  const [mention, setMention] = useState((streamer?.rules.mention ?? []).join(", "));
+  const [extra, setExtra] = useState(streamer?.rules.extra ?? "");
+  const [notes, setNotes] = useState(streamer?.rules.notes ?? "");
+  const campaigns = useQuery({ queryKey: ["campaigns", ""], queryFn: () => api.campaigns("") });
   const [busy, setBusy] = useState(false);
+  const rules = { hashtags: tags.split(/[\s,]+/).filter(Boolean), mention: mention.split(",").map((x) => x.trim()).filter(Boolean), extra: extra.trim(), notes };
+  // Takes a campaign's requirements in, next to what's already there.
+  const copyFrom = (id: number) => {
+    const c = campaigns.data?.find((x) => x.id === id);
+    if (!c) return;
+    setTags([...new Set([...rules.hashtags, ...c.required_hashtags])].join(" "));
+    setMention([...new Set([...rules.mention, ...c.must_mention])].join(", "));
+    if (c.rules && !notes.includes(c.rules)) setNotes(`${notes}\n\n${c.name}\n${c.rules}`.trim());
+  };
   const list = links.split(/\s+/).map((l) => l.trim()).filter(Boolean);
   const save = async () => {
     setBusy(true);
     try {
-      if (streamer) await api.updateStreamer(streamer.id, { name: name.trim(), links: list, destination_ids: pageIds, kind });
-      else await api.addStreamer({ name: name.trim(), links: list, destination_ids: pageIds, permission, kind });
+      if (streamer) await api.updateStreamer(streamer.id, { name: name.trim(), links: list, destination_ids: pageIds, kind, rules });
+      else await api.addStreamer({ name: name.trim(), links: list, destination_ids: pageIds, permission, kind, rules });
       toast("ok", streamer ? "Saved" : `${name.trim()} added. Vyral is watching their channel.`);
       onDone();
     } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
@@ -123,6 +137,24 @@ function StreamerModal({ streamer, pages, onClose, onDone }: { streamer: Streame
         <div className="field"><span className="label-text">Post to</span>
           <Picker label="Pages for this streamer" items={pageItems(pages)} value={pageIds} onChange={setPageIds} empty="Pick pages"
             hint={pages.length ? "Clips from this streamer go to every page ticked here." : "Add your pages under Destinations first."} /></div>
+        <div className="field"><span className="label-text">Caption rules</span>
+          <span className="hint">Every clip of this streamer gets captions that follow these. Anything missing is added; nothing already there is changed.</span></div>
+        <div className="field"><label htmlFor="st-tags">Required hashtags</label>
+          <input id="st-tags" className="input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="#valkyrae" /></div>
+        <div className="field"><label htmlFor="st-mention">Must mention</label>
+          <input id="st-mention" className="input" value={mention} onChange={(e) => setMention(e.target.value)} placeholder="Valkyrae" />
+          <span className="hint">Names, separated by commas. Added as "With name" if the caption and title don't say it.</span></div>
+        <div className="field"><label htmlFor="st-extra">Extra caption line</label>
+          <input id="st-extra" className="input" value={extra} maxLength={300} onChange={(e) => setExtra(e.target.value)} placeholder="Follow for daily clips" /></div>
+        <div className="field"><label htmlFor="st-notes">Notes</label>
+          <textarea id="st-notes" className="textarea" rows={3} maxLength={4000} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Other rules to remember" /></div>
+        {(campaigns.data ?? []).length > 0 && (
+          <div className="field"><label htmlFor="st-copy">Copy from a campaign</label>
+            <select id="st-copy" className="select" value="" onChange={(e) => copyFrom(Number(e.target.value))}>
+              <option value="">Pick a campaign</option>
+              {[...campaigns.data!].sort((a, b) => Number(b.creator?.id === streamer?.id) - Number(a.creator?.id === streamer?.id)).map((c) => (
+                <option key={c.id} value={c.id}>{c.name}{c.creator ? ` (${c.creator.name})` : ""}</option>))}</select></div>
+        )}
         {!streamer && <label className="check"><input type="checkbox" checked={permission} onChange={(e) => setPermission(e.target.checked)} />
           I have permission to clip this streamer's content</label>}
       </div>

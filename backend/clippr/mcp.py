@@ -28,7 +28,7 @@ from . import posting
 from .audit import audit
 from .api.clips import _live_outputs, apply_edit
 from .api.system import load_settings
-from .models import Clip, ClipOutput, Creator, DestinationAccount, SourceAccount
+from .models import Campaign, CampaignClip, Clip, ClipOutput, Creator, DestinationAccount, SourceAccount
 from .routing import destination_creator_ids, page_kinds, source_creator_ids
 from .schemas import ClipEdit
 
@@ -162,6 +162,16 @@ def list_destinations(ctx, a):
                  "auto_post": bool((d.settings or {}).get("auto_post"))} for d in s.scalars(select(DestinationAccount)).unique()]
 
 
+def list_campaigns(ctx, a):
+    with ctx.db.session() as s:
+        tagged: dict[int, list[int]] = {}
+        for l in s.scalars(select(CampaignClip)):
+            tagged.setdefault(l.campaign_id, []).append(l.clip_id)
+        return [{"id": c.id, "name": c.name, "tag": c.tag, "creator": c.creator.name if c.creator else None, "live": c.status == "live",
+                 "min_views": c.min_views, "required_hashtags": c.required_hashtags, "must_mention": c.must_mention, "join_url": c.join_url,
+                 "tagged_clip_ids": tagged.get(c.id, [])} for c in s.scalars(select(Campaign)).unique()]
+
+
 def list_funnel_routes(ctx, a):
     """Routes are worked out from each page's streamers and kinds (routing.py): one row per streamer and page."""
     with ctx.db.session() as s:
@@ -265,6 +275,8 @@ TOOLS: dict[str, tuple[Callable, str, dict, list[str], dict]] = {
     "list_quarantined_clips": (list_quarantined_clips, "Clips the safety check failed, with why.", {}, [], RO),
     "list_sources": (list_sources, "Watched accounts: platform, handle, streamers, monitoring on or off.", {}, [], RO),
     "list_destinations": (list_destinations, "Pages clips post to: platform, handle, streamers, kinds, enabled, Postiz channel set, Auto-post.", {}, [], RO),
+    "list_campaigns": (list_campaigns, "Clipping campaigns: tag, streamer, live or ended, minimum views, the hashtags and names a caption "
+                       "must have, where to submit, and the clips tagged to each.", {}, [], RO),
     "list_funnel_routes": (list_funnel_routes, "Which streamer's clips go to which page.", {}, [], RO),
     "update_clip": (update_clip, "Change a clip: caption (one page or all), hook_text (the headline, use only words said in the clip), "
                     "hook ([start, end] footage seconds shown first, or null), trim_start/trim_end (footage seconds), destination_ids "

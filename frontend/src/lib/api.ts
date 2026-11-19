@@ -3,8 +3,9 @@
 export type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "twitch" | "kick";
 
 export interface Creator { id: number; name: string; color: string; notes: string; vod_channels: string[]; clip_permission: boolean; sources?: number; destinations?: number }
+export interface CaptionRules { hashtags: string[]; mention: string[]; extra: string; notes: string }
 export interface StreamerT {
-  kind: ClipKind;
+  kind: ClipKind; rules: CaptionRules;
   id: number; name: string; color: string; links: string[]; destination_ids: number[]; watching: boolean;
   channels: { id: number; platform: Platform; username: string; monitoring: "active" | "paused"; last_check: string | null; next_check: string | null; error: string | null }[];
   posts: number; clips: number;
@@ -76,6 +77,18 @@ export interface LongformMoment { start: number; end: number; peak: number; scor
 export interface LongformT {
   id: number; url: string | null; is_file: boolean; title: string; creator: { id: number; name: string } | null; clips_wanted: number;
   status: "new" | "processing" | "ready" | "failed"; status_detail: string; duration: number | null; created_at: string; moments: LongformMoment[];
+}
+export type CampaignPlatform = "tiktok" | "instagram" | "youtube" | "x";
+export interface CampaignFields {
+  name: string; tag: string; creator_id: number | null; status: "live" | "ended"; pool: string; min_views: number; platforms: CampaignPlatform[];
+  audience: string; footage_from: string | null; ends_at: string | null; required_hashtags: string[]; must_mention: string[]; keywords: string[];
+  join_url: string; discord_url: string; guidelines_url: string; submit_within_minutes: number | null; destination_ids: number[]; rules: string;
+}
+export interface CampaignT extends Omit<CampaignFields, "creator_id"> { id: number; creator: { id: number; name: string } | null; views: number }
+export interface CampaignPage { output_id: number; platform: Platform; page: string | null; post_url: string | null; qualifies: boolean; reasons: string[]; views: number | null }
+export interface CampaignClips {
+  clips: { clip_id: number; title: string; added_by: "auto" | "you"; outputs: CampaignPage[] }[];
+  suggested: { clip_id: number; title: string; created_at: string }[];
 }
 export interface GradeT { score: number; tier: "S" | "A" | "B" | "C" | "D"; parts: { name: string; points: number; max: number; note: string }[]; tips: string[] }
 export interface SafetyT {
@@ -163,8 +176,8 @@ export const api = {
   health: () => request<Health>("GET", "/health"),
   dashboard: () => request<Dashboard>("GET", "/dashboard"),
   streamers: () => request<StreamerT[]>("GET", "/streamers"),
-  addStreamer: (b: { name: string; links: string[]; destination_ids: number[]; permission: boolean; kind: ClipKind }) => request<StreamerT>("POST", "/streamers", b),
-  updateStreamer: (id: number, b: Partial<{ name: string; links: string[]; destination_ids: number[]; watching: boolean; kind: ClipKind }>) => request<StreamerT>("PATCH", `/streamers/${id}`, b),
+  addStreamer: (b: { name: string; links: string[]; destination_ids: number[]; permission: boolean; kind: ClipKind; rules: CaptionRules }) => request<StreamerT>("POST", "/streamers", b),
+  updateStreamer: (id: number, b: Partial<{ name: string; links: string[]; destination_ids: number[]; watching: boolean; kind: ClipKind; rules: CaptionRules }>) => request<StreamerT>("PATCH", `/streamers/${id}`, b),
   removeStreamer: (id: number) => request<void>("DELETE", `/streamers/${id}`),
   creators: () => request<Creator[]>("GET", "/creators"),
   setCreatorFacecam: (id: number, cam: number[] | null) => request<Creator>("PUT", `/creators/${id}/facecam`, { cam }),
@@ -212,6 +225,15 @@ export const api = {
   },
   retryLongform: (id: number) => request<LongformT>("POST", `/longform/${id}/retry`),
   removeLongform: (id: number) => request<void>("DELETE", `/longform/${id}`),
+  campaigns: (q: string) => request<CampaignT[]>("GET", "/campaigns" + qs({ q })),
+  parseCampaign: (text: string) => request<Partial<CampaignFields> & { creator: string }>("POST", "/campaigns/parse", { text }),
+  addCampaign: (b: CampaignFields) => request<CampaignT>("POST", "/campaigns", b),
+  updateCampaign: (id: number, b: CampaignFields) => request<CampaignT>("PATCH", `/campaigns/${id}`, b),
+  removeCampaign: (id: number) => request<void>("DELETE", `/campaigns/${id}`),
+  applyCampaignRules: (id: number) => request<CaptionRules>("POST", `/campaigns/${id}/apply-rules`),
+  campaignClips: (id: number) => request<CampaignClips>("GET", `/campaigns/${id}/clips`),
+  linkCampaignClip: (id: number, clip_id: number) => request<{ ok: boolean }>("POST", `/campaigns/${id}/clips`, { clip_id }),
+  unlinkCampaignClip: (id: number, clip_id: number) => request<void>("DELETE", `/campaigns/${id}/clips/${clip_id}`),
   library: () => request<MediaItemT[]>("GET", "/library"),
   addToLibrary: (file: File) => { const fd = new FormData(); fd.append("file", file); return request<MediaItemT>("POST", "/library", fd); },
   removeFromLibrary: (id: number) => request<void>("DELETE", `/library/${id}`),
@@ -255,5 +277,5 @@ export const api = {
 
 
 export const PLATFORM_LABEL: Record<string, string> = {
-  tiktok: "TikTok", youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", twitch: "Twitch", kick: "Kick",
+  tiktok: "TikTok", youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", x: "X", twitch: "Twitch", kick: "Kick",
 };

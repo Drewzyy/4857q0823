@@ -1,10 +1,10 @@
 """Database models. Secrets (tokens, client secrets) are never stored here; see secrets_store."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -48,6 +48,7 @@ class Creator(Base):
     clip_permission: Mapped[bool] = mapped_column(Boolean, default=False)
     facecam: Mapped[list[Any] | None] = mapped_column(nullable=True)  # [x, y, w, h] shares of the stream, set in the editor
     content_kind: Mapped[str] = mapped_column(String(16), default="regular")  # regular | gaming | podcast: picks the pages
+    caption_rules: Mapped[dict[str, Any]] = mapped_column(default=dict)  # {hashtags, mention, extra, notes}: every clip's captions follow it
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
@@ -323,3 +324,45 @@ class MetricSnapshot(Base):
     comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
     shares: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source: Mapped[str] = mapped_column(String(10), default="auto")  # auto | manual
+
+
+class Campaign(Base):
+    """A clipping campaign for one streamer: what counts, where it can be posted and how many views it needs."""
+
+    __tablename__ = "campaigns"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    tag: Mapped[str] = mapped_column(String(40), unique=True)  # short name to search and tag clips by, like "lacy-gta"
+    creator_id: Mapped[int | None] = mapped_column(ForeignKey("creators.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="live")  # live | ended
+    pool: Mapped[str] = mapped_column(Text, default="")
+    min_views: Mapped[int] = mapped_column(Integer, default=0)
+    platforms: Mapped[list[Any]] = mapped_column(default=list)  # tiktok | instagram | youtube | x; empty = any
+    audience: Mapped[str] = mapped_column(Text, default="")
+    footage_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ends_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    required_hashtags: Mapped[list[Any]] = mapped_column(default=list)
+    must_mention: Mapped[list[Any]] = mapped_column(default=list)  # names the caption has to say
+    keywords: Mapped[list[Any]] = mapped_column(default=list)  # what the footage is about, like "gta"; empty = anything
+    join_url: Mapped[str] = mapped_column(Text, default="")
+    discord_url: Mapped[str] = mapped_column(Text, default="")
+    guidelines_url: Mapped[str] = mapped_column(Text, default="")
+    submit_within_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    destination_ids: Mapped[list[Any]] = mapped_column(default=list)  # your pages that post for it; empty = any
+    rules: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+    creator: Mapped[Creator | None] = relationship(lazy="joined")
+
+
+class CampaignClip(Base):
+    """A clip tagged to a campaign, by Vyral (it matched) or by you."""
+
+    __tablename__ = "campaign_clips"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"))
+    clip_id: Mapped[int] = mapped_column(ForeignKey("clips.id", ondelete="CASCADE"))
+    added_by: Mapped[str] = mapped_column(String(10), default="auto")  # auto | you
+    notified_output_ids: Mapped[list[Any]] = mapped_column(default=list)  # pages already announced on Discord
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    __table_args__ = (UniqueConstraint("campaign_id", "clip_id"),)

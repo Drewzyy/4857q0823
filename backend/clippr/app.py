@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api import accounts, analytics, clips, inbox, library, longform, notifications, streamers, system, updates
+from .api import accounts, analytics, campaigns as campaigns_api, clips, inbox, library, longform, notifications, streamers, system, updates
 from .api import posting as posting_api
 from .api.system import load_settings
 from .fetch import Fetcher, YtDlpFetcher
@@ -65,9 +65,10 @@ def build_context(config: Config, secrets: SecretStore | None = None, fetcher=No
     from .discord_inbox import DiscordInbox
 
     ctx.inbox = DiscordInbox(ctx)
-    from . import mcp, posting
+    from . import campaigns, mcp, posting
 
     posting.register(ctx)
+    campaigns.register(ctx)
     ctx.mcp = mcp.Server(ctx)
 
     def heavy_limit() -> int:
@@ -147,7 +148,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         log.exception("unhandled error")
         return JSONResponse({"error": {"code": "internal", "message": "Something went wrong. Details are in the app log."}}, status_code=500)
 
-    for r in (accounts.router, streamers.router, library.router, longform.router, system.router, clips.router, updates.router, analytics.router, inbox.router, notifications.router, posting_api.router):
+    for r in (accounts.router, streamers.router, library.router, longform.router, system.router, clips.router, updates.router, analytics.router, inbox.router, notifications.router, posting_api.router, campaigns_api.router):
         app.include_router(r, prefix="/api")
 
     dist = cfg.frontend_dist

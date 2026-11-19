@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
-from . import describe, events, grade, identify, moments, notify, preedit, safety, titles
+from . import campaigns, describe, events, grade, identify, moments, notify, preedit, safety, titles
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
@@ -649,13 +649,15 @@ class Pipeline:
                         expires_at=now() + timedelta(days=retention_days))
             s.add(clip)
             s.flush()
+            rules = campaigns.caption_rules(s, clip)  # the streamer's caption rules
             for did, platform, st, fmt_raw, ov, path in planned:
                 info = infos[path]
-                ptitle, desc = describe.build(platform, title, post_title, st, game)
+                ptitle, desc = describe.build(platform, title, post_title, st, game, rules)
                 s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=ptitle, description=desc,
                                  video_title=title, overlay=ov, format=fmt_raw,
                                  file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))
             audit(s, "clip.ready", "clip", clip.id, {"reference": reference_id, "longform": longform_id, "destinations": len(dest_info)})
+            campaigns.auto_tag(s, clip)
             clip_title, clip_id = clip.title, clip.id
         return clip_id, clip_title, self.grade_clip(clip_id), captions_note
 
@@ -913,7 +915,8 @@ class Pipeline:
             clip.edit, clip.title = new, title
             outs = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)) if o.status == "ready"]
             for o in outs:
-                o.title, o.description = describe.build(o.platform, title, tags_from, dict(o.destination.settings or {}) if o.destination else {})
+                o.title, o.description = describe.build(o.platform, title, tags_from, dict(o.destination.settings or {}) if o.destination else {},
+                                                       rules=campaigns.caption_rules(s, clip))
                 o.video_title = title
                 o.render_state, o.render_error = "rendering", None
             s.flush()
@@ -938,7 +941,7 @@ class Pipeline:
                 ref = clip.reference
                 for d in dests:
                     st = dict(d.settings or {})
-                    title, desc = describe.build(d.platform, clip.title, ref.title if ref else "", st)
+                    title, desc = describe.build(d.platform, clip.title, ref.title if ref else "", st, rules=campaigns.caption_rules(s, clip))
                     o = ClipOutput(clip_id=clip.id, destination_id=d.id, platform=d.platform, title=title, description=desc,
                                    video_title=clip.title, overlay=lenient(OverlaySettings, st.get("overlay")).model_dump(),
                                    format=dict(st.get("format") or {}), render_state="rendering")

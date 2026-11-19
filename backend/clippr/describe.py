@@ -54,7 +54,47 @@ def game_tag(game: str) -> str:
     return "#" + "".join(w[:1].upper() + w[1:] for w in re.findall(r"[A-Za-z0-9]+", game))
 
 
-def build(platform: str, title: str, tags_from: str, settings: dict, game: str = "") -> tuple[str, str]:
+def has_tag(text: str, tag: str) -> bool:
+    return bool(re.search(rf"{re.escape(tag)}(?!\w)", text, re.I))
+
+
+def has_name(text: str, name: str) -> bool:
+    return bool(re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text, re.I))
+
+
+def clean_list(items: list[str], hashtags: bool = False) -> list[str]:
+    """For a list typed by the user: trimmed, no blanks, and hashtags that start with # and are one word."""
+    items = [x.strip() for x in items if x.strip()]
+    if any(len(x) > 60 for x in items):
+        raise ValueError("Each one must be 60 characters or fewer")
+    if hashtags:
+        items = [x if x.startswith("#") else f"#{x}" for x in items]
+        if not all(re.fullmatch(r"#\w+", x) for x in items):
+            raise ValueError("Hashtags can only use letters, numbers and _")
+    return items
+
+
+def apply_rules(caption: str, rules: dict | None, platform: str = "", title: str = "") -> str:
+    """Make a caption follow rules ({hashtags, mention, extra}): a missing extra line and a missing name ("With Lacy")
+    go after the text, a missing hashtag joins the hashtag line. What's already there is left alone, and if the
+    caption is too long for the platform the text is cut, never the rules. `title` counts as where a name can be said."""
+    rules = rules or {}
+    body, _, tail = caption.rstrip().rpartition("\n")
+    if not tail.lstrip().startswith("#"):
+        body, tail = caption.rstrip(), ""
+    body = body.rstrip()
+    seen = f"{caption}\n{title}"
+    add = [x for x in [rules.get("extra", "").strip()] if x and x.lower() not in seen.lower()]
+    names = [n for n in rules.get("mention") or [] if not has_name(seen, n)]
+    if names:
+        add.append("With " + ", ".join(names))
+    tail = " ".join([tail, *(h for h in rules.get("hashtags") or [] if not has_tag(caption, h))]).strip()
+    end = "\n\n".join(p for p in [*add, tail] if p)
+    limit = LIMITS.get(platform, 2200)
+    return "\n\n".join(p for p in [body[: max(0, limit - len(end) - 2)], end] if p)[:limit]
+
+
+def build(platform: str, title: str, tags_from: str, settings: dict, game: str = "", rules: dict | None = None) -> tuple[str, str]:
     """(title, caption). The caption is the title itself, then the page's own extra line if it has one, then 3 to 5
     specific hashtags (the source post's, the page's and the game's). Nothing else: the title is the hook, and extra
     lines (streamer, date) only push the hashtags below the fold. YouTube shows the title separately."""
@@ -63,4 +103,4 @@ def build(platform: str, title: str, tags_from: str, settings: dict, game: str =
         parts.append(settings["default_caption"].strip())
     parts.append(" ".join(_tags([game_tag(game)] + original_hashtags(tags_from), settings.get("hashtags") or [], platform)))
     desc = "\n\n".join(p for p in parts if p)
-    return title[:100], desc[: LIMITS.get(platform, 2200)]
+    return title[:100], apply_rules(desc[: LIMITS.get(platform, 2200)], rules, platform, title)

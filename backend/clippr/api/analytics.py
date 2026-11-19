@@ -40,6 +40,7 @@ def set_post_link(oid: int, body: PostIn, c=Depends(ctx), s: Session = Depends(d
             if job.payload.get("reference_id") == r.id:
                 job.status = "cancelled"
         r.status, r.status_detail = "removed", "Your own post"
+    c.jobs.enqueue("campaigns.check", {}, max_attempts=1, session=s)  # it may now qualify for a campaign
     if o.platform in AUTO_PLATFORMS:
         c.jobs.enqueue("metrics.fetch", {"output_id": oid}, max_attempts=2, session=s)
     return {"post_url": url, "auto": o.platform in AUTO_PLATFORMS}
