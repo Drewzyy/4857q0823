@@ -17,11 +17,11 @@ from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
-from . import describe, events, grade, identify, moments, notify, preedit, safety
+from . import describe, events, grade, identify, moments, notify, preedit, safety, titles
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
-from .media import deadair, facecam, match, overlay, sfx
+from .media import deadair, facecam, match, onscreen, overlay, sfx
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
 from .media.render import Layer, OutputFormat, render, thumbnail
@@ -617,17 +617,18 @@ class Pipeline:
 
         progress("Rendering")
         # Framing (and later edits) are saved with the clip, so a re-render never changes how it looks.
+        burned = onscreen.has_captions(source, start, dur)  # captions already in the picture: two sets would clash
         framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur, creator_id),
-                           **self._dead_air(source, start, dur, words)).model_dump()
+                           **self._dead_air(source, start, dur, words), captions=not burned, source_has_captions=burned).model_dump()
         words = [w for w in words if not deadair.FILLER.match(w.text.strip())]  # "um" never shows in captions
-        lead = ""
         with self.ctx.db.session() as s:
             proc = load_settings(s).processing
+        title = describe.clean_title(title, creator_name)
         if proc.viral_preedit:
-            # A long video's own title is about the whole video, not this moment: the moment's line leads instead.
-            lead, quote = preedit.plan_headline("" if longform_id else post_title, title, creator_name, " ".join(w.text for w in words))
-            framing = preedit.apply(framing, words, self._loudness(source, start, dur), lead, quote, proc.sound_effects == "auto",
-                                    proc.auto_sound, proc.hook_first)
+            # Our own title from what's said and what happens, never the Twitch clip's or the source post's words.
+            db = self._loudness(source, start, dur)
+            title, quote = titles.make_title(words, creator_name, preedit.peak_moment(db, 0, dur))
+            framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first)
         renders: dict[str, Path] = {}
         planned = []
         for did, platform, name, handle, st in dest_info:
@@ -650,7 +651,7 @@ class Pipeline:
             s.flush()
             for did, platform, st, fmt_raw, ov, path in planned:
                 info = infos[path]
-                ptitle, desc = describe.build(platform, preedit.caption_source(lead, post_title), creator_name, st, stream_date, game)
+                ptitle, desc = describe.build(platform, title, post_title, st, game)
                 s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=ptitle, description=desc,
                                  video_title=title, overlay=ov, format=fmt_raw,
                                  file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))
@@ -712,6 +713,8 @@ class Pipeline:
             zoom, pan, speed, texts = edit["zoom"], (edit["pan_x"], edit["pan_y"]), edit["speed"], edit["texts"]
             if edit.get("hide_title"):
                 title_text = ""  # the clip's own headline replaces the page title
+            if not edit.get("captions", True):
+                words = []  # captions off for this clip (e.g. the footage already has its own)
             files = self._library_files([edit.get("bottom_media")] + [ly["media_id"] for ly in edit.get("layers") or []])
             if edit.get("layout") == "stacked" and edit.get("cam"):
                 cam = edit["cam"]
@@ -793,7 +796,8 @@ class Pipeline:
             title_text = boxed[0] if boxed else outs[0].video_title if has_title else ""
             facts = dict(source=Path(clip.source_path), start=start, dur=dur, rel=rel, speed=speed,
                          words=[(w["start"] + shift, w["end"] + shift, w["text"]) for w in clip.words or []],
-                         captions=bool(ov["captions"]["enabled"] and clip.words), title=has_title, title_text=title_text,
+                         captions=bool(ov["captions"]["enabled"] and clip.words and e.get("captions", True)) or bool(e.get("source_has_captions")),
+                         title=has_title, title_text=title_text,
                          views=ref.views if ref else None, likes=ref.likes if ref else None, shares=ref.shares if ref else None,
                          posted_at=ref.posted_at if ref else None, stream_clip=bool(ref and ref.platform in STREAM_CLIP_PLATFORMS),
                          hook=hook_span(e, start, dur) if e else None)
@@ -899,19 +903,18 @@ class Pipeline:
             words = [Word(w["start"] - (e["start"] - base), w["end"] - (e["start"] - base), w["text"]) for w in clip.words or []]
             source = Path(clip.source_path)
             ref = clip.reference
-            post_title = (ref.title if ref else "") if not clip.longform_id else ""
+            tags_from = ref.title if ref else ""  # its hashtags carry over
             creator = clip.creator.name if clip.creator else ""
-            title = clip.title
-        lead, quote = preedit.plan_headline(post_title, title, creator, " ".join(w.text for w in words))
-        new = ClipEdit(**preedit.apply(e, words, self._loudness(source, e["start"], e["end"] - e["start"]), lead, quote, sound, choice, hook)).model_dump()
+        db = self._loudness(source, e["start"], e["end"] - e["start"])
+        title, quote = titles.make_title(words, creator, preedit.peak_moment(db, 0, e["end"] - e["start"]))
+        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook)).model_dump()
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
-            clip.edit = new
+            clip.edit, clip.title = new, title
             outs = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)) if o.status == "ready"]
             for o in outs:
-                if o.platform != "youtube":
-                    tags = " ".join(describe.original_hashtags(o.description))
-                    _, o.description = describe.build(o.platform, preedit.caption_source(lead, tags), creator, {}, None, "")
+                o.title, o.description = describe.build(o.platform, title, tags_from, dict(o.destination.settings or {}) if o.destination else {})
+                o.video_title = title
                 o.render_state, o.render_error = "rendering", None
             s.flush()
             if outs:
@@ -933,10 +936,9 @@ class Pipeline:
                 dests = pages_for(s, {clip.creator_id}) if clip.creator_id else \
                     [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()]
                 ref = clip.reference
-                name = clip.creator.name if clip.creator else ""
                 for d in dests:
                     st = dict(d.settings or {})
-                    title, desc = describe.build(d.platform, ref.title if ref else clip.title, name, st, clip.stream_date)
+                    title, desc = describe.build(d.platform, clip.title, ref.title if ref else "", st)
                     o = ClipOutput(clip_id=clip.id, destination_id=d.id, platform=d.platform, title=title, description=desc,
                                    video_title=clip.title, overlay=lenient(OverlaySettings, st.get("overlay")).model_dump(),
                                    format=dict(st.get("format") or {}), render_state="rendering")

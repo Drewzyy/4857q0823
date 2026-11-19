@@ -9,17 +9,27 @@ from clippr.media.overlay import Word
 from clippr.schemas import ClipEdit, OverlaySettings
 
 
-def test_headline_uses_the_source_post_and_adds_one_emoji():
-    h = preedit.headline("Lacy couldn't believe Dani drank a random person's drink #fyp #lacy", "x", "Lacy")
-    assert h.startswith("Lacy couldn't believe Dani drank a random person's drink") and "#" not in h
-    assert h.endswith(("😭", "😳", "💀", "😤", "😬"))
-    assert preedit.headline("Ron was in shock after Marlon surprised him 😭", "x", "Ron").count("😭") == 1  # keeps its own
+def _w(text, start=0.0, gap=0.35):
+    out, t = [], start
+    for tok in text.split():
+        out.append(Word(t, t + 0.3, tok))
+        t += gap
+    return out
 
 
-def test_headline_falls_back_to_a_quote_of_the_clip_line():
-    h, quote = preedit.plan_headline("", "NO WAY HE ACTUALLY DID THAT", "Kai")
-    assert quote
-    assert h.startswith("“No way he actually did that”") and h.endswith(("😳", "💀"))
+def test_titles_quote_the_best_line_or_sum_up_the_moment():
+    from clippr import titles
+    # A striking line near the big moment wins, word for word, in quotes, with an emoji.
+    words = _w("so we were just driving around.") + _w("NO WAY HE ACTUALLY DID THAT!", start=6) + _w("anyway let's keep going", start=12)
+    t, quote = titles.make_title(words, "Kai", peak=6.5)
+    assert quote and t.startswith("\u201cNo way he actually did that") and t.endswith(("💀", "😳", "🔥", "😭"))
+    # No good line: a summary that fits the mood, with the streamer's name. Never the source's own title.
+    t2, quote2 = titles.make_title(_w("hahaha hahaha lmao") + _w("hahahaha", start=3), "Lacy")
+    assert not quote2 and "Lacy" in t2 and t2.endswith("😭")
+    t3, _ = titles.make_title(_w("yeah ok so like"), "Jason")
+    assert "Jason" in t3
+    assert titles.make_title(words, "Kai", 6.5) == (t, quote)  # the same clip gets the same title every time
+    assert titles.best_quote(_w("and then he went over there")) is None  # mid-thought, nothing striking
 
 
 def test_long_clips_are_trimmed_around_the_peak_and_open_on_sound():
@@ -48,11 +58,6 @@ def test_the_box_is_drawn_as_a_white_box_behind_dark_text():
     style = next(x for x in ass.splitlines() if x.startswith("Style: Box,"))
     assert ",3," in style and "&H00FFFFFF" in style  # BorderStyle 3: an opaque box
     assert ",Box,,0,0,0,," in ass and "Kai lost it" in ass
-
-
-def test_caption_keeps_the_source_hashtags():
-    assert preedit.caption_source("Kai lost it 😭", "lol #kaicenat #fyp") == "Kai lost it 😭 #kaicenat #fyp"
-    assert preedit.caption_source("", "lol #kai") == "lol #kai"
 
 
 def test_one_sound_on_the_biggest_moment_only():
@@ -186,3 +191,27 @@ def test_punch_in_zooms_only_on_the_moment(tmp_path):
     assert corner(1.0) < 60 and corner(2.5) > 200 and corner(3.5) < 60  # border, zoomed past it, border again
     e = preedit.apply(ClipEdit(start=10, end=40).model_dump(), [], np.where((np.arange(300) >= 150) & (np.arange(300) < 160), -5.0, -30.0), "x")
     assert e["punch"] and 24.5 < e["punch"][0] < 25.5
+
+
+
+def test_clips_end_once_the_climax_settles():
+    db = np.full(300, -30.0)  # 30 s: a reaction at 12 s, then 15 s of calm chatter
+    db[120:140] = -6
+    a, b = preedit.best_window(db, _w(" ".join(["talk"] * 80), gap=0.37), 30.0)
+    assert 14 < b < 22, (a, b)  # ends a little after it settles, not at 30 s
+
+
+def test_captions_already_in_the_footage_are_found(tmp_path):
+    from clippr.media.ffmpeg import run
+    from clippr.media.onscreen import has_captions
+    bg = "gradients=s=576x1024:speed=0.02:d=12"
+    words = ["NO WAY", "HE REALLY", "JUST DID THAT", "BRO WHAT", "ARE YOU SERIOUS", "I CANT", "THAT HAPPENED", "LETS GO"]
+    live = ",".join(f"drawtext=text='{w}':fontsize=44:fontcolor=yellow:borderw=4:x=(w-tw)/2:y=h*0.72:enable='between(t,{i*1.5},{i*1.5+1.5})'"
+                    for i, w in enumerate(words))
+    run(["-f", "lavfi", "-i", bg, "-vf", live, "-c:v", "libx264", "-preset", "ultrafast", str(tmp_path / "live.mp4")])
+    run(["-f", "lavfi", "-i", bg, "-vf", "drawtext=text='Lacy could not believe this':fontsize=40:fontcolor=black:box=1:boxcolor=white:x=(w-tw)/2:y=h*0.6",
+         "-c:v", "libx264", "-preset", "ultrafast", str(tmp_path / "title.mp4")])
+    run(["-f", "lavfi", "-i", bg, "-c:v", "libx264", "-preset", "ultrafast", str(tmp_path / "plain.mp4")])
+    assert has_captions(tmp_path / "live.mp4", 0, 12)
+    assert not has_captions(tmp_path / "title.mp4", 0, 12)  # a fixed title isn't captions
+    assert not has_captions(tmp_path / "plain.mp4", 0, 12)

@@ -247,6 +247,8 @@ class ClipEdit(Strict):
     # A few seconds (source seconds) shown first as a teaser, then the clip plays from its start.
     hook: list[float] | None = Field(None, min_length=2, max_length=2)
     punch: list[float] | None = Field(None, min_length=2, max_length=2)  # a subtle zoom on the peak (source seconds)
+    captions: bool = True  # Vyral's word-by-word captions on this clip
+    source_has_captions: bool = False  # the footage already shows captions (so Vyral's are off by default)
     preedited: bool = False  # Vyral's viral pre-edit has been applied (see preedit.py)
     preedit_version: int = Field(0, ge=0)  # which version of it; clips get a newer version once
 

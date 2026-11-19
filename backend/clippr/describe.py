@@ -1,9 +1,8 @@
-"""Ready-to-paste titles and captions for each platform. Deterministic: only facts we have (the source
-post's own words and hashtags, the creator, the stream date, your page settings), never invented."""
+"""Ready-to-paste titles and captions for each platform: the clip's title (titles.py), your page's extra line and
+a few specific hashtags."""
 from __future__ import annotations
 
 import re
-from datetime import datetime
 
 LIMITS = {"tiktok": 2200, "instagram": 2200, "youtube": 5000, "facebook": 5000}
 # 3 to 5 specific hashtags beat 20 generic ones (TikTok's own guidance as relayed by creator playbooks; the
@@ -26,13 +25,6 @@ def clean_title(text: str, creator: str | None) -> str:
 
 def original_hashtags(text: str) -> list[str]:
     return re.findall(r"#[\w]+", text or "")
-
-
-def stream_date_line(when: datetime | None) -> str:
-    if not when:
-        return ""
-    d = when.astimezone()
-    return f"Streamed {d:%b} {d.day}, {d.year}"
 
 
 def _tags(original: list[str], page: list[str], platform: str) -> list[str]:
@@ -62,19 +54,13 @@ def game_tag(game: str) -> str:
     return "#" + "".join(w[:1].upper() + w[1:] for w in re.findall(r"[A-Za-z0-9]+", game))
 
 
-def build(platform: str, source_title: str, creator: str | None, settings: dict, stream_date: datetime | None = None,
-          game: str = "") -> tuple[str, str]:
-    """Returns (title, description). Title is YouTube's separate title; elsewhere it leads the caption. The game
-    goes in as words (captions are what Instagram and TikTok search reads) and as one specific hashtag."""
-    title = clean_title(source_title, creator)
+def build(platform: str, title: str, tags_from: str, settings: dict, game: str = "") -> tuple[str, str]:
+    """(title, caption). The caption is the title itself, then the page's own extra line if it has one, then 3 to 5
+    specific hashtags (the source post's, the page's and the game's). Nothing else: the title is the hook, and extra
+    lines (streamer, date) only push the hashtags below the fold. YouTube shows the title separately."""
     parts = [title] if platform != "youtube" else []
     if settings.get("default_caption"):
         parts.append(settings["default_caption"].strip())
-    playing = game if game_tag(game) else ""
-    info = "\n".join(x for x in [f"Streamer: {creator}" if creator else "", f"Game: {playing}" if playing else "",
-                                 stream_date_line(stream_date)] if x)
-    if info:
-        parts.append(info)
-    parts.append(" ".join(_tags([game_tag(game)] + original_hashtags(source_title), settings.get("hashtags") or [], platform)))
+    parts.append(" ".join(_tags([game_tag(game)] + original_hashtags(tags_from), settings.get("hashtags") or [], platform)))
     desc = "\n\n".join(p for p in parts if p)
-    return title, desc[: LIMITS.get(platform, 2200)]
+    return title[:100], desc[: LIMITS.get(platform, 2200)]

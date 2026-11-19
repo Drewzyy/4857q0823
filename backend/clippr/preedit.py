@@ -20,11 +20,10 @@ import re
 
 import numpy as np
 
-from .describe import clean_title
 from .grade import arousal
 from .media.facecam import CAM_SHARE
 
-VERSION = 4  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak
+VERSION = 5  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim
 STEP = 0.1
 LONGEST = 45.0      # trimmed when longer than this (half the second batch of top clips ran 35 to 50 s)
 TARGET = 34.0       # length of the trimmed clip: room for the setup, still short enough to finish
@@ -32,42 +31,7 @@ SHORTEST = 12.0     # never trimmed below this
 HEADLINE_Y = 17     # % from the top
 QUOTE_Y, QUOTE_SIZE = 58, 66  # a quote headline: white, mid-frame
 HEADLINE_SIZE = 76  # pixels on a 1080-wide video: about 3% of the height per line, like the top clips
-EMOJI = {"amusement": "😭", "awe": "😳", "anger": "😤", "anxiety": "😬"}
 SHOCK = re.compile(r"\b(wtf|what the|no way|bro|oh my god|omg|are you serious|insane|crazy)\b", re.I)
-HAS_EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿]")
-
-
-def _sentence_case(text: str, creator: str | None) -> str:
-    """ALL CAPS reads as shouting: it becomes a normal sentence, keeping the streamer's name capitalized."""
-    letters = [ch for ch in text if ch.isalpha()]
-    if not letters or sum(ch.isupper() for ch in letters) / len(letters) <= 0.6:
-        return text
-    text = text.lower()
-    text = text[:1].upper() + text[1:]
-    return re.sub(re.escape(creator), creator, text, flags=re.I) if creator else text
-
-
-def headline(post_title: str, clip_title: str, creator: str | None, speech: str = "") -> str:
-    return plan_headline(post_title, clip_title, creator, speech)[0]
-
-
-def plan_headline(post_title: str, clip_title: str, creator: str | None, speech: str = "") -> tuple[str, bool]:
-    """(headline, is_quote). The source post's own caption is used when it's a real sentence (other clip pages
-    write exactly this kind of line) and goes in the white box. Otherwise the line said in the clip is quoted,
-    which top pages show as plain white text across the middle: "You're not growing" 😭❤️."""
-    base = _sentence_case(clean_title(post_title or "", None), creator) if post_title else ""
-    quote = False
-    if len(base.split()) < 4 or base.lower().startswith(("stream moment", "clip")):
-        line = _sentence_case(clean_title(clip_title or "", None), creator).strip(" “”\"")
-        quote = bool(line) and len(line.split()) <= 12
-        base = f"“{line.rstrip('.')}”" if quote else (line or (f"{creator} moment" if creator else ""))
-    base = base[:100].rstrip(" ,;:-")
-    if not HAS_EMOJI.search(base):
-        text = f"{base} {speech}"
-        feels = arousal(text)
-        mark = "💀" if SHOCK.search(text) and not feels else EMOJI.get(feels[0], "😳") if feels else "😳"
-        base = f"{base} {mark}"
-    return base, quote
 
 
 def best_window(db: np.ndarray | None, words: list, dur: float) -> tuple[float, float]:
@@ -88,6 +52,19 @@ def best_window(db: np.ndarray | None, words: list, dur: float) -> tuple[float, 
                   and (i == 0 or w.start - words[i - 1].end > 0.35 or words[i - 1].text.rstrip().endswith((".", "!", "?")))]
         if firsts:
             start = max(0.0, min(firsts, key=lambda a: abs(a - start)) - 0.1)
+    # The climax: on any clip with a clear peak, end once it has settled (the reaction plays out, then cut: no
+    # trailing chatter), and don't spend more than ~25 s building up to it.
+    peak = peak_moment(db, start, end)
+    if peak is not None:
+        level = np.convolve(db - np.median(db), np.ones(10) / 10, mode="same")
+        calm = next((k * STEP for k in range(int((peak + 2) / STEP), int(end / STEP)) if (level[k:k + 15] < 2).all()), None)
+        if calm is not None and end - calm > 3:
+            spoken = [w.end for w in words if calm - 1 <= w.end <= calm + 2.5]  # finish the sentence being said
+            end = round(min(end, (max(spoken) if spoken else calm) + 0.6), 2)
+        if peak - start > 28:
+            starts = [w.start for i, w in enumerate(words) if peak - 26 <= w.start <= peak - 12
+                      and (i == 0 or w.start - words[i - 1].end > 0.35 or words[i - 1].text.rstrip().endswith((".", "!", "?")))]
+            start = (min(starts) - 0.1) if starts else peak - 25
     # Open on sound: the first word, or the first moment that isn't near silence.
     first_word = next((w.start for w in words if w.start >= start), None)
     first_sound = None
@@ -213,12 +190,3 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
             e["hook"] = [round(edit["start"] + h[0], 3), round(edit["start"] + h[1], 3)]
     e["preedited"], e["preedit_version"] = True, VERSION
     return e
-
-
-def caption_source(headline_text: str, post_title: str) -> str:
-    """What the post caption is built from: the headline (what it's about, which TikTok and Instagram search
-    read) plus the source post's own hashtags. Falls back to the source post when there's no headline."""
-    if not headline_text:
-        return post_title
-    tags = " ".join(re.findall(r"#\w+", post_title or ""))
-    return f"{headline_text} {tags}".strip()
