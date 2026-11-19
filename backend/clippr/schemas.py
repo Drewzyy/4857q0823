@@ -161,8 +161,23 @@ class SafetySettings(Strict):
 
 class PostingSettings(Strict):
     auto_post_kill_switch: bool = False  # on: nothing posts by itself, whatever each page's Auto-post says
-    mcp_enabled: bool = True  # the local bridge Muse connects to (127.0.0.1 only, token required)
+    mcp_enabled: bool = True  # the bridge Muse connects to (token required)
+    # Where it listens: this computer only (127.0.0.1), or this computer's Tailscale address so Muse on your other
+    # devices can reach it over your private tailnet. Nothing else: never every network, never the open internet.
+    mcp_host: str = Field("127.0.0.1", max_length=15)
     mcp_port: int = Field(47821, ge=1024, le=65535)
+
+    @field_validator("mcp_host")
+    @classmethod
+    def _private_only(cls, v: str) -> str:
+        import ipaddress
+        try:
+            ip = ipaddress.IPv4Address(v.strip())
+        except ValueError:
+            raise ValueError("enter an address like 100.115.250.79 (the port is the separate number, like 47821)")
+        if str(ip) != "127.0.0.1" and ip not in ipaddress.IPv4Network("100.64.0.0/10"):
+            raise ValueError("only this computer (127.0.0.1) or a Tailscale address (100.64.x.x to 100.127.x.x) is allowed")
+        return str(ip)
     min_virality: int = Field(50, ge=0, le=100)  # clips scoring lower don't go to review
 
 

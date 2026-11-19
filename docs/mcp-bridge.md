@@ -42,6 +42,14 @@ stdio servers, use a stdio-to-HTTP bridge such as `npx mcp-remote http://127.0.0
 Check it with MCP Inspector: `npx @modelcontextprotocol/inspector`, transport "Streamable HTTP", the URL above,
 and the Authorization header. It lists 15 tools.
 
+### Muse on another device (Tailscale)
+
+Settings > Muse & posting > **Listen on**: "My Tailscale address", then enter this computer's Tailscale address
+(Tailscale app > this device, e.g. `100.115.250.79`). Muse then connects to `http://100.115.250.79:47821/mcp` with the
+same token. Only Tailscale's private range (100.64.0.0 to 100.127.255.255) or this computer (127.0.0.1) is accepted:
+never every network (0.0.0.0) or a home network address, so the bridge is never on the open internet. If Tailscale
+isn't running, the bridge can't start on that address and Settings says so.
+
 ## Tools
 
 Read-only unless noted. Each write is recorded in the audit log with `"by": "muse"`. No tool deletes anything,

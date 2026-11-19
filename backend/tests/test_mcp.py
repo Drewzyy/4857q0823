@@ -189,3 +189,15 @@ def test_mcp_server_binds_localhost_and_fails_loudly_when_the_port_is_taken(env,
         server.stop()
     bridge = c.get("/api/bridge").json()
     assert bridge["mcp"]["url"] == f"http://127.0.0.1:{port}/mcp"
+
+
+def test_listen_address_is_this_computer_or_tailscale_only(env):
+    ctx, c, fake = env
+    ok = lambda host: c.put("/api/settings", json={"posting": {"mcp_host": host}}).status_code  # noqa: E731
+    assert ok("100.115.250.79") == 200  # Tailscale (100.64.0.0/10)
+    assert c.get("/api/bridge").json()["mcp"]["url"].startswith("http://100.115.250.79:")
+    assert ok("127.0.0.1") == 200
+    for bad in ("0.0.0.0", "192.168.1.5", "8.8.8.8", "100.115.250.79:47821", "47821.5", "localhost"):
+        assert ok(bad) == 422, bad
+    r = c.put("/api/settings", json={"posting": {"mcp_port": 47821.5}})
+    assert r.status_code == 422

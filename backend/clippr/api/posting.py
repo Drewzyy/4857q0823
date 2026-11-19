@@ -39,7 +39,7 @@ def review(oid: int, body: ReviewIn, c=Depends(ctx), s: Session = Depends(db)):
 def bridge(c=Depends(ctx), s: Session = Depends(db)):
     cfg = load_settings(s).posting
     state = c.mcp.state() if c.mcp else {"running": False, "port": None, "error": None}
-    return {"mcp": {**state, "enabled": cfg.mcp_enabled, "url": f"http://127.0.0.1:{cfg.mcp_port}/mcp", "token": mcp.token(c)}}
+    return {"mcp": {**state, "enabled": cfg.mcp_enabled, "url": f"http://{cfg.mcp_host}:{cfg.mcp_port}/mcp", "host": cfg.mcp_host, "token": mcp.token(c)}}
 
 
 @router.post("/bridge/restart")

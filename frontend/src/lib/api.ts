@@ -54,7 +54,7 @@ export interface AppSettings {
   processing: { max_concurrent_jobs: number; cut_dead_air: boolean; hardware_encoding: boolean; viral_preedit: boolean; sound_effects: "off" | "auto"; auto_sound: string; hook_first: boolean };
   intake: { clipboard: boolean };
   safety: { banned_words: string[]; banned_scenes: string[]; banned_games: string[] };
-  posting: { auto_post_kill_switch: boolean; mcp_enabled: boolean; mcp_port: number; min_virality: number };
+  posting: { auto_post_kill_switch: boolean; mcp_enabled: boolean; mcp_host: string; mcp_port: number; min_virality: number };
 }
 export interface Bridge { mcp: { running: boolean; port: number | null; error: string | null; enabled: boolean; url: string; token: string } }
 export interface RefPost {

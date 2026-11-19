@@ -1,6 +1,7 @@
-"""The local MCP server Muse connects to: Model Context Protocol over Streamable HTTP, on 127.0.0.1 only.
+"""The MCP server Muse connects to: Model Context Protocol over Streamable HTTP, on 127.0.0.1 (this computer only,
+the default) or this computer's Tailscale address (Settings), never on every network.
 
-POST http://127.0.0.1:<port>/mcp with `Authorization: Bearer <token>`. The token is made on first run and kept in
+POST http://<address>:<port>/mcp with `Authorization: Bearer <token>`. The token is made on first run and kept in
 the OS keychain (secrets_store); Settings shows it. The port is fixed (Settings, default 47821): if it's taken the
 server doesn't start and says so in the log, rather than moving somewhere Muse won't look.
 
@@ -345,8 +346,8 @@ def create_app(ctx) -> FastAPI:
 
     @app.post("/mcp")
     async def mcp(request: Request):
-        if request.headers.get("host", "").split(":")[0] not in ("127.0.0.1", "localhost"):
-            return JSONResponse({"error": "Forbidden host"}, status_code=421)  # no DNS rebinding
+        if request.headers.get("host", "").split(":")[0] not in ("127.0.0.1", "localhost", getattr(ctx.mcp, "host", "")):
+            return JSONResponse({"error": "Forbidden host"}, status_code=421)  # only the address it listens on: no DNS rebinding
         given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         if not hmac.compare_digest(given.encode(), token(ctx).encode()):
             return JSONResponse({"error": "Missing or invalid token"}, status_code=401)
@@ -369,7 +370,7 @@ def create_app(ctx) -> FastAPI:
 
 
 class Server:
-    """Runs the MCP app on 127.0.0.1:<port> in a background thread for as long as Vyral runs."""
+    """Runs the MCP app on <address>:<port> (Settings) in a background thread for as long as Vyral runs."""
 
     def __init__(self, ctx):
         self.ctx, self.thread, self.server, self.error = ctx, None, None, None
@@ -382,10 +383,12 @@ class Server:
             return
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            sock.bind(("127.0.0.1", cfg.mcp_port))
+            sock.bind((cfg.mcp_host, cfg.mcp_port))
         except OSError as e:
             sock.close()
-            self.error = f"Port {cfg.mcp_port} is already in use ({e.strerror}); the MCP server for Muse is off. Pick another port in Settings."
+            self.error = (f"Port {cfg.mcp_port} is already in use ({e.strerror}); the MCP server for Muse is off. Pick another port in Settings."
+                          if e.errno in (48, 98, 10048) else
+                          f"Can't listen on {cfg.mcp_host} ({e.strerror}): is Tailscale running and is that this computer's Tailscale address?")
             log.error("MCP server not started: %s", self.error)
             return
         token(self.ctx)
@@ -396,8 +399,8 @@ class Server:
             if self.server.started or not self.thread.is_alive():
                 break
             threading.Event().wait(0.05)
-        self.port, self.error = cfg.mcp_port, None
-        log.info("MCP server for Muse on http://127.0.0.1:%s/mcp", cfg.mcp_port)
+        self.port, self.host, self.error = cfg.mcp_port, cfg.mcp_host, None
+        log.info("MCP server for Muse on http://%s:%s/mcp", cfg.mcp_host, cfg.mcp_port)
 
     def stop(self) -> None:
         if self.server:
