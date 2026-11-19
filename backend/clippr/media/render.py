@@ -48,7 +48,8 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
            overlay_dir: Path | None = None, zoom: float = 1.0, pan: tuple[float, float] = (0.5, 0.5), speed: float = 1.0,
            video_height: float = 0.0, cam: list[float] | None = None, bottom: Path | None = None,
            gaps: list[tuple[float, float]] | None = None, layers: list[Layer] = (), use_hardware: bool = True,
-           sounds: list[tuple[Path, float, float]] = (), hook: tuple[float, float] | None = None) -> Path:
+           sounds: list[tuple[Path, float, float]] = (), hook: tuple[float, float] | None = None,
+           punch: list[tuple[float, float]] = ()) -> Path:
     """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in).
     video_height: how much of the frame's height the sharp video fills (0.45 = 45%). A wide stream is trimmed at
     the sides (where pan says) to get there; 0 or anything below the stream's full-width height keeps it whole.
@@ -124,6 +125,10 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
             f"[b][f]overlay=(W-w)/2:(H-h)/2[base]"
         )
     last = "base"
+    for n, (a, b) in enumerate(punch):  # punch-in: 8% closer for a moment (finished-clip seconds), a hard cut in and out
+        vf += (f";[{last}]split[pa{n}][pb{n}];[pb{n}]crop=iw/1.08:ih/1.08,scale={W}:{H}:flags=lanczos,setsar=1[pz{n}];"
+               f"[pa{n}][pz{n}]overlay=0:0:enable='between(t,{a:.3f},{b:.3f})'[pu{n}]")
+        last = f"pu{n}"
     for n, ly in enumerate(layers):
         # A video plays from its own start when its stretch begins; a picture just shows for the stretch.
         k = add_input("-i", str(ly.path.resolve())) if ly.video else add_input("-loop", "1", "-t", f"{ly.end:.3f}", "-i", str(ly.path.resolve()))

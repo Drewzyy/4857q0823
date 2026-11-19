@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, Plus, Settings2, Trash2, Upload, X } from "lucide-react";
 import CreatorPicker from "../components/CreatorPicker";
-import { api, PLATFORM_LABEL, type Creator, type Destination, type DestinationSettings, type Platform } from "../lib/api";
+import { api, PLATFORM_LABEL, type Creator, type Destination, type ClipKind, type DestinationSettings, type Platform } from "../lib/api";
 import { ConfirmModal, CreatorChip, Empty, ErrorNote, Loading, Modal, PlatformBadge, Toggle, useToast } from "../components/ui";
 import { OverlayEditor } from "../components/OverlayEditor";
 
@@ -134,7 +134,8 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
   const save = async () => {
     setBusy(true); setError(null);
     const tags = hashtags.split(/[\s,]+/).filter(Boolean).map((t) => (t.startsWith("#") ? t : `#${t}`));
-    try { await api.updateDestination(dest.id, { creator_ids: creatorIds, settings: { default_caption: s.default_caption, hashtags: tags, format: s.format, overlay: s.overlay } }); onSaved(); }
+    try { await api.updateDestination(dest.id, { creator_ids: creatorIds, settings: { default_caption: s.default_caption, hashtags: tags, format: s.format, overlay: s.overlay,
+      content_kinds: s.content_kinds, postiz_integration_id: s.postiz_integration_id, auto_post: s.auto_post, daily_cap: s.daily_cap } }); onSaved(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -146,6 +147,7 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
       footer={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy && <span className="spinner" />}Save</button></>}>
       <div className="field"><span className="label-text">Streamers whose clips go here</span>
         <CreatorPicker label="Streamers for this page" creators={creators} value={creatorIds} onChange={setCreatorIds} empty="None yet" hint="Clips of every streamer picked here go to this page. You can also set this from each streamer under Source Accounts." /></div>
+      <PostingFields s={s} setS={setS} />
       <h3>Caption added to every clip</h3>
       <div className="field"><label htmlFor="ds-cap">Extra caption text</label>
         <textarea id="ds-cap" className="textarea" rows={2} maxLength={2200} value={s.default_caption} onChange={(e) => setS({ ...s, default_caption: e.target.value })} placeholder="Follow for daily clips" /></div>
@@ -175,5 +177,37 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
         <span className="hint">Vyral encodes at near-lossless quality up to this rate. It never upscales: if the stream is 720p the clip is honest 720p detail on a 1080p canvas.</span></div>
       {error && <ErrorNote error={error} />}
     </Modal>
+  );
+}
+
+const KINDS: [ClipKind, string][] = [["regular", "Regular clips"], ["gaming", "Gaming"], ["podcast", "Podcasts"]];
+
+/** Which kinds of clips this page takes, its Postiz channel, and Auto-post (off unless you turn it on). */
+function PostingFields({ s, setS }: { s: DestinationSettings; setS: (v: DestinationSettings) => void }) {
+  const bridge = useQuery({ queryKey: ["bridge"], queryFn: api.bridge });
+  const channels = useQuery({ queryKey: ["postiz-channels"], queryFn: api.postizChannels, enabled: !!bridge.data?.postiz.connected, retry: false });
+  const kinds = s.content_kinds ?? ["regular", "gaming", "podcast"];
+  return (
+    <>
+      <div className="field"><span className="label-text">Kinds of clips</span>
+        <div className="row wrap" style={{ gap: 12 }}>{KINDS.map(([k, l]) => (
+          <label key={k} className="check"><input type="checkbox" checked={kinds.includes(k)}
+            onChange={(e) => setS({ ...s, content_kinds: e.target.checked ? [...kinds, k] : kinds.filter((x) => x !== k) })} />{l}</label>))}</div>
+        <span className="hint">A streamer's clips are regular, gaming or podcast (set on the streamer under Source Accounts). This page only gets the kinds ticked here.</span></div>
+      <div className="field"><label htmlFor="ds-postiz">Postiz channel</label>
+        {bridge.data?.postiz.connected ? (
+          <select id="ds-postiz" className="select" value={s.postiz_integration_id} onChange={(e) => setS({ ...s, postiz_integration_id: e.target.value })}>
+            <option value="">None</option>
+            {(channels.data ?? []).map((c) => <option key={c.id} value={c.id} disabled={c.disabled}>{c.name} ({c.provider}){c.disabled ? ", off in Postiz" : ""}</option>)}
+          </select>) : <span className="hint">Connect Postiz in Settings &gt; Muse &amp; posting to pick this page's channel.</span>}
+        {channels.error && <span className="hint" style={{ color: "var(--warn)" }}>{channels.error instanceof Error ? channels.error.message : "Couldn't load Postiz channels"}</span>}</div>
+      <div className="row wrap" style={{ gap: 12 }}>
+        <Toggle label="Auto-post" checked={s.auto_post} onChange={(v) => setS({ ...s, auto_post: v })} />
+        <span className="small">Auto-post: approved clips that passed the safety check go out without your phone approval</span>
+        <label className="small" htmlFor="ds-cap-n">Daily cap</label>
+        <input id="ds-cap-n" className="input" type="number" min={1} max={20} style={{ width: 70 }} value={s.daily_cap} onChange={(e) => setS({ ...s, daily_cap: Number(e.target.value) })} />
+      </div>
+      <span className="hint">Off by default. It can be turned on only after 5 reviewed posts on this page went out. Settings has a kill switch that stops all of it.</span>
+    </>
   );
 }

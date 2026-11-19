@@ -246,6 +246,7 @@ class ClipEdit(Strict):
     sounds: list[SoundEdit] = Field(default_factory=list, max_length=20)
     # A few seconds (source seconds) shown first as a teaser, then the clip plays from its start.
     hook: list[float] | None = Field(None, min_length=2, max_length=2)
+    punch: list[float] | None = Field(None, min_length=2, max_length=2)  # a subtle zoom on the peak (source seconds)
     preedited: bool = False  # Vyral's viral pre-edit has been applied (see preedit.py)
     preedit_version: int = Field(0, ge=0)  # which version of it; clips get a newer version once
 

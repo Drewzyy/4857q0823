@@ -64,7 +64,7 @@ def inside(t: float, rel: list[tuple[float, float]]) -> bool:
 
 # Fillers that are never part of what's being said. "like" and "you know" are left alone: too often real words.
 FILLER = re.compile(r"^(u+h+m*|u+m+|e+r+m+|e+h+|h+m+|m+h*m+|a+h+m*)[.,!?…]*$", re.I)
-PAUSE = 0.7          # a gap between words longer than this is tightened
+PAUSE = 0.4          # a quiet gap between words longer than this is tightened
 PAUSE_LEFT = 0.25    # how much of a tightened pause stays, so speech still breathes
 WORD_PAD = 0.04
 

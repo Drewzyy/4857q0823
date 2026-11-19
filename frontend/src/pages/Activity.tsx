@@ -88,6 +88,7 @@ export default function ActivityPage() {
                   <div className="small" style={{ marginTop: 4, color: r.status === "failed" ? "#ff8a8d" : "var(--muted)" }}>
                     {r.status === "processing" && <span className="spinner" style={{ width: 11, height: 11, display: "inline-block", verticalAlign: "-1px", marginRight: 6 }} />}
                     {r.status_detail}
+                    {r.queue_position ? <span className="pill nodot" style={{ marginLeft: 6 }}>#{r.queue_position} in line</span> : null}
                     {r.vod_url && r.status === "ready" && <> · found at <a href={r.vod_url} target="_blank" rel="noopener noreferrer">{hms(r.vod_start)}</a></>}
                   </div>
                 </div>

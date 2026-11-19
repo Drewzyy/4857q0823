@@ -308,7 +308,11 @@ def list_references(include_baseline: bool = False, limit: int = 100, s: Session
     q = q.where(ReferenceVideo.status != "removed")
     if not include_baseline:
         q = q.where(ReferenceVideo.status != "baseline")
-    return [_reference(r) for r in s.scalars(q).unique()]
+    # Where each waiting clip is in the build line (the heavy work runs a few at a time; the rest wait their turn).
+    line = s.scalars(select(Job).where(Job.status == "queued", Job.kind.in_(("clip.build", "clip.rerender", "longform.make")))
+                     .order_by(Job.run_after, Job.id)).all()
+    place = {j.payload.get("reference_id"): n for n, j in enumerate(line, 1) if j.kind == "clip.build"}
+    return [{**_reference(r), "queue_position": place.get(r.id)} for r in s.scalars(q).unique()]
 
 
 class ManualIn(BaseModel):

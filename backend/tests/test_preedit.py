@@ -167,3 +167,20 @@ def test_render_plays_the_hook_then_the_clip_from_the_start(tmp_path):
     rms = lambda a, b: float(np.sqrt(np.mean(x[int(a * 8000):int(b * 8000)] ** 2)))  # noqa: E731
     assert rms(0.3, 1.7) > 5 * rms(3, 7)  # the loud part plays first...
     assert rms(8.3, 9.7) > 5 * rms(3, 7)  # ...and again in its place (2 s later than in the source)
+
+
+def test_punch_in_zooms_only_on_the_moment(tmp_path):
+    from clippr.media.ffmpeg import run
+    from clippr.media.render import OutputFormat, render
+    import cv2
+    src = tmp_path / "src.mp4"  # a white frame with a black border: zooming in pushes the border off screen
+    run(["-f", "lavfi", "-i", "color=c=white:size=320x568:rate=30:duration=4", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+         "-vf", "drawbox=x=0:y=0:w=320:h=568:color=black:t=12", "-t", "4", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src)])
+    out = render(src, tmp_path / "o.mp4", OutputFormat(320, 568, 30), duration=4, punch=[(2.0, 3.0)], use_hardware=False)
+    def corner(t):
+        f = tmp_path / f"f{t}.png"
+        run(["-ss", str(t), "-i", str(out), "-frames:v", "1", str(f)])
+        return int(cv2.imread(str(f))[3, 3].mean())
+    assert corner(1.0) < 60 and corner(2.5) > 200 and corner(3.5) < 60  # border, zoomed past it, border again
+    e = preedit.apply(ClipEdit(start=10, end=40).model_dump(), [], np.where((np.arange(300) >= 150) & (np.arange(300) < 160), -5.0, -30.0), "x")
+    assert e["punch"] and 24.5 < e["punch"][0] < 25.5

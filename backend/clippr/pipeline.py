@@ -702,6 +702,7 @@ class Pipeline:
         rel: list[tuple[float, float]] = []
         layers: list[Layer] = []
         sounds: list = []
+        punch: list = []
         hook, lead = None, 0.0
         zoom, pan, speed, texts, video_height = 1.0, (0.5, 0.5), 1.0, [], 0.0  # no edit: a clip from before framing was saved
         if edit:
@@ -742,6 +743,12 @@ class Pipeline:
                     sounds.append((f, (x["at"] - start - hook[0]) / speed, x["volume"]))
                 if not deadair.inside(x["at"] - start, rel):
                     sounds.append((f, at(x["at"] - start), x["volume"]))
+            if edit.get("punch"):
+                p0, p1 = edit["punch"][0] - start, edit["punch"][1] - start
+                if 0 <= p0 < dur and not deadair.inside(p0, rel):
+                    punch.append((at(p0), at(min(p1, dur))))
+                    if in_hook(p0):
+                        punch.append(((p0 - hook[0]) / speed, (min(p1, hook[1]) - hook[0]) / speed))
         out_dur = (dur - sum(b - a for a, b in rel)) / speed + lead
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         placed: list = []
@@ -754,7 +761,7 @@ class Pipeline:
             use_hardware = load_settings(s).processing.hardware_encoding
         render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan,
                speed=speed, video_height=video_height, cam=cam, bottom=bottom, gaps=rel, layers=layers, use_hardware=use_hardware,
-               sounds=sounds, hook=hook)
+               sounds=sounds, hook=hook, punch=punch)
         cover = 1.0
         if edit and edit.get("thumb_at") is not None:
             t = min(max(edit["thumb_at"] - start, 0.0), dur)

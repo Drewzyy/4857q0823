@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Pencil, Plus, RefreshCw, Trash2, Users } from "lucide-react";
-import { api, PLATFORM_LABEL, type Destination, type Source, type StreamerT } from "../lib/api";
+import { api, PLATFORM_LABEL, type ClipKind, type Destination, type Source, type StreamerT } from "../lib/api";
 import { Picker } from "../components/CreatorPicker";
 import { ConfirmModal, Empty, ErrorNote, Loading, Modal, PlatformBadge, relTime, Toggle, useToast } from "../components/ui";
 
@@ -93,13 +93,14 @@ function StreamerModal({ streamer, pages, onClose, onDone }: { streamer: Streame
   const [links, setLinks] = useState((streamer?.links ?? []).join("\n"));
   const [pageIds, setPageIds] = useState<number[]>(streamer?.destination_ids ?? []);
   const [permission, setPermission] = useState(!!streamer);
+  const [kind, setKind] = useState<ClipKind>(streamer?.kind ?? "regular");
   const [busy, setBusy] = useState(false);
   const list = links.split(/\s+/).map((l) => l.trim()).filter(Boolean);
   const save = async () => {
     setBusy(true);
     try {
-      if (streamer) await api.updateStreamer(streamer.id, { name: name.trim(), links: list, destination_ids: pageIds });
-      else await api.addStreamer({ name: name.trim(), links: list, destination_ids: pageIds, permission });
+      if (streamer) await api.updateStreamer(streamer.id, { name: name.trim(), links: list, destination_ids: pageIds, kind });
+      else await api.addStreamer({ name: name.trim(), links: list, destination_ids: pageIds, permission, kind });
       toast("ok", streamer ? "Saved" : `${name.trim()} added. Vyral is watching their channel.`);
       onDone();
     } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
@@ -115,6 +116,10 @@ function StreamerModal({ streamer, pages, onClose, onDone }: { streamer: Streame
         <div className="field"><label htmlFor="st-links">Stream link</label>
           <textarea id="st-links" className="input" rows={2} value={links} onChange={(e) => setLinks(e.target.value)} placeholder="https://www.twitch.tv/valkyrae" />
           <span className="hint">Their Twitch or Kick channel (Vyral watches its most-watched new clips), or YouTube (searched for moments). One per line if they stream in more than one place.</span></div>
+        <div className="field"><label htmlFor="st-kind">Kind of clips</label>
+          <select id="st-kind" className="select" style={{ width: 200 }} value={kind} onChange={(e) => setKind(e.target.value as ClipKind)}>
+            <option value="regular">Regular</option><option value="gaming">Gaming</option><option value="podcast">Podcast</option></select>
+          <span className="hint">Pages take the kinds ticked in their settings: gaming clips go to a gaming page, podcasts to a podcast page.</span></div>
         <div className="field"><span className="label-text">Post to</span>
           <Picker label="Pages for this streamer" items={pageItems(pages)} value={pageIds} onChange={setPageIds} empty="Pick pages"
             hint={pages.length ? "Clips from this streamer go to every page ticked here." : "Add your pages under Destinations first."} /></div>

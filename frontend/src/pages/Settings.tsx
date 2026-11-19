@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { Bell, ExternalLink, Send, ShieldCheck, Trash2 } from "lucide-react";
+import { MusePosting } from "../components/MusePosting";
 import { api, type AppSettings, type NotifyCategory, type NotifyState } from "../lib/api";
 import { ErrorNote, Loading, relTime, Toggle, useToast } from "../components/ui";
 
-type Tab = "general" | "notifications" | "security" | "shortcuts";
+type Tab = "general" | "muse" | "notifications" | "security" | "shortcuts";
 
 export default function SettingsPage() {
   const [params, setParams] = useSearchParams();
@@ -14,11 +15,12 @@ export default function SettingsPage() {
     <div className="page">
       <div className="page-head"><div><h1>Settings</h1><p>Everything is stored on this computer.</p></div></div>
       <div className="tabs" role="tablist">
-        {([["general", "Monitoring & storage"], ["notifications", "Notifications"], ["security", "Security & data"], ["shortcuts", "Shortcuts"]] as const).map(([k, l]) => (
+        {([["general", "Monitoring & storage"], ["muse", "Muse & posting"], ["notifications", "Notifications"], ["security", "Security & data"], ["shortcuts", "Shortcuts"]] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setParams({ tab: k })}>{l}</button>
         ))}
       </div>
       {tab === "general" && <General />}
+      {tab === "muse" && <MusePosting />}
       {tab === "notifications" && <><Notifications /><PhoneInbox /></>}
       {tab === "security" && <Security />}
       {tab === "shortcuts" && <Shortcuts />}

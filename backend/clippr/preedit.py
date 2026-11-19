@@ -24,7 +24,7 @@ from .describe import clean_title
 from .grade import arousal
 from .media.facecam import CAM_SHARE
 
-VERSION = 3  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front
+VERSION = 4  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak
 STEP = 0.1
 LONGEST = 45.0      # trimmed when longer than this (half the second batch of top clips ran 35 to 50 s)
 TARGET = 34.0       # length of the trimmed clip: room for the setup, still short enough to finish
@@ -104,18 +104,25 @@ def best_window(db: np.ndarray | None, words: list, dur: float) -> tuple[float, 
     return round(start, 2), round(end, 2)
 
 
-def auto_sound(db: np.ndarray | None, a: float, b: float, speech: str) -> tuple[str, float] | None:
-    """One sound effect for the biggest moment in [a, b) (seconds from the clip's start), or None when nothing
-    stands out enough to deserve one. (name, when it starts.) A riser starts early so it peaks on the moment."""
+def peak_moment(db: np.ndarray | None, a: float, b: float) -> float | None:
+    """When the biggest moment in [a, b) happens (seconds from the clip's start), or None when nothing clearly
+    stands out, or it's right at an edge (it would cover the hook or get cut off)."""
     if db is None or len(db) < 20:
         return None
     i, j = int(a / STEP), min(len(db), int(b / STEP))
     level = np.convolve(db - np.median(db[i:j]), np.ones(5) / 5, mode="same")[i:j]
-    if not len(level) or level.max() < 8:  # a calm clip: a sound effect would feel forced
+    if not len(level) or level.max() < 8:
         return None
     peak = a + float(np.argmax(level)) * STEP
-    if peak - a < 1.0 or b - peak < 0.5:
-        return None  # right at an edge, it would cover the hook or get cut off
+    return peak if peak - a >= 1.0 and b - peak >= 0.5 else None
+
+
+def auto_sound(db: np.ndarray | None, a: float, b: float, speech: str) -> tuple[str, float] | None:
+    """One sound effect for the biggest moment, or None when a sound effect would feel forced. (name, when it
+    starts.) A riser starts early so it peaks on the moment."""
+    peak = peak_moment(db, a, b)
+    if peak is None:
+        return None
     feels = arousal(speech)
     if "anxiety" in feels and peak - a > 2.5:
         return "riser", round(peak - 1.5, 2)
@@ -197,6 +204,9 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
                 name, when = choice, (when + 1.5 if name == "riser" else when)
             e["sounds"] = [{"name": name, "at": round(edit["start"] + when, 3), "volume": 0.6}]
     e["texts"] = texts[:20]
+    peak = peak_moment(db, a, b)
+    if peak is not None and not e.get("punch"):  # a subtle push in on the moment itself, never the whole clip
+        e["punch"] = [round(edit["start"] + peak - 0.15, 3), round(edit["start"] + min(b, peak + 1.4), 3)]
     if hook and not e.get("hook"):
         h = pick_hook(db, words, a, b)
         if h:

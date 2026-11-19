@@ -81,7 +81,14 @@ export function HookCard({ e, patch, at, seek }: { e: ClipEditT; patch: (p: Part
           <button className="btn ghost sm" onClick={() => seek(h[0])}>Watch it</button>
         </div>
       ) : <p className="small faint">No hook. The clip plays from its start.</p>}
-      <p className="small faint">The best few seconds up front stop the scroll; the clip then shows how it got there. The preview here plays in order; the saved video has the hook first.</p>
+      {e.punch ? (
+        <div className="row small" style={{ gap: 8 }}>
+          <span>Punch-in: 8% closer at {(e.punch[0] - e.start).toFixed(1)} s for {(e.punch[1] - e.punch[0]).toFixed(1)} s, on the big moment.</span>
+          <button className="btn ghost sm" onClick={() => seek(e.punch![0])}>Watch it</button>
+          <button className="btn ghost sm" onClick={() => patch({ punch: null })}>No punch-in</button>
+        </div>
+      ) : <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} disabled={!canSet} onClick={() => patch({ punch: [at, Math.min(e.end, at + 1.5)] })}>Punch in at the playhead</button>}
+      <p className="small faint">The best few seconds up front stop the scroll; the clip then shows how it got there. The preview here plays in order and without the punch-in; the saved video has both.</p>
     </div>
   );
 }

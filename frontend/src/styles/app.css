@@ -197,6 +197,7 @@ dialog.modal::backdrop { background: rgba(0,0,0,0.6); backdrop-filter: blur(3px)
 .empty svg { color: var(--faint); }
 .banner { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); border: 1px solid rgba(139,92,246,.25); }
 .banner.warn { background: var(--warn-soft); border-color: rgba(217,164,65,.3); }
+.banner.err { background: var(--err-soft); border-color: rgba(229,72,77,.35); }
 .banner svg { flex: none; margin-top: 1px; }
 .bar { height: 6px; border-radius: 99px; background: var(--card-3); overflow: hidden; }
 .bar > div { height: 100%; background: var(--accent); border-radius: 99px; }

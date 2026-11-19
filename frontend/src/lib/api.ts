@@ -4,6 +4,7 @@ export type Platform = "tiktok" | "youtube" | "instagram" | "facebook" | "twitch
 
 export interface Creator { id: number; name: string; color: string; notes: string; vod_channels: string[]; clip_permission: boolean; sources?: number; destinations?: number }
 export interface StreamerT {
+  kind: ClipKind;
   id: number; name: string; color: string; links: string[]; destination_ids: number[]; watching: boolean;
   channels: { id: number; platform: Platform; username: string; monitoring: "active" | "paused"; last_check: string | null; next_check: string | null; error: string | null }[];
   posts: number; clips: number;
@@ -23,7 +24,9 @@ export interface TextStyle { enabled: boolean; font: FontKey; size: number; colo
 export interface Overlay { title: TextStyle & { duration: number }; captions: TextStyle & { words_per_caption: number }; signature_emoji?: string }
 export interface SoundT { name: string; label: string; use: string; seconds: number; mine: boolean }
 export interface SoundEditT { name: string; at: number; volume: number }
+export type ClipKind = "regular" | "gaming" | "podcast";
 export interface DestinationSettings {
+  content_kinds: ClipKind[]; postiz_integration_id: string; auto_post: boolean; daily_cap: number;
   overlay: Overlay;
   default_caption: string; hashtags: string[];
   format: { aspect: "9:16" | "16:9" | "1:1"; resolution: string; fps: number; codec: "h264" | "h265"; bitrate_mbps: number };
@@ -49,8 +52,13 @@ export interface AppSettings {
   storage: { retention_days: number };
   processing: { max_concurrent_jobs: number; cut_dead_air: boolean; hardware_encoding: boolean; viral_preedit: boolean; sound_effects: "off" | "auto"; auto_sound: string; hook_first: boolean };
   intake: { clipboard: boolean };
+  safety: { banned_words: string[]; banned_scenes: string[]; banned_games: string[] };
+  posting: { postiz_url: string; auto_post_kill_switch: boolean; mcp_enabled: boolean; mcp_port: number; min_virality: number };
 }
+export interface Bridge { mcp: { running: boolean; port: number | null; error: string | null; enabled: boolean; url: string; token: string }; postiz: { connected: boolean; url: string } }
+export interface PostizChannel { id: string; name: string; provider: string; picture: string | null; disabled: boolean }
 export interface RefPost {
+  queue_position?: number | null;
   id: number; platform: string; url: string; title: string; thumbnail_url: string | null; posted_at: string | null;
   status: "new" | "processing" | "ready" | "no_match" | "needs_setup" | "failed" | "baseline" | "duplicate"; status_detail: string;
   source: { id: number; username: string } | null; creator: { id: number; name: string; color: string } | null;
@@ -62,6 +70,7 @@ export interface ClipOutputT {
   destination: { id: number; display_name: string; handle: string } | null;
   width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; has_thumbnail: boolean; uploaded_at: string | null;
   video_title: string; overlay: Overlay; post_url: string | null; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
+  review: "pending" | "approved" | "rejected"; review_note: string; reviewed_by: string; postiz_state: string | null; postiz_error: string | null;
 }
 export interface LongformMoment { start: number; end: number; peak: number; score: number; why: string[]; text: string; clip_id?: number; tier?: string | null; clip_title?: string | null }
 export interface LongformT {
@@ -69,18 +78,22 @@ export interface LongformT {
   status: "new" | "processing" | "ready" | "failed"; status_detail: string; duration: number | null; created_at: string; moments: LongformMoment[];
 }
 export interface GradeT { score: number; tier: "S" | "A" | "B" | "C" | "D"; parts: { name: string; points: number; max: number; note: string }[]; tips: string[] }
+export interface SafetyT {
+  status: "pass" | "review" | "fail"; not_checked: string[];
+  flags: { category: string; level: "fail" | "review"; reason: string; at: number | null; confidence: number }[];
+}
 export interface ClipT {
   id: number; title: string; status: string; created_at: string; expires_at: string;
   creator: { id: number; name: string; color: string } | null; vod_url: string | null; vod_start: number | null; vod_end: number | null;
   stream_date: string | null; captions_text: string; has_captions: boolean; captions_note: string; editable: boolean;
-  reference: RefPost | null; outputs: ClipOutputT[]; grade: GradeT | null;
+  reference: RefPost | null; outputs: ClipOutputT[]; grade: GradeT | null; safety: SafetyT | null;
 }
 export interface TextOverlayT { text: string; start: number; end: number; y_percent: number; size: number; color: string; font: FontKey; all_caps: boolean; outline: number; box?: boolean; headline?: boolean }
 export interface LayerT { media_id: number; start: number; end: number; x: number; y: number; width: number }
 export interface MediaItemT { id: number; name: string; kind: "video" | "image" | "audio"; width: number | null; height: number | null; duration: number | null; available: boolean }
 export interface PresetData { texts: TextOverlayT[]; layers: LayerT[]; bottom_media: number | null }
 export interface PresetT { id: number; name: string; data: PresetData }
-export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked" | "split"; cam: number[] | null; bottom_media: number | null; cut_dead_air: boolean; gaps: number[][]; cuts: number[][]; thumb_at: number | null; layers: LayerT[]; texts: TextOverlayT[]; hide_title?: boolean; preedited?: boolean; sounds: SoundEditT[]; hook?: number[] | null }
+export interface ClipEditT { start: number; end: number; video_height: number; zoom: number; pan_x: number; pan_y: number; speed: number; layout: "normal" | "stacked" | "split"; cam: number[] | null; bottom_media: number | null; cut_dead_air: boolean; gaps: number[][]; cuts: number[][]; thumb_at: number | null; layers: LayerT[]; texts: TextOverlayT[]; hide_title?: boolean; preedited?: boolean; sounds: SoundEditT[]; hook?: number[] | null; punch?: number[] | null }
 export interface EditorData {
   id: number; title: string; section_duration: number; original_start: number; original_duration: number;
   edit: ClipEditT; default_video_height: number; creator: { id: number; name: string; facecam: number[] | null } | null; grade: GradeT | null; words: { start: number; end: number; text: string }[]; outputs: ClipOutputT[];
@@ -150,8 +163,8 @@ export const api = {
   health: () => request<Health>("GET", "/health"),
   dashboard: () => request<Dashboard>("GET", "/dashboard"),
   streamers: () => request<StreamerT[]>("GET", "/streamers"),
-  addStreamer: (b: { name: string; links: string[]; destination_ids: number[]; permission: boolean }) => request<StreamerT>("POST", "/streamers", b),
-  updateStreamer: (id: number, b: Partial<{ name: string; links: string[]; destination_ids: number[]; watching: boolean }>) => request<StreamerT>("PATCH", `/streamers/${id}`, b),
+  addStreamer: (b: { name: string; links: string[]; destination_ids: number[]; permission: boolean; kind: ClipKind }) => request<StreamerT>("POST", "/streamers", b),
+  updateStreamer: (id: number, b: Partial<{ name: string; links: string[]; destination_ids: number[]; watching: boolean; kind: ClipKind }>) => request<StreamerT>("PATCH", `/streamers/${id}`, b),
   removeStreamer: (id: number) => request<void>("DELETE", `/streamers/${id}`),
   creators: () => request<Creator[]>("GET", "/creators"),
   setCreatorFacecam: (id: number, cam: number[] | null) => request<Creator>("PUT", `/creators/${id}/facecam`, { cam }),
@@ -168,6 +181,14 @@ export const api = {
     request<Destination>("PATCH", `/destinations/${id}`, b),
   deleteDestination: (id: number) => request<void>("DELETE", `/destinations/${id}`),
   settings: () => request<AppSettings>("GET", "/settings"),
+  bridge: () => request<Bridge>("GET", "/bridge"),
+  restartBridge: () => request<Bridge["mcp"]>("POST", "/bridge/restart"),
+  connectPostiz: (api_key: string) => request<{ channels: PostizChannel[] }>("PUT", "/postiz", { api_key }),
+  disconnectPostiz: () => request<void>("DELETE", "/postiz"),
+  postizChannels: () => request<PostizChannel[]>("GET", "/postiz/channels"),
+  review: (oid: number, b: { decision: "approve" | "reject"; reason?: string; watched?: boolean; caption?: string }) =>
+    request<{ review: string }>("POST", `/outputs/${oid}/review`, b),
+  sendToPostiz: (oid: number, mode: "draft" | "schedule" | "now") => request<{ queued: boolean }>("POST", `/outputs/${oid}/postiz`, { mode }),
   saveSettings: (b: Partial<{ [K in keyof AppSettings]: Partial<AppSettings[K]> }>) => request<AppSettings>("PUT", "/settings", b),
   audit: () => request<AuditEntry[]>("GET", "/audit"),
   clips: (status: "ready" | "uploaded" | "expired" | "all") => request<ClipT[]>("GET", `/clips?status=${status}`),

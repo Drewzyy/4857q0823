@@ -155,6 +155,7 @@ const ClipCard = memo(function ClipCard({ clip, tab, onChange, onRemove, toast }
           ))}
         </div>
         {clip.captions_note && <div className="banner warn small">{clip.captions_note}</div>}
+        <SafetyNote safety={clip.safety} />
         {current && <OutputPanel key={current.id} o={current} clip={clip} onChange={onChange} toast={toast} />}
       </div>
     </div>
@@ -281,10 +282,55 @@ function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT
         {o.status === "ready" && <button className="btn" onClick={() => mark("uploaded")}><CheckCircle2 size={14} />Mark uploaded</button>}
         {o.status === "uploaded" && <button className="btn ghost" onClick={() => mark("ready")}><Undo2 size={14} />Not uploaded</button>}
       </div>
+      <ReviewBar o={o} clip={clip} onChange={onChange} toast={toast} />
       <PostLink o={o} onChange={onChange} toast={toast} />
       {clip.editable && <Link className="btn ghost sm" style={{ alignSelf: "flex-start" }} to={`/editor/${clip.id}`}>
         <Type size={13} />Edit the title, captions and text style in the Video Editor</Link>}
       <p className="small faint">Save to computer puts the full-quality file (and its thumbnail) in Downloads › Vyral and shows it in {navigator.userAgent.includes("Windows") ? "File Explorer" : "Finder"}.</p>
+    </div>
+  );
+}
+
+/** The safety check's result: what was flagged and when (seconds into the clip), and what a person has to look at. */
+function SafetyNote({ safety }: { safety: ClipT["safety"] }) {
+  if (!safety || safety.status === "pass") return null;
+  const fail = safety.status === "fail";
+  return (
+    <div className={`banner ${fail ? "err" : "warn"} small`} role="status" style={{ flexDirection: "column", gap: 2 }}>
+      <strong>{fail ? "Quarantined: this clip won't be reviewed or posted." : "Check before approving:"}</strong>
+      <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>{safety.flags.map((f, i) => (
+        <li key={i}>{f.category}: {f.reason}{f.at !== null ? ` at ${f.at.toFixed(1)} s` : ""}</li>))}</ul>
+    </div>
+  );
+}
+
+/** Approve or reject this page's video (yours or Muse's decision shows here), then send it to Postiz. */
+function ReviewBar({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+  const [watched, setWatched] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const go = async (fn: () => Promise<unknown>, done: string) => {
+    setBusy(true);
+    try { await fn(); toast("ok", done); onChange(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  if (clip.safety?.status === "fail" || o.status !== "ready") return null;
+  const by = o.reviewed_by === "muse" ? " by Muse" : o.reviewed_by === "auto" ? " (Auto-post)" : "";
+  return (
+    <div className="row wrap small" style={{ gap: 8, padding: "8px 0", borderTop: "1px solid var(--line)" }}>
+      {o.review === "approved" ? <span className="pill ok">Approved{by}</span>
+        : o.review === "rejected" ? <span className="pill warn" title={o.review_note}>Rejected{by}{o.review_note ? `: ${o.review_note}` : ""}</span>
+        : <span className="pill nodot">Waiting for review</span>}
+      {o.postiz_state && <span className={`pill ${o.postiz_state === "error" ? "warn" : "nodot"}`} title={o.postiz_error ?? ""}>Postiz: {o.postiz_state}{o.postiz_error ? `: ${o.postiz_error}` : ""}</span>}
+      <span className="spacer" />
+      {o.review !== "approved" && <>
+        <label className="check"><input type="checkbox" checked={watched} onChange={(e) => setWatched(e.target.checked)} />I watched it</label>
+        <button className="btn sm primary" disabled={busy || !watched} onClick={() => go(() => api.review(o.id, { decision: "approve", watched: true }), "Approved")}>Approve</button>
+      </>}
+      {o.review !== "rejected" && <button className="btn sm ghost" disabled={busy}
+        onClick={() => { const reason = window.prompt("Why? (kept with the clip)", "Not good enough"); if (reason !== null) void go(() => api.review(o.id, { decision: "reject", reason }), "Rejected"); }}>Reject</button>}
+      {o.review === "approved" && !o.postiz_state && <>
+        <button className="btn sm" disabled={busy} onClick={() => go(() => api.sendToPostiz(o.id, "draft"), "Sent to Postiz as a draft")}>Postiz draft</button>
+        <button className="btn sm primary" disabled={busy} onClick={() => go(() => api.sendToPostiz(o.id, "now"), "Posting through Postiz")}>Post now</button>
+      </>}
     </div>
   );
 }
