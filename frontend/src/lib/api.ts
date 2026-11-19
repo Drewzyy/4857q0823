@@ -197,6 +197,7 @@ export const api = {
   deleteDestination: (id: number) => request<void>("DELETE", `/destinations/${id}`),
   settings: () => request<AppSettings>("GET", "/settings"),
   bridge: () => request<Bridge>("GET", "/bridge"),
+  pickFolder: () => request<{ path: string | null }>("POST", "/pick-folder"),
   restartBridge: () => request<Bridge["mcp"]>("POST", "/bridge/restart"),
   review: (oid: number, b: { decision: "approve" | "reject"; reason?: string; watched?: boolean; caption?: string }) =>
     request<{ review: string }>("POST", `/outputs/${oid}/review`, b),

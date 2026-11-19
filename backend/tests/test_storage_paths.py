@@ -35,3 +35,23 @@ def test_new_clips_are_kept_in_the_chosen_folder(env, tmp_path):
         clip = s.get(Clip, cid)
         files = [Path(o.file_path) for o in s.query(ClipOutput).filter_by(clip_id=cid) if o.file_path]
     assert files and all(chosen in f.parents for f in files) and chosen in Path(clip.files_dir).parents
+
+
+def test_choose_folder_opens_the_computers_own_picker(env, monkeypatch):
+    import subprocess
+    ctx, c, fake = env
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="/Users/me/Clips/\n", stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert c.post("/api/pick-folder").json() == {"path": "/Users/me/Clips"}
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="User canceled"))
+    assert c.post("/api/pick-folder").json() == {"path": None}  # cancelled: nothing changes
+
+    def missing(cmd, **kw):
+        raise FileNotFoundError(cmd[0])
+    monkeypatch.setattr(subprocess, "run", missing)
+    r = c.post("/api/pick-folder")
+    assert r.status_code == 501 and "Type the folder" in r.json()["error"]["message"]

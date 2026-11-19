@@ -185,3 +185,32 @@ def retry_job(jid: int, c=Depends(ctx)):
 def audit_log(limit: int = 100, s: Session = Depends(db)):
     rows = s.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(min(max(limit, 1), 500)))
     return [{"id": a.id, "ts": a.ts.isoformat(), "action": a.action, "entity": a.entity, "entity_id": a.entity_id, "details": a.details} for a in rows]
+
+
+@router.post("/pick-folder")
+def pick_folder():
+    """Opens this computer's own folder picker (Finder on a Mac, File Explorer on Windows) and returns the folder
+    chosen, or null if cancelled. Done here, not in the window: the window gets no direct access to the computer."""
+    import subprocess
+    import sys
+    prompt = "Choose a folder for Vyral"
+    if sys.platform == "darwin":
+        # Shown by whichever app is in front (Vyral), so it doesn't open behind the window.
+        cmd = ["osascript", "-e", f'tell application (path to frontmost application as text) to POSIX path of (choose folder with prompt "{prompt}")']
+    elif sys.platform == "win32":
+        ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+              "$o=New-Object System.Windows.Forms.Form -Property @{TopMost=$true};"
+              f"$d=New-Object System.Windows.Forms.FolderBrowserDialog -Property @{{Description='{prompt}';ShowNewFolderButton=$true}};"
+              "if($d.ShowDialog($o) -eq 'OK'){[Console]::Out.Write($d.SelectedPath)}")
+        cmd = ["powershell", "-NoProfile", "-STA", "-Command", ps]
+    else:
+        cmd = ["zenity", "--file-selection", "--directory", f"--title={prompt}"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                           creationflags=0x08000000 if sys.platform == "win32" else 0)  # no console window
+    except FileNotFoundError:
+        raise ApiError(501, "unsupported", "This computer has no folder picker Vyral can open. Type the folder's path instead.")
+    except subprocess.TimeoutExpired:
+        return {"path": None}
+    path = r.stdout.strip().rstrip("/\\") if r.returncode == 0 else ""
+    return {"path": path or None}  # cancelled: null

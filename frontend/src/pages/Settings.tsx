@@ -122,10 +122,12 @@ function General() {
           <input id="ret" type="range" min={7} max={90} step={1} value={s.storage.retention_days} onChange={(e) => up("storage", { retention_days: Number(e.target.value) })} />
           <span className="hint">Applies to videos inside Vyral and its cached stream data. Files you saved to your computer are never touched. Changing this affects new clips.</span></div>
         <div className="field"><label htmlFor="savef">Save to computer puts videos in</label>
-          <input id="savef" value={s.storage.save_folder} placeholder="Downloads/Vyral" onChange={(e) => up("storage", { save_folder: e.target.value })} />
+          <div className="row"><input id="savef" className="input" style={{ flex: 1 }} value={s.storage.save_folder} placeholder="Downloads/Vyral" onChange={(e) => up("storage", { save_folder: e.target.value })} />
+            <ChooseFolder onPick={(p) => up("storage", { save_folder: p })} /></div>
           <span className="hint">A full folder path. Leave empty to use Downloads/Vyral. Vyral creates the folder if it's missing.</span></div>
         <div className="field"><label htmlFor="mediaf">Keep new clips in</label>
-          <input id="mediaf" value={s.storage.media_folder} placeholder="Vyral's own data folder" onChange={(e) => up("storage", { media_folder: e.target.value })} />
+          <div className="row"><input id="mediaf" className="input" style={{ flex: 1 }} value={s.storage.media_folder} placeholder="Vyral's own data folder" onChange={(e) => up("storage", { media_folder: e.target.value })} />
+            <ChooseFolder onPick={(p) => up("storage", { media_folder: p })} /></div>
           <span className="hint">A full folder path with room for your clips. Clips already made stay where they are.</span></div>
       </div>
 
@@ -387,5 +389,18 @@ function SoundChoice({ value, onChange }: { value: string; onChange: (v: string)
         {(sounds.data ?? []).some((x) => x.mine) && <optgroup label="Yours">{(sounds.data ?? []).filter((x) => x.mine).map((x) => <option key={x.name} value={x.name}>{x.label}</option>)}</optgroup>}
       </select>
       <span className="hint">Add your own sounds from the Sound effects card in the editor; they show up here.</span></div>
+  );
+}
+
+/** Opens this computer's own folder picker (through the Vyral service) and fills the field with the folder chosen. */
+function ChooseFolder({ onPick }: { onPick: (path: string) => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button type="button" className="btn" disabled={busy} onClick={async () => {
+      setBusy(true);
+      try { const r = await api.pickFolder(); if (r.path) onPick(r.path); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
+      finally { setBusy(false); }
+    }}>{busy ? <span className="spinner" /> : null}Choose folder</button>
   );
 }
