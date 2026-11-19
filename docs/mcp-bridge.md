@@ -20,7 +20,7 @@ Settings > **Muse & posting**:
 |---|---|---|
 | MCP bridge on | **on** | Starts with Vyral. Listens on 127.0.0.1 only. |
 | Port | **47821** | Fixed. If something else has it, the bridge stays off and the reason shows in Settings and in the log (`MCP server not started: Port 47821 is already in use`). It never moves to another port by itself. Change the port, press Save. |
-| Token | made on first run | Kept in the OS keychain (macOS Keychain / Windows Credential Manager). **Copy token** puts it on your clipboard. It's never written to the database, the log or git. |
+| Token | made on first run | Kept in the file `mcp-token` in Vyral's data folder, readable by your user only (not the keychain: macOS asks for permission again after every update and that hung startup). **Copy token** puts it on your clipboard. It's never written to the database, the log or git. |
 | Kill switch | off | On: nothing posts by itself, whatever each page's Auto-post says. |
 | Minimum virality score | 50 | Clips scoring lower never reach review. |
 | Safety blocklist | empty | Banned words, banned scenes (phrases), banned games. A match quarantines the clip. |

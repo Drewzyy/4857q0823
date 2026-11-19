@@ -2,7 +2,7 @@
 the default) or this computer's Tailscale address (Settings), never on every network.
 
 POST http://<address>:<port>/mcp with `Authorization: Bearer <token>`. The token is made on first run and kept in
-the OS keychain (secrets_store); Settings shows it. The port is fixed (Settings, default 47821): if it's taken the
+a file in the data folder only your user can read; Settings shows it. The port is fixed (Settings, default 47821): if it's taken the
 server doesn't start and says so in the log, rather than moving somewhere Muse won't look.
 
 Every tool is a thin layer over the app's own code: reads come from the same database the app shows, writes go
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import logging
 import secrets as pysecrets
 import socket
@@ -36,16 +37,26 @@ from .routing import destination_creator_ids, page_kinds, source_creator_ids
 from .schemas import ClipEdit
 
 log = logging.getLogger("clippr.mcp")
-SECRET = "mcp"  # secrets_store key: {"token": "..."}
+TOKEN_FILE = "mcp-token"  # in the data folder, readable by your user only
 PROTOCOL = "2025-06-18"
 ACTOR = "muse"
 
 
 def token(ctx) -> str:
-    t = (ctx.secrets.get(SECRET) or {}).get("token")
+    """The bridge's token: made once, kept in a file only your user can read. Not the OS keychain: every update is a
+    newly signed app to macOS, so reading a keychain item an older version saved asks for permission and waits for
+    an answer. At startup that hung the app after updates."""
+    path = ctx.config.data_dir / TOKEN_FILE
+    try:
+        t = path.read_text().strip()
+    except OSError:
+        t = ""
     if not t:
         t = pysecrets.token_urlsafe(32)
-        ctx.secrets.set(SECRET, {"token": t})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(t)
     return t
 
 

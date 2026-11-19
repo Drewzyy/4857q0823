@@ -67,10 +67,6 @@ def build_context(config: Config, secrets: SecretStore | None = None, fetcher=No
     ctx.inbox = DiscordInbox(ctx)
     from . import campaigns, mcp
 
-    try:
-        ctx.secrets.delete("postiz")  # Postiz is gone: forget any key stored for it
-    except Exception:
-        pass  # nothing stored, or no keychain here: nothing to forget
     campaigns.register(ctx)
     ctx.mcp = mcp.Server(ctx)
 

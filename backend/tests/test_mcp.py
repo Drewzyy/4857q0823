@@ -201,3 +201,15 @@ def test_listen_address_is_this_computer_or_tailscale_only(env):
         assert ok(bad) == 422, bad
     r = c.put("/api/settings", json={"posting": {"mcp_port": 47821.5}})
     assert r.status_code == 422
+
+
+def test_token_lives_in_a_private_file_not_the_keychain(env):
+    import os
+    import stat
+    ctx, c, fake = env
+    t = mcp.token(ctx)
+    path = ctx.config.data_dir / mcp.TOKEN_FILE
+    assert path.read_text() == t and mcp.token(ctx) == t  # made once, then reused
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600  # only your user can read it
+    assert ctx.secrets.get("mcp") is None  # nothing in the keychain to prompt for after an update
