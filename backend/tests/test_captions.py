@@ -76,3 +76,16 @@ def test_text_edit_keeps_timing():
     out = apply_text_edit(words, "no way she did it")
     assert texts(out) == ["no", "way", "she", "did", "it"]
     assert out[2].start == 0.8 and out[3].start == 1.2
+
+
+def test_the_speech_model_is_let_go_when_idle(tmp_path, monkeypatch):
+    from clippr.media.transcribe import WhisperTranscriber
+    t = WhisperTranscriber(tmp_path)
+    t._models = {"large-v3-turbo": object()}  # as if loaded
+    t._used = __import__("time").monotonic()
+    assert not t.release_if_idle() and t._models  # just used: kept
+    t._used -= t.IDLE + 1
+    t._busy = 1
+    assert not t.release_if_idle() and t._models  # transcribing right now: kept
+    t._busy = 0
+    assert t.release_if_idle() and t._models == {}  # idle: memory freed

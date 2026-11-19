@@ -43,6 +43,22 @@ class WhisperTranscriber:
         self.settings = settings
         self._models: dict[str, object] = {}
         self._lock = threading.Lock()
+        self._busy, self._used = 0, 0.0
+
+    IDLE = 180  # seconds: the model (about a gigabyte of memory) is let go after this long unused
+
+    def release_if_idle(self) -> bool:
+        """Free the speech model's memory when nothing has used it for a while. The next clip loads it again in a
+        few seconds; a clip being transcribed right now keeps it."""
+        import gc
+        import time
+        with self._lock:
+            if not self._models or self._busy or time.monotonic() - self._used < self.IDLE:
+                return False
+            self._models = {}
+        gc.collect()
+        log.info("speech model unloaded after %d s idle", self.IDLE)
+        return True
 
     def _load(self, name: str):
         with self._lock:
@@ -61,6 +77,20 @@ class WhisperTranscriber:
 
     def words(self, audio_or_video: Path, hints: list[str] = ()) -> list[Word]:
         """hints: names likely to be said (the streamer's name and channel), which speech models often mishear."""
+        import time
+        with self._lock:
+            self._busy += 1
+        try:
+            return self._words(audio_or_video, hints)
+        finally:
+            with self._lock:
+                self._busy -= 1
+                self._used = time.monotonic()
+            timer = threading.Timer(self.IDLE + 1, self.release_if_idle)  # let it go if nothing else comes along
+            timer.daemon = True
+            timer.start()
+
+    def _words(self, audio_or_video: Path, hints: list[str]) -> list[Word]:
         audio = np.concatenate(list(decode_audio_chunks(audio_or_video, 16000)) or [np.zeros(0, dtype=np.float32)])
         if len(audio) < 1600:
             return []
