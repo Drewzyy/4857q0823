@@ -16,23 +16,22 @@ from .deps import ApiError, ctx, db, get_or_404
 
 router = APIRouter()
 AUTO_PLATFORMS = ("tiktok", "youtube")  # public numbers readable without logging in
-HOSTS = {"tiktok": r"(tiktok\.com)", "youtube": r"(youtube\.com|youtu\.be)", "instagram": r"(instagram\.com)", "facebook": r"(facebook\.com|fb\.watch)"}
+HOSTS = {"tiktok": r"(tiktok\.com)", "youtube": r"(youtube\.com|youtu\.be)", "instagram": r"(instagram\.com)", "facebook": r"(facebook\.com|fb\.watch)", "x": r"(x\.com|twitter\.com)"}
 
 
 class PostIn(BaseModel):
     post_url: str = Field(min_length=8, max_length=500)
 
 
-@router.put("/outputs/{oid}/post")
-def set_post_link(oid: int, body: PostIn, c=Depends(ctx), s: Session = Depends(db)):
-    o = get_or_404(s, ClipOutput, oid, "Clip")
-    url = body.post_url.strip()
+def link_post(s: Session, jobs, o: ClipOutput, url: str, by: str) -> str:
+    """Record where a video was posted (the app's paste box and Muse's mark_posted): checks the link is on the video's platform."""
+    url = url.strip()
     if not re.match(rf"^https://([\w-]+\.)?{HOSTS.get(o.platform, '')}/", url):
         raise ApiError(422, "invalid_input", f"That isn't a {o.platform.title()} link. Paste the link to the post you uploaded.")
     o.post_url = url
     if o.status != "uploaded":
         o.status, o.uploaded_at = "uploaded", datetime.now(timezone.utc)
-    audit(s, "clip.post_linked", "output", oid, {"platform": o.platform})
+    audit(s, "clip.post_linked", "output", o.id, {"platform": o.platform, "by": by})
     # Copying this link to paste here may have been picked up as a new clip to make: undo that.
     base = url.split("?")[0].rstrip("/")
     for r in s.scalars(select(ReferenceVideo).where(ReferenceVideo.url.like(f"{base}%"), ReferenceVideo.source_id.is_(None))):
@@ -40,9 +39,16 @@ def set_post_link(oid: int, body: PostIn, c=Depends(ctx), s: Session = Depends(d
             if job.payload.get("reference_id") == r.id:
                 job.status = "cancelled"
         r.status, r.status_detail = "removed", "Your own post"
-    c.jobs.enqueue("campaigns.check", {}, max_attempts=1, session=s)  # it may now qualify for a campaign
+    jobs.enqueue("campaigns.check", {}, max_attempts=1, session=s)  # it may now qualify for a campaign
     if o.platform in AUTO_PLATFORMS:
-        c.jobs.enqueue("metrics.fetch", {"output_id": oid}, max_attempts=2, session=s)
+        jobs.enqueue("metrics.fetch", {"output_id": o.id}, max_attempts=2, session=s)
+    return url
+
+
+@router.put("/outputs/{oid}/post")
+def set_post_link(oid: int, body: PostIn, c=Depends(ctx), s: Session = Depends(db)):
+    o = get_or_404(s, ClipOutput, oid, "Clip")
+    url = link_post(s, c.jobs, o, body.post_url, "you")
     return {"post_url": url, "auto": o.platform in AUTO_PLATFORMS}
 
 

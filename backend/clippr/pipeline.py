@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
-from . import campaigns, describe, events, grade, identify, moments, notify, preedit, safety, titles
+from . import campaigns, content, describe, events, grade, identify, moments, notify, preedit, safety, titles
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
@@ -27,7 +27,7 @@ from .media.overlay import Word
 from .media.render import Layer, OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
 from .models import AuditLog, Clip, ClipOutput, Creator, DestinationAccount, Job, LongformVideo, MediaItem, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
-from .routing import destination_creator_ids, pages_for, source_creator_ids
+from .routing import destination_creator_ids, for_kind, pages_for, source_creator_ids
 from .schemas import VIDEO_HEIGHT, ClipEdit, OverlaySettings, lenient
 
 log = logging.getLogger("clippr.pipeline")
@@ -467,7 +467,16 @@ class Pipeline:
                 gaps = both
         return {"cut_dead_air": True, "gaps": gaps} if gaps else {}
 
-    def _auto_layout(self, source: Path, start: float, dur: float, creator_id: int | None = None) -> dict:
+    @staticmethod
+    def _faces(source: Path, start: float, dur: float) -> tuple | None:
+        """Faces in a dozen frames of the cut (facecam.sample), used for the layout and for the kind of clip."""
+        try:
+            return facecam.sample(source, start, dur)
+        except Exception:
+            log.exception("couldn't look for faces")
+            return None
+
+    def _auto_layout(self, source: Path, start: float, dur: float, creator_id: int | None = None, sampled: tuple | None = None) -> dict:
         """Stacked layout when the streamer's facecam sits in a corner over other content (a game, a video): where
         the user marked it for this streamer, else where it's found."""
         with self.ctx.db.session() as s:
@@ -479,7 +488,7 @@ class Pipeline:
             info = probe(source)
             stream = info.width / info.height if info.width and info.height else 16 / 9
             fmt = OutputFormat()
-            sampled = facecam.sample(source, start, dur)
+            sampled = sampled or facecam.sample(source, start, dur)
             cam = facecam.detect(source, start, dur, stream, fmt.width / (fmt.height * facecam.CAM_SHARE), sampled)
             if cam:
                 return {"layout": "stacked", "cam": cam}
@@ -618,7 +627,13 @@ class Pipeline:
         progress("Rendering")
         # Framing (and later edits) are saved with the clip, so a re-render never changes how it looks.
         burned = onscreen.has_captions(source, start, dur)  # captions already in the picture: two sets would clash
-        framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur, creator_id),
+        # What kind of clip it is decides its pages (the gaming page, the podcast page) and how it's graded.
+        sampled = self._faces(source, start, dur)
+        kind = content.classify(game=game, faces=sampled, motion=grade.picture(source, start, dur)[0], words=len(words), dur=dur)
+        with self.ctx.db.session() as s:
+            own = (s.get(Creator, creator_id).content_kind if creator_id and s.get(Creator, creator_id) else "") or "regular"
+        dest_info = for_kind(dest_info, kind["page_kind"] if kind["confidence"] >= 0.6 else own, own)
+        framing = ClipEdit(start=start, end=start + dur, **self._auto_layout(source, start, dur, creator_id, sampled),
                            **self._dead_air(source, start, dur, words), captions=not burned, source_has_captions=burned).model_dump()
         words = [w for w in words if not deadair.FILLER.match(w.text.strip())]  # "um" never shows in captions
         with self.ctx.db.session() as s:
@@ -646,7 +661,7 @@ class Pipeline:
 
         infos = {p: probe(p) for p in {x[5] for x in planned}}  # read before the write starts: FFmpeg is slow, the lock is shared
         with self.ctx.db.session() as s:
-            clip = Clip(reference_id=reference_id, longform_id=longform_id, creator_id=creator_id, title=title, edit=framing, safety={"game": game},
+            clip = Clip(reference_id=reference_id, longform_id=longform_id, creator_id=creator_id, title=title, edit=framing, safety={"game": game}, content=kind,
                         vod_url=vod_url, vod_start=vod_start, vod_end=vod_end, stream_date=stream_date, status="ready",
                         files_dir=str(clip_dir), source_path=str(source), source_start=start, source_duration=dur,
                         words=[w.to_dict() for w in words], captions_note=captions_note,
@@ -806,7 +821,7 @@ class Pipeline:
                          title=has_title, title_text=title_text,
                          views=ref.views if ref else None, likes=ref.likes if ref else None, shares=ref.shares if ref else None,
                          posted_at=ref.posted_at if ref else None, stream_clip=bool(ref and ref.platform in STREAM_CLIP_PLATFORMS),
-                         hook=hook_span(e, start, dur) if e else None)
+                         hook=hook_span(e, start, dur) if e else None, content=clip.content)
         hook = facts["hook"]
         try:
             db = grade.loudness(facts["source"], facts["start"], facts["dur"], facts["rel"])
@@ -827,7 +842,7 @@ class Pipeline:
             db = db[np.round(np.arange(0, len(db), facts["speed"])).astype(int).clip(0, len(db) - 1)] if len(db) else db
         mo, loop = grade.picture(facts["source"], facts["start"], facts["dur"])
         lift = grade.voice_lift(facts["source"], facts["start"], facts["dur"])
-        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"], motion=mo, lift=lift, loop=loop, title=facts["title_text"],
+        result = grade.grade(db=db, words=words, length=length, has_captions=facts["captions"], has_title=facts["title"], motion=mo, lift=lift, loop=loop, title=facts["title_text"], content=facts["content"],
                              views=facts["views"], likes=facts["likes"], shares=facts["shares"], posted_at=facts["posted_at"],
                              stream_clip=facts["stream_clip"]).to_dict()
         with self.ctx.db.session() as s:
@@ -963,6 +978,9 @@ class Pipeline:
                     continue
                 dests = pages_for(s, {clip.creator_id}) if clip.creator_id else \
                     [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()]
+                own = (clip.creator.content_kind if clip.creator else "") or "regular"
+                found = clip.content or {}
+                dests = for_kind(dests, found["page_kind"] if found.get("confidence", 0) >= 0.6 else own, own)
                 ref = clip.reference
                 for d in dests:
                     st = dict(d.settings or {})

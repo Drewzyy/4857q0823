@@ -20,6 +20,7 @@ function daysLeft(iso: string): string {
 }
 
 const TIERS = ["S", "A", "B", "C", "D"] as const;
+const KINDS = [["gaming", "Gaming"], ["podcast", "Podcast"], ["irl", "IRL"], ["chatting", "Just chatting"]] as const;
 const saved = <T,>(key: string, fallback: T): T => {
   try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; }
 };
@@ -52,10 +53,14 @@ export default function Ready() {
   const showNew = () => { setSeen(new Set((clips.data ?? []).map((c) => c.id))); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const all = useMemo(() => (seen ? (clips.data ?? []).filter((c) => seen.has(c.id)) : clips.data ?? []), [seen, clips.data]);
   const counts = useMemo(() => Object.fromEntries([...TIERS, "none"].map((t) => [t, all.filter((c) => (c.grade?.tier ?? "none") === t).length])), [all]);
+  const [kinds, setKinds] = useState<string[]>(() => saved("ready.kinds", []));
+  useEffect(() => save("ready.kinds", kinds), [kinds]);
+  const kindOf = (c: ClipT) => c.content?.kind ?? "unknown";
+  const kindCounts = useMemo(() => Object.fromEntries(KINDS.map(([k]) => [k, all.filter((c) => kindOf(c) === k).length])), [all]);
   const list = useMemo(() => {
-    const shown = grades.length ? all.filter((c) => grades.includes(c.grade?.tier ?? "none")) : all;
+    const shown = all.filter((c) => (!grades.length || grades.includes(c.grade?.tier ?? "none")) && (!kinds.length || kinds.includes(kindOf(c))));
     return bestFirst ? [...shown].sort((a, b) => (b.grade?.score ?? -1) - (a.grade?.score ?? -1)) : shown;
-  }, [all, grades, bestFirst]);
+  }, [all, grades, kinds, bestFirst]);
   const toggle = (t: string) => setGrades((g) => (g.includes(t) ? g.filter((x) => x !== t) : [...g, t]));
 
   return (
@@ -77,6 +82,11 @@ export default function Ready() {
               disabled={!counts[t] && !grades.includes(t)} onClick={() => toggle(t)}>
               {t === "none" ? "Not graded" : t} <span className="faint">{counts[t]}</span></button>))}
           {grades.length > 0 && <button className="btn ghost sm" onClick={() => setGrades([])}>Show all</button>}
+          <span className="small faint" style={{ marginLeft: 12 }}>Kind</span>
+          {KINDS.filter(([k]) => kindCounts[k] || kinds.includes(k)).map(([k, l]) => (
+            <button key={k} className={`filter-btn${kinds.includes(k) ? " on" : ""}`} aria-pressed={kinds.includes(k)}
+              onClick={() => setKinds((x) => (x.includes(k) ? x.filter((y) => y !== k) : [...x, k]))}>{l} <span className="faint">{kindCounts[k]}</span></button>))}
+          {kinds.length > 0 && <button className="btn ghost sm" onClick={() => setKinds([])}>All kinds</button>}
           <span className="spacer" />
           <label className="check small"><input type="checkbox" checked={bestFirst} onChange={(e) => setBestFirst(e.target.checked)} />Best first</label>
         </div>
@@ -130,6 +140,8 @@ const ClipCard = memo(function ClipCard({ clip, tab, onChange, onRemove, toast }
       <div className="stack" style={{ minWidth: 0 }}>
         <div className="row wrap">
           <GradeBadge grade={clip.grade} />
+          {clip.content && <span className="chip small" title={`Detected: ${clip.content.why.join("; ")} (${Math.round(clip.content.confidence * 100)}% sure)`}>
+            {KINDS.find(([k]) => k === clip.content!.kind)?.[1]}</span>}
           <h2 className="ellipsis" style={{ flex: 1, minWidth: 0 }}>{clip.title}</h2>
           {clip.creator && <span className="chip"><span className="dot" style={{ background: clip.creator.color }} />{clip.creator.name}</span>}
           {clip.editable && <Link className="btn sm" to={`/editor/${clip.id}`}><Clapperboard size={13} />Edit video</Link>}
@@ -304,7 +316,7 @@ function SafetyNote({ safety }: { safety: ClipT["safety"] }) {
   );
 }
 
-/** Approve or reject this page's video (yours or Muse's decision shows here), then send it to Postiz. */
+/** Approve or reject this page's video (yours or Muse's decision shows here). */
 function ReviewBar({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
   const [watched, setWatched] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -319,7 +331,6 @@ function ReviewBar({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; 
       {o.review === "approved" ? <span className="pill ok">Approved{by}</span>
         : o.review === "rejected" ? <span className="pill warn" title={o.review_note}>Rejected{by}{o.review_note ? `: ${o.review_note}` : ""}</span>
         : <span className="pill nodot">Waiting for review</span>}
-      {o.postiz_state && <span className={`pill ${o.postiz_state === "error" ? "warn" : "nodot"}`} title={o.postiz_error ?? ""}>Postiz: {o.postiz_state}{o.postiz_error ? `: ${o.postiz_error}` : ""}</span>}
       <span className="spacer" />
       {o.review !== "approved" && <>
         <label className="check"><input type="checkbox" checked={watched} onChange={(e) => setWatched(e.target.checked)} />I watched it</label>
@@ -327,10 +338,6 @@ function ReviewBar({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; 
       </>}
       {o.review !== "rejected" && <button className="btn sm ghost" disabled={busy}
         onClick={() => { const reason = window.prompt("Why? (kept with the clip)", "Not good enough"); if (reason !== null) void go(() => api.review(o.id, { decision: "reject", reason }), "Rejected"); }}>Reject</button>}
-      {o.review === "approved" && !o.postiz_state && <>
-        <button className="btn sm" disabled={busy} onClick={() => go(() => api.sendToPostiz(o.id, "draft"), "Sent to Postiz as a draft")}>Postiz draft</button>
-        <button className="btn sm primary" disabled={busy} onClick={() => go(() => api.sendToPostiz(o.id, "now"), "Posting through Postiz")}>Post now</button>
-      </>}
     </div>
   );
 }

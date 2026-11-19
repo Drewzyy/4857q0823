@@ -265,7 +265,11 @@ function CampaignModal({ campaign, open, onClose, onSaved }: { campaign: Campaig
           </div>
           <span className="small faint">Length and names change how new clips are cut and titled. English, logos and focus are kept with the campaign for you to check.</span></div>
         <div className="field"><span className="label-text">Your pages that post for it (none picked: any page)</span>
-          <div className="row wrap">{(pages.data ?? []).map((d) => (
+          <div className="row wrap">
+            {(pages.data ?? []).length > 1 && <label className="row small"><input type="checkbox"
+              checked={(pages.data ?? []).every((d) => f.destination_ids.includes(d.id))}
+              onChange={(e) => setF({ ...f, destination_ids: e.target.checked ? (pages.data ?? []).map((d) => d.id) : [] })} /><strong>Select all</strong></label>}
+            {(pages.data ?? []).map((d) => (
             <label key={d.id} className="row small"><input type="checkbox" checked={f.destination_ids.includes(d.id)}
               onChange={() => setF({ ...f, destination_ids: toggle(f.destination_ids, d.id) })} />{d.display_name}</label>))}</div></div>
         <div className="field"><label htmlFor="cp-rules">Rules</label>

@@ -66,10 +66,10 @@ class CaptionRules(BaseModel):
 
 def _take_down(s: Session, cid: int, back: bool = False) -> None:
     """Turning a streamer off takes their clips out of Ready to Upload (and out of Muse's reach); turning them back
-    on puts them back. Videos already posted or handed to Postiz aren't touched."""
+    on puts them back. Videos already posted aren't touched."""
     frm, to = ("withdrawn", "ready") if back else ("ready", "withdrawn")
     outs = s.scalars(select(ClipOutput).join(Clip, Clip.id == ClipOutput.clip_id).where(
-        Clip.creator_id == cid, ClipOutput.status == frm, ClipOutput.post_url.is_(None), ClipOutput.postiz_post_id.is_(None))).unique().all()
+        Clip.creator_id == cid, ClipOutput.status == frm, ClipOutput.post_url.is_(None))).unique().all()
     for o in outs:
         o.status = to
     if outs:

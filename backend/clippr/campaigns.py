@@ -168,7 +168,7 @@ def qualifies(c: Campaign, o: ClipOutput) -> tuple[bool, list[str]]:
     """Whether one page's posted video meets the campaign's rules, and what's missing if not. Views aren't part of
     it: the minimum is for the whole campaign (campaign_views)."""
     why = []
-    if not (o.post_url or o.status == "uploaded" or o.postiz_state == "published"):
+    if not (o.post_url or o.status == "uploaded"):
         why.append("Not posted yet")
     if c.platforms and o.platform not in c.platforms:
         why.append(f"{o.platform.title()} isn't an eligible platform")
@@ -252,9 +252,9 @@ def tag(s: Session, c: Campaign, clip: Clip, added_by: str) -> CampaignClip:
     link = CampaignClip(campaign_id=c.id, clip_id=clip.id, added_by=added_by)
     s.add(link)
     for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id, ClipOutput.status == "ready")).unique():
-        if not o.post_url and o.postiz_state != "published":
+        if not o.post_url:
             new = describe.apply_rules(o.description, _rules(c), o.platform, o.title)
-            if new != o.description and o.review == "approved" and not o.postiz_post_id:
+            if new != o.description and o.review == "approved":
                 o.review = "pending"  # an approval was for the exact caption
             o.description = new
     audit(s, "campaign.clip_tagged", "campaign", c.id, {"clip": clip.id, "by": added_by})

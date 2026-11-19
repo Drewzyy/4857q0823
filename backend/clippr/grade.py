@@ -185,7 +185,7 @@ TEASE = re.compile(r"\b(react(s|ed|ion)?|couldn'?t believe|finds? out|after|when
 def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: float, has_captions: bool, has_title: bool,
           views: int | None = None, likes: int | None = None, shares: int | None = None, posted_at: datetime | None = None,
           stream_clip: bool = False, motion: np.ndarray | None = None, lift: float | None = None,
-          loop: float | None = None, title: str = "") -> Grade:
+          loop: float | None = None, title: str = "", content: dict | None = None) -> Grade:
     """db: loudness every 100 ms of the finished clip. words: (start, end, text) in finished-clip seconds.
     motion: how much the picture changes, 0..1, every 0.5 s of the finished clip (None if it couldn't be read)."""
     parts, tips = [], []
@@ -197,7 +197,7 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
             tips.append((top - pts, tip))
 
     proof, note = _proof(views, likes, shares, posted_at, stream_clip)
-    add("Proof people care", proof, 30, note)
+    add("Proof people care", proof, 25, note)
 
     active = db[db > -60] if len(db) else db
     base = float(np.median(active)) if len(active) else -60.0
@@ -246,16 +246,34 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
     add("Length", fit, 10, f"{length:.0f} s long; 15 to 45 s is the sweet spot.",
         "Trim it toward 15 to 45 seconds." if length > 45 else "It's very short; give the moment a little setup.")
 
-    # The best-performing clips are fast and their first frame is already interesting: the picture is moving.
+    # The picture: moving from the first frame (the best clips' first frame is already interesting), and the person
+    # visible enough to read their reaction, judged for the kind of clip (content.py): a facecam in a gaming clip, the
+    # speakers in a podcast, a clear face in IRL and chatting.
     if motion is not None and len(motion):
-        first = float(np.mean(motion[:2]))
-        busy = float(np.mean(motion))
-        visual = 0.5 * min(1.0, first / 0.08) + 0.5 * min(1.0, busy / 0.06)
-        add("Visual pace", visual, 5, ("Moving from the first frame" if first >= 0.08 else "The first second is fairly still") +
-            f"; the picture changes {'a lot' if busy >= 0.06 else 'a little'}.",
-            "Open on movement: start where something is already happening on screen.")
+        first, busy = float(np.mean(motion[:2])), float(np.mean(motion))
+        pace = 0.5 * min(1.0, first / 0.08) + 0.5 * min(1.0, busy / 0.06)
+        pace_note = ("Moving from the first frame" if first >= 0.08 else "The first second is fairly still") + \
+            f"; the picture changes {'a lot' if busy >= 0.06 else 'a little'}"
     else:
-        add("Visual pace", 0.5, 5, "Couldn't read the picture, so this part is neutral.")
+        pace, pace_note = 0.5, "Couldn't read the movement"
+    sig, kind = (content or {}).get("signals") or {}, (content or {}).get("kind")
+    seen, size = float(sig.get("face_seen") or 0), float(sig.get("face_size") or 0)
+    if not sig:
+        face, face_note, face_tip = pace, "faces not checked", None  # no data (an older clip): judged on movement alone
+    elif kind == "gaming":
+        face = 1.0 if sig.get("corner_cam") or seen >= 0.5 else 0.3
+        face_note = "the streamer's reaction is on screen" if face == 1.0 else "no facecam reaction on screen"
+        face_tip = "Gaming clips do better with the streamer's face reacting: pick a moment where the facecam is on."
+    elif kind == "podcast":
+        face = min(1.0, seen / 0.6)
+        face_note = f"a speaker is on camera {seen * 100:.0f}% of the time"
+        face_tip = "The speakers are off camera a lot: podcast clips hold people better when you can see who's talking."
+    else:
+        face = min(1.0, seen / 0.5) * (1.0 if size >= 0.08 else 0.6)
+        face_note = f"a face is on screen {seen * 100:.0f}% of the time" + ("" if size >= 0.08 or not seen else ", but small")
+        face_tip = "The person is hard to see: a closer, clearer face makes the reaction land."
+    add("Picture", 0.5 * pace + 0.5 * face, 10, f"{pace_note}; {face_note}" + (f" ({kind} clip)." if kind else "."),
+        face_tip if face < 0.6 else "Open on movement: start where something is already happening on screen.")
 
     # Every one of 18 clips past 200k views had a headline on screen the whole time: a full sentence (6 to 20
     # words) saying who and what without the payoff ("Lacy couldn't believe...", "Jason reacts to..."), or the

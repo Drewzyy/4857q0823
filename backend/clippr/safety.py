@@ -1,5 +1,5 @@
 """The pre-post safety check. Runs on every clip before it can be reviewed or posted; separate from the virality
-grade, and it comes first: a clip that fails is quarantined and never offered for review or sent to Postiz.
+grade, and it comes first: a clip that fails is quarantined and never offered for review or posted.
 
 Built from TikTok's Community Guidelines (Safety and Civility: violent behaviors, hate speech, harassment;
 Mental and Behavioral Health: suicide and self-harm; Sensitive and Mature Themes: sexual activity and nudity,

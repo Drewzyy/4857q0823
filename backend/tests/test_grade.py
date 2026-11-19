@@ -21,7 +21,8 @@ def _db(length, base=-30.0, hook=True, peaks=3, end_strong=True):
 def test_a_strong_clip_is_s_tier():
     words = [(i * 0.35, i * 0.35 + 0.3, "w") for i in range(90)]
     g = grade(db=_db(32), words=words, length=32, has_captions=True, has_title=True, views=2_000_000, likes=300_000,
-              shares=40_000, posted_at=datetime.now(timezone.utc) - timedelta(hours=10))
+              shares=40_000, posted_at=datetime.now(timezone.utc) - timedelta(hours=10), motion=np.full(64, 0.09),
+              title="Lacy couldn't believe what Kai did after the stream")
     assert g.tier == "S" and g.score >= 85, g
     assert {p["name"] for p in g.parts} >= {"Hook in the first 3 seconds", "Length", "Proof people care"}
 

@@ -27,7 +27,7 @@ export interface SoundT { name: string; label: string; use: string; seconds: num
 export interface SoundEditT { name: string; at: number; volume: number }
 export type ClipKind = "regular" | "gaming" | "podcast";
 export interface DestinationSettings {
-  content_kinds: ClipKind[]; postiz_integration_id: string; auto_post: boolean; daily_cap: number;
+  content_kinds: ClipKind[]; auto_post: boolean; daily_cap: number;
   overlay: Overlay;
   default_caption: string; hashtags: string[];
   format: { aspect: "9:16" | "16:9" | "1:1"; resolution: string; fps: number; codec: "h264" | "h265"; bitrate_mbps: number };
@@ -54,10 +54,9 @@ export interface AppSettings {
   processing: { max_concurrent_jobs: number; cut_dead_air: boolean; hardware_encoding: boolean; viral_preedit: boolean; sound_effects: "off" | "auto"; auto_sound: string; hook_first: boolean };
   intake: { clipboard: boolean };
   safety: { banned_words: string[]; banned_scenes: string[]; banned_games: string[] };
-  posting: { postiz_url: string; auto_post_kill_switch: boolean; mcp_enabled: boolean; mcp_port: number; min_virality: number };
+  posting: { auto_post_kill_switch: boolean; mcp_enabled: boolean; mcp_port: number; min_virality: number };
 }
-export interface Bridge { mcp: { running: boolean; port: number | null; error: string | null; enabled: boolean; url: string; token: string }; postiz: { connected: boolean; url: string } }
-export interface PostizChannel { id: string; name: string; provider: string; picture: string | null; disabled: boolean }
+export interface Bridge { mcp: { running: boolean; port: number | null; error: string | null; enabled: boolean; url: string; token: string } }
 export interface RefPost {
   queue_position?: number | null;
   id: number; platform: string; url: string; title: string; thumbnail_url: string | null; posted_at: string | null;
@@ -71,7 +70,7 @@ export interface ClipOutputT {
   destination: { id: number; display_name: string; handle: string } | null;
   width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; has_thumbnail: boolean; uploaded_at: string | null;
   video_title: string; overlay: Overlay; post_url: string | null; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
-  review: "pending" | "approved" | "rejected"; review_note: string; reviewed_by: string; postiz_state: string | null; postiz_error: string | null;
+  review: "pending" | "approved" | "rejected"; review_note: string; reviewed_by: string;
 }
 export interface LongformMoment { start: number; end: number; peak: number; score: number; why: string[]; text: string; clip_id?: number; tier?: string | null; clip_title?: string | null }
 export interface LongformT {
@@ -101,6 +100,7 @@ export interface ClipT {
   creator: { id: number; name: string; color: string } | null; vod_url: string | null; vod_start: number | null; vod_end: number | null;
   stream_date: string | null; captions_text: string; has_captions: boolean; captions_note: string; editable: boolean;
   reference: RefPost | null; outputs: ClipOutputT[]; grade: GradeT | null; safety: SafetyT | null;
+  content: { kind: "gaming" | "podcast" | "irl" | "chatting"; confidence: number; why: string[] } | null;
 }
 export interface TextOverlayT { text: string; start: number; end: number; y_percent: number; size: number; color: string; font: FontKey; all_caps: boolean; outline: number; box?: boolean; headline?: boolean }
 export interface LayerT { media_id: number; start: number; end: number; x: number; y: number; width: number }
@@ -197,12 +197,8 @@ export const api = {
   settings: () => request<AppSettings>("GET", "/settings"),
   bridge: () => request<Bridge>("GET", "/bridge"),
   restartBridge: () => request<Bridge["mcp"]>("POST", "/bridge/restart"),
-  connectPostiz: (api_key: string) => request<{ channels: PostizChannel[] }>("PUT", "/postiz", { api_key }),
-  disconnectPostiz: () => request<void>("DELETE", "/postiz"),
-  postizChannels: () => request<PostizChannel[]>("GET", "/postiz/channels"),
   review: (oid: number, b: { decision: "approve" | "reject"; reason?: string; watched?: boolean; caption?: string }) =>
     request<{ review: string }>("POST", `/outputs/${oid}/review`, b),
-  sendToPostiz: (oid: number, mode: "draft" | "schedule" | "now") => request<{ queued: boolean }>("POST", `/outputs/${oid}/postiz`, { mode }),
   saveSettings: (b: Partial<{ [K in keyof AppSettings]: Partial<AppSettings[K]> }>) => request<AppSettings>("PUT", "/settings", b),
   audit: () => request<AuditEntry[]>("GET", "/audit"),
   clips: (status: "ready" | "uploaded" | "expired" | "all") => request<ClipT[]>("GET", `/clips?status=${status}`),

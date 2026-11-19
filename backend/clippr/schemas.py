@@ -89,7 +89,6 @@ class OverlaySettings(Strict):
 class DestinationSettings(Strict):
     # Which kinds of clips this page takes (a streamer's kind, set under Source Accounts): regular, gaming, podcast.
     content_kinds: list[Literal["regular", "gaming", "podcast"]] = Field(default_factory=lambda: ["regular", "gaming", "podcast"])
-    postiz_integration_id: str = Field("", max_length=80)  # this page's channel in Postiz
     # Auto-post: approved, safe clips go out without your phone approval. Off unless you turn it on, which the app
     # allows only after 5 reviewed posts on this page went out fine.
     auto_post: bool = False
@@ -150,7 +149,6 @@ class SafetySettings(Strict):
 
 
 class PostingSettings(Strict):
-    postiz_url: str = Field("https://api.postiz.com", max_length=300, pattern=r"^https?://[^\s]+$")
     auto_post_kill_switch: bool = False  # on: nothing posts by itself, whatever each page's Auto-post says
     mcp_enabled: bool = True  # the local bridge Muse connects to (127.0.0.1 only, token required)
     mcp_port: int = Field(47821, ge=1024, le=65535)

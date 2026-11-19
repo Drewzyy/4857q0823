@@ -76,7 +76,7 @@ def test_matches_creator_dates_and_keywords():
 
 
 def out(**kw) -> ClipOutput:
-    base = dict(id=1, clip_id=1, destination_id=5, platform="tiktok", title="Big moment", description="so good #LACY", status="uploaded", post_url=None, postiz_state=None)
+    base = dict(id=1, clip_id=1, destination_id=5, platform="tiktok", title="Big moment", description="so good #LACY", status="uploaded", post_url=None)
     return ClipOutput(**{**base, **kw})
 
 
@@ -84,7 +84,6 @@ def test_qualifies_rules():
     c = camp()
     assert campaigns.qualifies(c, out()) == (True, [])  # the hashtag itself says the name
     assert campaigns.qualifies(c, out(description="LACY did it #lacy"))[0]
-    assert campaigns.qualifies(c, out(status="ready", postiz_state="published"))[0]
     assert campaigns.qualifies(c, out(status="ready", post_url="https://www.tiktok.com/@a/video/1"))[0]
     assert campaigns.qualifies(c, out(status="ready"))[1] == ["Not posted yet"]
     assert campaigns.qualifies(c, out(platform="instagram"))[1] == ["Instagram isn't an eligible platform"]

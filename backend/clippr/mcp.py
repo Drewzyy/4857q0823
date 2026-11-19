@@ -26,7 +26,9 @@ from sqlalchemy import select
 
 from . import posting
 from .audit import audit
+from .api.analytics import link_post
 from .api.clips import _live_outputs, apply_edit
+from .api.deps import ApiError
 from .api.system import load_settings
 from .models import Campaign, CampaignClip, Clip, ClipOutput, Creator, DestinationAccount, SourceAccount
 from .routing import destination_creator_ids, page_kinds, source_creator_ids
@@ -58,7 +60,6 @@ def _out(o: ClipOutput) -> dict:
             "file_path": str(Path(o.file_path).resolve()) if o.file_path else None,
             "file_exists": bool(o.file_path and Path(o.file_path).exists()), "render_state": o.render_state,
             "caption": o.description, "title": o.title, "review": o.review, "review_note": o.review_note,
-            "postiz": {"post_id": o.postiz_post_id, "state": o.postiz_state, "error": o.postiz_error} if o.postiz_post_id or o.postiz_error else None,
             "post_url": o.post_url, "status": o.status}
 
 
@@ -67,6 +68,7 @@ def _clip(c: Clip, outs: list[ClipOutput]) -> dict:
     ref = c.reference
     return {"clip_id": c.id, "title": c.title, "created_at": c.created_at.isoformat() if c.created_at else None,
             "creator": {"id": c.creator.id, "name": c.creator.name, "kind": c.creator.content_kind} if c.creator else None,
+            "kind": (c.content or {}).get("kind"),
             "source": {"platform": ref.platform, "channel": ref.source.username if ref and ref.source else None, "url": ref.url} if ref
             else {"platform": "stream", "channel": None, "url": c.vod_url},
             "duration": round(float(e.get("end", 0)) - float(e.get("start", 0)), 2) if e else c.source_duration,
@@ -154,12 +156,17 @@ def list_sources(ctx, a):
 
 
 def list_destinations(ctx, a):
+    from datetime import timedelta
+    from sqlalchemy import func
+    since = datetime.now().astimezone() - timedelta(days=1)
     with ctx.db.session() as s:
         names = {c.id: c.name for c in s.scalars(select(Creator))}
+        today = dict(s.execute(select(ClipOutput.destination_id, func.count()).where(ClipOutput.uploaded_at >= since)
+                               .group_by(ClipOutput.destination_id)).all())
         return [{"id": d.id, "platform": d.platform, "handle": d.handle, "name": d.display_name, "enabled": d.enabled,
                  "creators": [names.get(i) for i in destination_creator_ids(d)], "kinds": page_kinds(d),
-                 "postiz_channel_set": bool((d.settings or {}).get("postiz_integration_id")),
-                 "auto_post": bool((d.settings or {}).get("auto_post"))} for d in s.scalars(select(DestinationAccount)).unique()]
+                 "auto_post": bool((d.settings or {}).get("auto_post")), "daily_cap": int((d.settings or {}).get("daily_cap", 3)),
+                 "posted_last_24h": today.get(d.id, 0)} for d in s.scalars(select(DestinationAccount)).unique()]
 
 
 def list_campaigns(ctx, a):
@@ -190,7 +197,7 @@ def update_clip(ctx, a):
         if "caption" in a:
             for o in [_pick_output(s, c, a.get("destination_id"))] if a.get("destination_id") is not None else _live_outputs(s, c.id):
                 o.description = a["caption"].strip()[:2200]
-                if o.review == "approved" and not o.postiz_post_id:
+                if o.review == "approved" and not o.post_url:
                     o.review = "pending"  # approval was for the exact caption
             changed.append("caption")
         e = ClipEdit.model_validate({"video_height": 0, **(c.edit or {})}).model_dump()
@@ -228,7 +235,7 @@ def approve_clip(ctx, a):
         c = _get(s, a["clip_id"])
         o = _pick_output(s, c, a.get("destination_id"))
         when = datetime.fromisoformat(a["scheduled_at"]) if a.get("scheduled_at") else None
-        o = posting.approve(s, ctx.jobs, o.id, ACTOR, watched=bool(a.get("watched")), caption=a.get("caption"), scheduled_at=when)
+        o = posting.approve(s, o.id, ACTOR, watched=bool(a.get("watched")), caption=a.get("caption"), scheduled_at=when)
         return _out(o)
 
 
@@ -244,20 +251,17 @@ def get_posting_package(ctx, a):
         return posting.package(s, _pick_output(s, _get(s, a["clip_id"]), a.get("destination_id")).id)
 
 
-def send_to_postiz(ctx, a):
-    with ctx.db.session() as s:
-        oid = _pick_output(s, _get(s, a["clip_id"]), a.get("destination_id")).id
-    return posting.send(ctx, oid, a.get("mode", "draft"), ACTOR)
-
-
-def get_post_status(ctx, a):
+def mark_posted(ctx, a):
+    """Muse posted an approved video itself: record the link, which counts it as uploaded (analytics, campaigns)."""
     with ctx.db.session() as s:
         o = _pick_output(s, _get(s, a["clip_id"]), a.get("destination_id"))
-        oid, has = o.id, bool(o.postiz_post_id)
-    if has:
-        posting.sync(ctx, oid)
-    with ctx.db.session() as s:
-        return _out(s.get(ClipOutput, oid))
+        if o.review != "approved":
+            raise ToolError("Approve it first")
+        try:
+            link_post(s, ctx.jobs, o, a["post_url"], ACTOR)
+        except ApiError as e:
+            raise ToolError(e.message)
+        return _out(o)
 
 
 ID = {"clip_id": {"type": "integer"}}
@@ -267,14 +271,14 @@ TOOLS: dict[str, tuple[Callable, str, dict, list[str], dict]] = {
     "list_ready_clips": (list_ready_clips, "Clips with finished videos, each page's file path, caption, review state and scores. "
                          "Quarantined clips, streamers without clip permission and low scorers are left out.", {}, [], RO),
     "list_clips_for_review": (list_clips_for_review, "Clips waiting for review (same fields as list_ready_clips).", {}, [], RO),
-    "get_clip": (get_clip, "Everything about one clip: every page's video, render state, review, Postiz state and post URL.", ID, ["clip_id"], RO),
+    "get_clip": (get_clip, "Everything about one clip: every page's video, render state, review and post URL.", ID, ["clip_id"], RO),
     "review_clip": (review_clip, "What to review: the videos, transcript with word times, caption, hook (headline and teaser), trim, "
                     "virality grade and safety check.", ID, ["clip_id"], RO),
     "get_safety_check": (get_safety_check, "Runs the safety check now: flagged categories, confidence, the moment (seconds) and "
                          "what can't be machine-checked.", ID, ["clip_id"], RO),
     "list_quarantined_clips": (list_quarantined_clips, "Clips the safety check failed, with why.", {}, [], RO),
     "list_sources": (list_sources, "Watched accounts: platform, handle, streamers, monitoring on or off.", {}, [], RO),
-    "list_destinations": (list_destinations, "Pages clips post to: platform, handle, streamers, kinds, enabled, Postiz channel set, Auto-post.", {}, [], RO),
+    "list_destinations": (list_destinations, "Pages clips post to: platform, handle, streamers, kinds, enabled, Auto-post (Muse may post approved clips without asking you first), its daily_cap and posted_last_24h: never go over the cap.", {}, [], RO),
     "list_campaigns": (list_campaigns, "Clipping campaigns: tag, streamer, live or ended, minimum views, the hashtags and names a caption "
                        "must have, where to submit, and the clips tagged to each.", {}, [], RO),
     "list_funnel_routes": (list_funnel_routes, "Which streamer's clips go to which page.", {}, [], RO),
@@ -285,18 +289,17 @@ TOOLS: dict[str, tuple[Callable, str, dict, list[str], dict]] = {
                      "hook": {"type": ["array", "null"], "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
                      "trim_start": {"type": "number"}, "trim_end": {"type": "number"},
                      "destination_ids": {"type": "array", "items": {"type": "integer"}}}, ["clip_id"], {}),
-    "approve_clip": (approve_clip, "Approve one page's video for posting. Doesn't post it (unless that page has Auto-post on). "
+    "approve_clip": (approve_clip, "Approve one page's video for posting. Doesn't post it: post it yourself with get_posting_package, then call mark_posted. "
                      "watched must be true: the picture isn't machine-checked. Optional final caption and scheduled_at (ISO 8601).",
                      {**ID, **DEST, "watched": {"type": "boolean"}, "caption": {"type": "string", "maxLength": 2200},
                       "scheduled_at": {"type": "string"}}, ["clip_id", "watched"], {}),
     "reject_clip": (reject_clip, "Reject a clip (one page, or all of them) with a reason.",
                     {**ID, **DEST, "reason": {"type": "string", "minLength": 1, "maxLength": 500}}, ["clip_id", "reason"], {}),
-    "get_posting_package": (get_posting_package, "For an approved video: file path, final caption, page, aspect ratio, duration, schedule.",
+    "get_posting_package": (get_posting_package, "For an approved video: file path, final caption, page, aspect ratio, duration, schedule. Post it yourself, then call mark_posted.",
                             {**ID, **DEST}, ["clip_id"], RO),
-    "send_to_postiz": (send_to_postiz, "Send an approved video to its page's Postiz channel as a draft (default), scheduled (at its "
-                       "scheduled_at) or now. Returns Postiz's post id and state.",
-                       {**ID, **DEST, "mode": {"type": "string", "enum": ["draft", "schedule", "now"]}}, ["clip_id"], {}),
-    "get_post_status": (get_post_status, "Where a page's video went: Postiz state, URL once live, error.", {**ID, **DEST}, ["clip_id"], RO),
+    "mark_posted": (mark_posted, "After you posted an approved video yourself: record its link (https, on that page's platform: TikTok, "
+                    "Instagram, YouTube, Facebook or X). Marks it uploaded so analytics and campaigns pick it up.",
+                    {**ID, **DEST, "post_url": {"type": "string", "minLength": 8, "maxLength": 500}}, ["clip_id", "post_url"], {}),
 }
 
 
@@ -317,7 +320,7 @@ def handle(ctx, msg: dict) -> dict | None:
         return ok({"protocolVersion": params.get("protocolVersion") or PROTOCOL, "capabilities": {"tools": {"listChanged": False}},
                    "serverInfo": {"name": "vyral", "version": "1"},
                    "instructions": "Vyral's clips. Review with review_clip, fix with update_clip, then approve_clip (only after watching) "
-                                   "and send_to_postiz. Quarantined clips are never offered."})
+                                   "and get_posting_package to post it yourself, then mark_posted with the post's link. Quarantined clips are never offered."})
     if method == "ping":
         return ok({})
     if method == "tools/list":
@@ -329,7 +332,7 @@ def handle(ctx, msg: dict) -> dict | None:
         try:
             data = TOOLS[name][0](ctx, args)
             return ok({"content": [{"type": "text", "text": json.dumps(data, default=str)}], "structuredContent": {"result": data}, "isError": False})
-        except (ToolError, posting.PostingError, posting.PostizError, KeyError, ValueError) as e:
+        except (ToolError, posting.PostingError, KeyError, ValueError) as e:
             return ok({"content": [{"type": "text", "text": str(e) if not isinstance(e, KeyError) else f"Missing {e}"}], "isError": True})
         except Exception:
             log.exception("MCP tool %s failed", name)

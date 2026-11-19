@@ -42,7 +42,6 @@ def _output(o: ClipOutput) -> dict:
             "video_title": o.video_title, "overlay": lenient(OverlaySettings, o.overlay).model_dump(),
             "render_state": o.render_state, "render_error": o.render_error, "post_url": o.post_url,
             "review": o.review, "review_note": o.review_note, "reviewed_by": o.reviewed_by,
-            "postiz_state": o.postiz_state, "postiz_error": o.postiz_error,
             # Changes whenever the file is re-rendered, so the preview reloads.
             "version": Path(o.file_path).name if o.file_path else None}
 
@@ -76,7 +75,7 @@ def list_clips(status: Literal["ready", "uploaded", "expired", "all"] = "ready",
                     "creator": {"id": c.creator.id, "name": c.creator.name, "color": c.creator.color} if c.creator else None,
                     "vod_url": c.vod_url, "vod_start": c.vod_start, "vod_end": c.vod_end, "stream_date": _dt(c.stream_date),
                     "captions_text": " ".join(w["text"] for w in (c.words or [])), "has_captions": bool(c.words),
-                    "captions_note": c.captions_note, "editable": _has_footage(c), "grade": c.grade, "safety": c.safety,
+                    "captions_note": c.captions_note, "editable": _has_footage(c), "grade": c.grade, "safety": c.safety, "content": c.content,
                     "reference": _reference(c.reference), "outputs": outputs})
     return out
 
@@ -254,7 +253,7 @@ def apply_edit(s: Session, jobs, clip: Clip, body: ClipEdit, by: str = "you") ->
     outs = _live_outputs(s, clip.id)
     for o in outs:
         o.render_state, o.render_error = "rendering", None
-        if o.review == "approved" and not o.postiz_post_id:
+        if o.review == "approved" and not o.post_url:
             o.review = "pending"
     s.flush()
     jobs.enqueue("clip.rerender", {"output_ids": [o.id for o in outs]}, max_attempts=1, session=s)

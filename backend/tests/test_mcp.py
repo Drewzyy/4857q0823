@@ -1,10 +1,9 @@
-"""The MCP bridge for Muse, review and approval, the safety check, routing by kind, and Postiz publishing."""
+"""The MCP bridge for Muse, review and approval, the safety check, routing by kind, and Muse marking what it posted."""
 import json
 import socket
 from pathlib import Path
 
 import httpx
-import respx
 from fastapi.testclient import TestClient
 
 from clippr import mcp, safety
@@ -12,8 +11,6 @@ from clippr.fetch import RemotePost
 from clippr.models import AuditLog, Clip, ClipOutput
 from fakes import drain
 from test_pipeline import setup_accounts
-
-POSTIZ = "https://api.postiz.com/public/v1"
 
 
 def _clip(ctx, c, fake):
@@ -65,13 +62,14 @@ def test_pages_get_clips_of_their_kind(env):
     pods = c.post("/api/destinations", json={"platform": "instagram", "display_name": "Pods", "handle": "@vyralpods", "creator_ids": [a["id"]]}).json()
     clips = c.post("/api/destinations", json={"platform": "tiktok", "display_name": "Clips", "handle": "@vyralclips19", "creator_ids": [a["id"]]}).json()
     assert c.get("/api/destinations").json() and pods["settings"]["content_kinds"] == ["podcast"] and clips["settings"]["content_kinds"] == ["regular"]
-    from clippr.routing import pages_for
+    from clippr.routing import for_kind, pages_for
     with ctx.db.session() as s:
-        assert [d.id for d in pages_for(s, {a["id"]})] == [pods["id"]]  # a podcast streamer's clips: only the podcast page
+        pages = pages_for(s, {a["id"]})  # every page of the streamer; the clip's kind then picks among them
+        assert [d.id for d in for_kind(pages, "podcast", "podcast")] == [pods["id"]]  # a podcast clip: only the podcast page
+        assert [d.id for d in for_kind(pages, "regular", "podcast")] == [clips["id"]]  # detected as a regular clip
 
 
-@respx.mock
-def test_muse_reviews_approves_and_posts_through_postiz(env, tmp_path):
+def test_muse_reviews_approves_and_posts_and_marks_posted(env, tmp_path):
     ctx, c, fake = env
     cid, tt, yt = _clip(ctx, c, fake)
     mc = TestClient(mcp.create_app(ctx))
@@ -84,8 +82,8 @@ def test_muse_reviews_approves_and_posts_through_postiz(env, tmp_path):
     assert init["result"]["serverInfo"]["name"] == "vyral" and "tools" in init["result"]["capabilities"]
     names = {t["name"] for t in _rpc(mc, "tools/list", token=tok).json()["result"]["tools"]}
     assert names == {"list_ready_clips", "get_clip", "list_sources", "list_destinations", "list_funnel_routes", "list_clips_for_review",
-                     "review_clip", "update_clip", "approve_clip", "reject_clip", "get_posting_package", "send_to_postiz",
-                     "get_post_status", "get_safety_check", "list_quarantined_clips", "list_campaigns"}
+                     "review_clip", "update_clip", "approve_clip", "reject_clip", "get_posting_package", "mark_posted",
+                     "get_safety_check", "list_quarantined_clips", "list_campaigns"}
 
     err, ready = _call(mc, tok, "list_ready_clips")
     assert not err and ready[0]["clip_id"] == cid and ready[0]["safety"] in ("pass", "review")
@@ -117,41 +115,30 @@ def test_muse_reviews_approves_and_posts_through_postiz(env, tmp_path):
     assert out["review"] == "approved" and out["reviewed_by"] == "muse"  # shows in the app
     with ctx.db.session() as s:
         assert s.query(AuditLog).filter(AuditLog.action == "output.approved").one().details["by"] == "muse"
-        assert not s.query(ClipOutput).filter(ClipOutput.postiz_post_id.isnot(None)).count()  # nothing posted
+        assert not s.query(ClipOutput).filter(ClipOutput.status == "uploaded").count()  # approving posts nothing
     err, pkg = _call(mc, tok, "get_posting_package", clip_id=cid, destination_id=tt)
     assert not err and Path(pkg["video_path"]).exists() and pkg["caption"] == "Streamer A lost it #streamera #gaming"
     assert pkg["destination"]["handle"] == "@streamera.tt" and pkg["duration"] > 5 and pkg["aspect_ratio"] == "1080:1920"
     err, rej = _call(mc, tok, "reject_clip", clip_id=cid, destination_id=yt, reason="Weak on YouTube")
     assert not err and rej[0]["review"] == "rejected"
 
-    # Postiz: not connected yet, then connected (key checked against Postiz first, never shown again).
-    err, msg = _call(mc, tok, "send_to_postiz", clip_id=cid, destination_id=tt)
+    # mark_posted: only an approved video, only a link on that page's platform.
+    err, msg = _call(mc, tok, "mark_posted", clip_id=cid, destination_id=yt, post_url="https://www.youtube.com/shorts/abc123")
+    assert err and "Approve it first" in msg
+    err, msg = _call(mc, tok, "mark_posted", clip_id=cid, destination_id=tt, post_url="https://www.instagram.com/reel/abc/")
+    assert err and "isn't a Tiktok link" in msg
+    err, msg = _call(mc, tok, "mark_posted", clip_id=cid, destination_id=tt, post_url="http://www.tiktok.com/@vyralclips19/video/9")
     assert err
-    channels = respx.get(f"{POSTIZ}/integrations").mock(return_value=httpx.Response(200, json=[
-        {"id": "int-tt", "name": "vyralclips19", "identifier": "tiktok", "picture": "", "disabled": False}]))
-    assert c.put("/api/postiz", json={"api_key": "bad"}).status_code == 422  # too short
-    assert c.put("/api/postiz", json={"api_key": "pz_secret_key_123"}).status_code == 200
-    assert channels.calls.last.request.headers["authorization"] == "pz_secret_key_123"
-    c.patch(f"/api/destinations/{tt}", json={"settings": {"postiz_integration_id": "int-tt"}})
-    respx.post(f"{POSTIZ}/upload").mock(return_value=httpx.Response(200, json={"id": "m1", "path": "https://uploads.postiz.com/v.mp4"}))
-    create = respx.post(f"{POSTIZ}/posts").mock(return_value=httpx.Response(200, json=[{"postId": "p-1", "integration": "int-tt"}]))
-    err, sent = _call(mc, tok, "send_to_postiz", clip_id=cid, destination_id=tt)  # draft by default
-    assert not err and sent == {"post_id": "p-1", "state": "draft"}, sent
-    body = json.loads(create.calls.last.request.content)
-    assert body["type"] == "draft" and body["posts"][0]["integration"]["id"] == "int-tt"
-    assert body["posts"][0]["value"][0]["content"] == "Streamer A lost it #streamera #gaming"
-    assert body["posts"][0]["settings"]["__type"] == "tiktok" and body["posts"][0]["settings"]["content_posting_method"] == "DIRECT_POST"
-    respx.get(f"{POSTIZ}/posts").mock(return_value=httpx.Response(200, json={"posts": [
-        {"id": "p-1", "state": "PUBLISHED", "releaseURL": "https://www.tiktok.com/@vyralclips19/video/9"}]}))
-    err, st = _call(mc, tok, "get_post_status", clip_id=cid, destination_id=tt)
-    assert not err and st["postiz"]["state"] == "published" and st["post_url"].endswith("/video/9") and st["status"] == "uploaded"
-
-    # No credential anywhere Muse or the logs can see.
-    every = json.dumps([_rpc(mc, "tools/call", {"name": n, "arguments": {"clip_id": cid, "destination_id": tt}}, tok).json()
-                        for n in ("get_clip", "review_clip", "list_destinations", "get_post_status")])
-    assert "pz_secret_key_123" not in every and tok not in every
+    err, done = _call(mc, tok, "mark_posted", clip_id=cid, destination_id=tt, post_url="https://www.tiktok.com/@vyralclips19/video/9")
+    assert not err and done["status"] == "uploaded" and done["post_url"].endswith("/video/9")
+    out = next(o for o in c.get("/api/clips").json()[0]["outputs"] if o["destination"]["id"] == tt)
+    assert out["status"] == "uploaded" and out["post_url"].endswith("/video/9")  # shows in the app
     with ctx.db.session() as s:
-        assert "pz_secret_key_123" not in json.dumps([a.details for a in s.query(AuditLog).all()])
+        assert s.query(AuditLog).filter(AuditLog.action == "clip.post_linked").one().details["by"] == "muse"
+        assert s.query(ClipOutput).filter(ClipOutput.post_url.isnot(None)).one().uploaded_at
+
+    assert tok not in json.dumps([_rpc(mc, "tools/call", {"name": n, "arguments": {"clip_id": cid, "destination_id": tt}}, tok).json()
+                                  for n in ("get_clip", "review_clip", "list_destinations")])
 
 
 def test_quarantined_clips_never_reach_review(env):
@@ -201,4 +188,4 @@ def test_mcp_server_binds_localhost_and_fails_loudly_when_the_port_is_taken(env,
     finally:
         server.stop()
     bridge = c.get("/api/bridge").json()
-    assert bridge["mcp"]["url"] == f"http://127.0.0.1:{port}/mcp" and bridge["postiz"]["connected"] is False
+    assert bridge["mcp"]["url"] == f"http://127.0.0.1:{port}/mcp"

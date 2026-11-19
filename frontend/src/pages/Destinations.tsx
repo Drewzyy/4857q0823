@@ -135,7 +135,7 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
     setBusy(true); setError(null);
     const tags = hashtags.split(/[\s,]+/).filter(Boolean).map((t) => (t.startsWith("#") ? t : `#${t}`));
     try { await api.updateDestination(dest.id, { creator_ids: creatorIds, settings: { default_caption: s.default_caption, hashtags: tags, format: s.format, overlay: s.overlay,
-      content_kinds: s.content_kinds, postiz_integration_id: s.postiz_integration_id, auto_post: s.auto_post, daily_cap: s.daily_cap } }); onSaved(); }
+      content_kinds: s.content_kinds, auto_post: s.auto_post, daily_cap: s.daily_cap } }); onSaved(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -182,10 +182,8 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
 
 const KINDS: [ClipKind, string][] = [["regular", "Regular clips"], ["gaming", "Gaming"], ["podcast", "Podcasts"]];
 
-/** Which kinds of clips this page takes, its Postiz channel, and Auto-post (off unless you turn it on). */
+/** Which kinds of clips this page takes, and Auto-post (off unless you turn it on). */
 function PostingFields({ s, setS }: { s: DestinationSettings; setS: (v: DestinationSettings) => void }) {
-  const bridge = useQuery({ queryKey: ["bridge"], queryFn: api.bridge });
-  const channels = useQuery({ queryKey: ["postiz-channels"], queryFn: api.postizChannels, enabled: !!bridge.data?.postiz.connected, retry: false });
   const kinds = s.content_kinds ?? ["regular", "gaming", "podcast"];
   return (
     <>
@@ -194,20 +192,13 @@ function PostingFields({ s, setS }: { s: DestinationSettings; setS: (v: Destinat
           <label key={k} className="check"><input type="checkbox" checked={kinds.includes(k)}
             onChange={(e) => setS({ ...s, content_kinds: e.target.checked ? [...kinds, k] : kinds.filter((x) => x !== k) })} />{l}</label>))}</div>
         <span className="hint">A streamer's clips are regular, gaming or podcast (set on the streamer under Source Accounts). This page only gets the kinds ticked here.</span></div>
-      <div className="field"><label htmlFor="ds-postiz">Postiz channel</label>
-        {bridge.data?.postiz.connected ? (
-          <select id="ds-postiz" className="select" value={s.postiz_integration_id} onChange={(e) => setS({ ...s, postiz_integration_id: e.target.value })}>
-            <option value="">None</option>
-            {(channels.data ?? []).map((c) => <option key={c.id} value={c.id} disabled={c.disabled}>{c.name} ({c.provider}){c.disabled ? ", off in Postiz" : ""}</option>)}
-          </select>) : <span className="hint">Connect Postiz in Settings &gt; Muse &amp; posting to pick this page's channel.</span>}
-        {channels.error && <span className="hint" style={{ color: "var(--warn)" }}>{channels.error instanceof Error ? channels.error.message : "Couldn't load Postiz channels"}</span>}</div>
       <div className="row wrap" style={{ gap: 12 }}>
         <Toggle label="Auto-post" checked={s.auto_post} onChange={(v) => setS({ ...s, auto_post: v })} />
-        <span className="small">Auto-post: approved clips that passed the safety check go out without your phone approval</span>
+        <span className="small">Auto-post: Muse may post approved clips that passed the safety check without asking you first</span>
         <label className="small" htmlFor="ds-cap-n">Daily cap</label>
         <input id="ds-cap-n" className="input" type="number" min={1} max={20} style={{ width: 70 }} value={s.daily_cap} onChange={(e) => setS({ ...s, daily_cap: Number(e.target.value) })} />
       </div>
-      <span className="hint">Off by default. It can be turned on only after 5 reviewed posts on this page went out. Settings has a kill switch that stops all of it.</span>
+      <span className="hint">Off by default. It can be turned on only after 5 reviewed posts on this page were posted. Settings has a kill switch that stops all of it.</span>
     </>
   );
 }

@@ -1,15 +1,15 @@
 # Vyral MCP bridge for Muse
 
 Vyral runs a small MCP server on this computer so Muse can see your clips, review and fix them, approve them,
-and hand them to Postiz, without you downloading, captioning and uploading by hand. Nothing goes to a cloud
-service except the post itself, through your own Postiz.
+and post them itself, without you downloading, captioning and uploading by hand. Vyral posts nothing: Muse does,
+then tells Vyral where it went.
 
 ```
 Twitch / Kick / Discord link
   -> Vyral: find the moment, cut, caption, pre-edit (hook, trims, punch-in, sound)
   -> safety check (quarantine on fail)  -> virality grade (held back if under the minimum)
   -> review queue  <- Muse via MCP: review_clip, update_clip (re-render), approve_clip / reject_clip
-  -> Postiz (draft / scheduled / now)  -> post URL and state back on the clip  -> Analytics
+  -> Muse posts it (get_posting_package)  -> mark_posted: post URL back on the clip  -> Analytics
 ```
 
 ## Turn it on
@@ -21,13 +21,11 @@ Settings > **Muse & posting**:
 | MCP bridge on | **on** | Starts with Vyral. Listens on 127.0.0.1 only. |
 | Port | **47821** | Fixed. If something else has it, the bridge stays off and the reason shows in Settings and in the log (`MCP server not started: Port 47821 is already in use`). It never moves to another port by itself. Change the port, press Save. |
 | Token | made on first run | Kept in the OS keychain (macOS Keychain / Windows Credential Manager). **Copy token** puts it on your clipboard. It's never written to the database, the log or git. |
-| Postiz API key | none | Checked against Postiz before it's kept, then stored in the keychain. |
-| Postiz address | `https://api.postiz.com` | Your own Postiz's backend address if you self-host. |
 | Kill switch | off | On: nothing posts by itself, whatever each page's Auto-post says. |
 | Minimum virality score | 50 | Clips scoring lower never reach review. |
 | Safety blocklist | empty | Banned words, banned scenes (phrases), banned games. A match quarantines the clip. |
 
-Per page (Destinations > a page > settings): **Kinds of clips**, **Postiz channel**, **Auto-post** (off) and **Daily cap** (3).
+Per page (Destinations > a page > settings): **Kinds of clips**, **Auto-post** (off, tells Muse whether it may post an approved clip without asking you first) and **Daily cap** (3).
 
 ## Connecting Muse
 
@@ -51,23 +49,22 @@ and none returns a token, key or password.
 
 | Tool | Input | What it does |
 |---|---|---|
-| `list_ready_clips` | none | Clips with finished videos: clip id, title, source channel, streamer, duration, created, each page's output (file path, caption, render state, review, Postiz state, post URL), virality score, safety status. Quarantined clips, streamers without clip permission and low scorers are left out. |
+| `list_ready_clips` | none | Clips with finished videos: clip id, title, source channel, streamer, duration, created, each page's output (file path, caption, render state, review, post URL), virality score, safety status. Quarantined clips, streamers without clip permission and low scorers are left out. |
 | `list_clips_for_review` | none | Same fields, only pages waiting for review. |
 | `get_clip` | `clip_id` | Everything about one clip, including why it's held back if it is. |
 | `review_clip` | `clip_id` | Videos, transcript with word times, headline (hook text), hook, trim, grade with reasons, safety result. |
 | `get_safety_check` | `clip_id` | Runs the safety check now: flagged categories, confidence, the moment (seconds), what can't be machine-checked. |
 | `list_quarantined_clips` | none | Clips the safety check failed, with why and when. |
 | `list_sources` | none | Watched accounts: platform, handle, streamers, monitoring on or off. |
-| `list_destinations` | none | Pages: platform, handle, streamers, kinds, enabled, Postiz channel set, Auto-post. |
+| `list_destinations` | none | Pages: platform, handle, streamers, kinds, enabled, Auto-post. |
 | `list_funnel_routes` | none | Which streamer's clips go to which page, and whether that route is on. |
 | `update_clip` (write) | `clip_id`, any of `caption` (+ `destination_id` for one page), `hook_text`, `hook` `[start, end]` or null, `trim_start`, `trim_end`, `destination_ids` | Changes the clip. Video changes re-render through the jobs queue; the transcript is reused, never re-done. A changed video or caption needs approving again. |
-| `approve_clip` (write) | `clip_id`, `destination_id`, `watched: true`, optional `caption`, `scheduled_at` | Approves one page's video. Doesn't post (unless that page's Auto-post is on). Refused for quarantined clips, streamers without clip permission, low scorers, or if `watched` isn't true. |
+| `approve_clip` (write) | `clip_id`, `destination_id`, `watched: true`, optional `caption`, `scheduled_at` | Approves one page's video. Doesn't post. Refused for quarantined clips, streamers without clip permission, low scorers, or if `watched` isn't true. |
 | `reject_clip` (write) | `clip_id`, `reason`, optional `destination_id` | Rejects one page or all of them. |
-| `get_posting_package` | `clip_id`, `destination_id` | For an approved video: file path, final caption, page handle, aspect ratio, duration, schedule. |
-| `send_to_postiz` (write) | `clip_id`, `destination_id`, `mode`: `draft` (default), `schedule`, `now` | Uploads the approved video to the page's Postiz channel. Returns Postiz's post id and state. |
-| `get_post_status` | `clip_id`, `destination_id` | Reads the post back from Postiz: state, URL once live, error. Live posts get their URL stored and count in Analytics. |
+| `get_posting_package` | `clip_id`, `destination_id` | For an approved video: file path, final caption, page handle, aspect ratio, duration, schedule. Muse posts it with this. |
+| `mark_posted` (write) | `clip_id`, `destination_id`, `post_url` | After Muse posted the approved video: stores the link (https, on that page's platform: TikTok, Instagram, YouTube, Facebook or X), marks the video uploaded, so Analytics and campaigns pick it up. Refused unless the video is approved. Audit entry says Muse did it. |
 
-There is deliberately no `post_to_tiktok` or `post_to_instagram`: posting only happens through approval, then Postiz (or Muse with the posting package).
+The flow is `approve_clip` -> `get_posting_package` -> Muse posts the video -> `mark_posted`. There is deliberately no `post_to_tiktok` or `post_to_instagram` in Vyral: posting is Muse's job, after approval.
 
 Example (curl):
 
@@ -83,46 +80,18 @@ curl -s http://127.0.0.1:47821/mcp -H "Authorization: Bearer $TOKEN" -H 'Content
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"approve_clip","arguments":{"clip_id":12,"destination_id":3,"watched":true}}}'
 
 curl -s http://127.0.0.1:47821/mcp -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"send_to_postiz","arguments":{"clip_id":12,"destination_id":3,"mode":"draft"}}}'
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"mark_posted","arguments":{"clip_id":12,"destination_id":3,"post_url":"https://www.tiktok.com/@vyralclips19/video/9"}}}'
 ```
 
 ## Approval and Auto-post
 
-- Default: nothing posts without approval. Muse approves (after sending you the exact video and caption on your
-  phone, which Muse does on its side), then sends it to Postiz.
+- Default: Muse asks you first. It approves (after sending you the exact video and caption on your phone, which Muse
+  does on its side), posts the video itself, then calls `mark_posted` with the link.
 - **Auto-post** is per page, off by default, never turned on by code. The app refuses to turn it on until 5 reviewed
-  posts on that page went out. When on: a video Muse or you approve goes out right away, only if its safety check is
-  a clean pass (never a "review" or uncertain result), the page's daily cap isn't reached, and the kill switch is off.
-- Re-rendering a video, or changing its caption, puts an approved but not yet sent video back to waiting.
-
-## Postiz
-
-What Vyral uses (Postiz public API, read from Postiz's own source code: `apps/backend/src/public-api/routes/v1/public.integrations.controller.ts`
-and its CLI `postiz-agent`):
-
-| Need | Postiz | Notes |
-|---|---|---|
-| Auth | `Authorization: <API key>` (no "Bearer") | 401 if wrong |
-| Channels | `GET /public/v1/integrations` | id, name, identifier (tiktok, instagram, ...), disabled |
-| Video upload | `POST /public/v1/upload`, multipart `file` | Postiz hosts it; platforms only accept Postiz-hosted media |
-| Post | `POST /public/v1/posts`, `type`: `draft`, `schedule`, `now` | one `date` (ISO 8601) per request |
-| Status | `GET /public/v1/posts?startDate&endDate` | state, `releaseURL`, error |
-
-What it can and can't do, as far as the source and CLI docs show:
-- **TikTok:** video posts work. Vyral sends `content_posting_method: DIRECT_POST` (publishes). The alternative,
-  `UPLOAD`, only drops the video in the TikTok app's inbox for you to finish within 24 hours, and Postiz still reports success. Privacy is
-  `PUBLIC_TO_EVERYONE`; duet, stitch and comments on.
-- **Instagram:** one video sent with `post_type: post` publishes as a Reel. Media must be uploaded through Postiz (Vyral always does).
-- **Drafts** stay in Postiz until you or Muse publish them there.
-- **Not verified here:** Postiz's docs site couldn't be reached from the build environment, so the exact field names of the
-  create-post response and of the post list (state, `releaseURL`, error) come from the source and Postiz's data model, not a
-  live test. Vyral reads them defensively; if a post shows state `unknown`, check it in Postiz. The first real
-  `send_to_postiz` as a draft is the test to run (see Acceptance below).
-- If Postiz can't publish somewhere, `send_to_postiz` returns the error and the video's Postiz state shows `error` with the
-  reason. Nothing is skipped silently. Muse can then post it with `get_posting_package` through its own Instagram connector or Postiz.
-
-Setup: Postiz > Settings > Public API > copy the key. Vyral > Settings > Muse & posting > paste > Connect. Then for
-each page: Destinations > page > settings > Postiz channel.
+  posts on that page were posted. Vyral doesn't post anything itself: Muse reads this setting (`list_destinations`) to
+  know it may post an approved video without asking you first. That holds only if its safety check is a clean pass
+  (never a "review" or uncertain result), the page's daily cap isn't reached, and the kill switch is off. Vyral doesn't enforce those: Muse does.
+- Re-rendering a video, or changing its caption, puts an approved video that isn't posted yet back to waiting.
 
 ## Routing for your four pages
 
@@ -142,7 +111,7 @@ replaced by this in migration 0010; `list_funnel_routes` reports the routes this
 
 ## Safety check
 
-Runs on every clip after every render or edit, before review and before Postiz. It comes before the virality score.
+Runs on every clip after every render or edit, before review and before posting. It comes before the virality score.
 
 Results: **fail** (quarantined: never reviewed, never posted, stays failed through edits, re-renders and page changes;
 logged as `clip.quarantined` with the reasons), **review** (borderline or uncertain: only you or Muse can approve it,
@@ -228,11 +197,11 @@ The Mac and Windows numbers will differ from these. To measure on your machine: 
 
 Automated (`cd backend && python -m pytest -q tests/test_mcp.py`): all 15 tools listed over MCP; real clips from the
 database with files that exist; approve shows in the app with an audit entry saying Muse; the posting package's file plays and
-has the right page and caption; Postiz draft created (Postiz mocked); re-render after update_clip without re-transcribing;
-quarantined clips never offered or approvable; Auto-post locked; port in use fails loudly; no key or token in any tool output or audit entry.
+has the right page and caption; `mark_posted` refused unless approved or for a link on the wrong platform, and shows in the app;
+re-render after update_clip without re-transcribing; quarantined clips never offered or approvable; Auto-post locked;
+port in use fails loudly; no token in any tool output.
 
-By hand, once, with your real Postiz:
-1. Settings > Muse & posting: connect Postiz, copy the token.
-2. Destinations: set each of the four pages' Postiz channel.
-3. In MCP Inspector or Muse: `list_clips_for_review`, `approve_clip` with `watched: true`, then `send_to_postiz` with `mode: "draft"`.
-4. Check the draft in Postiz, then `get_post_status`.
+By hand, once:
+1. Settings > Muse & posting: copy the token into Muse.
+2. In MCP Inspector or Muse: `list_clips_for_review`, `approve_clip` with `watched: true`, `get_posting_package`.
+3. Post the video, then `mark_posted` with its link. Check it shows as uploaded in the app.
