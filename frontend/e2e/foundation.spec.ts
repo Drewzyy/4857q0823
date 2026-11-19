@@ -403,12 +403,17 @@ test("video editor: add a sound effect at the playhead and save", async ({ page 
 });
 
 test("video editor: add your own sound file and use it", async ({ page }) => {
-  const { execFileSync } = await import("node:child_process");
-  const { mkdtempSync } = await import("node:fs");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { tmpdir } = await import("node:os");
-  const mp3 = join(mkdtempSync(join(tmpdir(), "vyral-snd-")), "my boom.mp3");
-  execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "sine=f=60:d=1", mp3]);
+  // One second of a 60 Hz tone as a WAV, written here: no FFmpeg needed on the machine running the tests.
+  const rate = 8000, n = rate, wav = Buffer.alloc(44 + n * 2);
+  wav.write("RIFF", 0); wav.writeUInt32LE(36 + n * 2, 4); wav.write("WAVEfmt ", 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22); wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write("data", 36); wav.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) wav.writeInt16LE(Math.round(8000 * Math.sin((2 * Math.PI * 60 * i) / rate)), 44 + i * 2);
+  const mp3 = join(mkdtempSync(join(tmpdir(), "vyral-snd-")), "my boom.wav");
+  writeFileSync(mp3, wav);
   await page.goto("/editor");
   await page.getByRole("link", { name: /He did NOT just say that/ }).click();
   await page.getByLabel("Sound files").setInputFiles(mp3);

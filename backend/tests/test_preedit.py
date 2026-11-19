@@ -1,6 +1,8 @@
 """The viral pre-edit: headline, length, opening on sound, and the headline box in the video."""
 import numpy as np
 
+from clippr.media.ffmpeg import ffmpeg_exe
+
 from clippr import preedit
 from clippr.media import overlay
 from clippr.media.overlay import Word
@@ -94,7 +96,7 @@ def test_every_sound_renders_and_mixes_in_at_its_time(tmp_path):
     out = render(src, tmp_path / "o.mp4", OutputFormat(180, 320, 30), duration=4, gaps=[(0.5, 1.0)],
                  sounds=[(sfx.path("boom", tmp_path / "s"), 2.0, 1.0)], use_hardware=False)
     import subprocess
-    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True).stdout
+    raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-i", str(out), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True).stdout
     x = np.frombuffer(raw, np.int16).astype(float) / 32768
     loud = [float(np.sqrt(np.mean(x[i:i + 800] ** 2))) for i in range(0, len(x) - 800, 800)]  # every 0.1 s
     assert 19 <= int(np.argmax(loud)) <= 22  # the boom lands at 2.0 s of the finished clip
@@ -162,7 +164,7 @@ def test_render_plays_the_hook_then_the_clip_from_the_start(tmp_path):
     out = render(src, tmp_path / "o.mp4", OutputFormat(180, 320, 30), duration=10, hook=(6.0, 8.0), use_hardware=False)
     assert abs(probe(out).duration - 12.0) < 0.2  # 2 s of hook + the whole 10 s
     import subprocess
-    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True).stdout
+    raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-i", str(out), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True).stdout
     x = np.frombuffer(raw, np.int16).astype(float) / 32768
     rms = lambda a, b: float(np.sqrt(np.mean(x[int(a * 8000):int(b * 8000)] ** 2)))  # noqa: E731
     assert rms(0.3, 1.7) > 5 * rms(3, 7)  # the loud part plays first...
