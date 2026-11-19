@@ -41,7 +41,7 @@ def _output(o: ClipOutput) -> dict:
             "has_thumbnail": bool(o.file_path and Path(o.file_path).with_suffix(".jpg").exists()), "uploaded_at": _dt(o.uploaded_at),
             "video_title": o.video_title, "overlay": lenient(OverlaySettings, o.overlay).model_dump(),
             "render_state": o.render_state, "render_error": o.render_error, "post_url": o.post_url,
-            "review": o.review, "review_note": o.review_note, "reviewed_by": o.reviewed_by,
+            "review": o.review, "review_note": o.review_note, "reviewed_by": o.reviewed_by, "quality": o.quality,
             # Changes whenever the file is re-rendered, so the preview reloads.
             "version": Path(o.file_path).name if o.file_path else None}
 
@@ -125,8 +125,12 @@ def save_to_downloads(oid: int, s: Session = Depends(db), c=Depends(ctx)):
         raise ApiError(410, "expired", "This clip's video has expired and was deleted to save space")
     if o.render_state == "rendering":
         raise ApiError(409, "rendering", "This video is being re-rendered with your changes. Try again in a moment.")
-    folder = Path(os.environ.get("CLIPPR_DOWNLOADS_DIR") or Path.home() / "Downloads") / "Vyral"
-    folder.mkdir(parents=True, exist_ok=True)
+    chosen = load_settings(s).storage.save_folder
+    folder = Path(chosen) if chosen else Path(os.environ.get("CLIPPR_DOWNLOADS_DIR") or Path.home() / "Downloads") / "Vyral"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise ApiError(422, "folder", f"Vyral can't save into {folder}: {e.strerror or e}. Pick another folder in Settings.")
     dest_name = o.destination.display_name if o.destination else o.platform
     target = folder / f"{_safe_name(dest_name)} - {_safe_name(o.title)}.mp4"
     n = 2

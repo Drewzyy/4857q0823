@@ -181,15 +181,17 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".part.mp4")
     tail = ["-movflags", "+faststart", str(tmp)]
-    # The graphics card's encoder when there is one; if it fails on this clip, the processor's, which always works.
-    hw = encoders.args(fmt.codec, fmt.bitrate_mbps, use_hardware)
-    try:
-        run(args + hw + ([] if "-crf" not in hw else encoders.software_preset()) + tail, cwd=overlay_dir)
-    except FFmpegError:
-        if "-crf" in hw:
-            raise
-        log.warning("hardware encoder failed; rendering on the processor")
-        run(args + encoders.args(fmt.codec, fmt.bitrate_mbps, False) + encoders.software_preset() + tail, cwd=overlay_dir)
+    # The graphics card's encoder when one of its slots is free, else the processor's right away (they work side by
+    # side); if the graphics card fails on this clip, the processor, which always works.
+    with encoders.gpu_slot(fmt.codec, use_hardware) as on_gpu:
+        hw = encoders.args(fmt.codec, fmt.bitrate_mbps, on_gpu)
+        try:
+            run(args + hw + ([] if "-crf" not in hw else encoders.software_preset()) + tail, cwd=overlay_dir)
+        except FFmpegError:
+            if "-crf" in hw:
+                raise
+            log.warning("hardware encoder failed; rendering on the processor")
+            run(args + encoders.args(fmt.codec, fmt.bitrate_mbps, False) + encoders.software_preset() + tail, cwd=overlay_dir)
     tmp.replace(out)
     return out
 

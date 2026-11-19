@@ -71,9 +71,9 @@ function General() {
             <span className="hint">Silent stretches of a second or more are cut out of new clips so they keep moving. Each clip can be switched back in the editor.</span></div>
           <div className="field"><span className="label-text">Render with</span>
             <div className="seg" role="group" aria-label="Render with" style={{ alignSelf: "flex-start" }}>
-              <button className={s.processing.hardware_encoding ? "on" : ""} onClick={() => up("processing", { hardware_encoding: true })}>Graphics card (fast)</button>
+              <button className={s.processing.hardware_encoding ? "on" : ""} onClick={() => up("processing", { hardware_encoding: true })}>Graphics card + processor (fast)</button>
               <button className={s.processing.hardware_encoding ? "" : "on"} onClick={() => up("processing", { hardware_encoding: false })}>Processor only</button></div>
-            <span className="hint">The graphics card renders several times faster. If videos come out wrong (sound out of step, glitches), switch to Processor only and re-render.</span></div>
+            <span className="hint">Clips render on the graphics card (NVIDIA, Intel or AMD on Windows, Apple on Mac) two at a time, and on the processor at the same time when the card is busy. If videos come out wrong (sound out of step, glitches), switch to Processor only and re-render.</span></div>
           <div className="field"><span className="label-text">Viral pre-edit</span>
             <div className="seg" role="group" aria-label="Viral pre-edit" style={{ alignSelf: "flex-start" }}>
               <button className={s.processing.viral_preedit ? "on" : ""} onClick={() => up("processing", { viral_preedit: true })}>On</button>
@@ -121,6 +121,12 @@ function General() {
         <div className="field" style={{ maxWidth: 380 }}><label htmlFor="ret">Delete clips after {s.storage.retention_days} days</label>
           <input id="ret" type="range" min={7} max={90} step={1} value={s.storage.retention_days} onChange={(e) => up("storage", { retention_days: Number(e.target.value) })} />
           <span className="hint">Applies to videos inside Vyral and its cached stream data. Files you saved to your computer are never touched. Changing this affects new clips.</span></div>
+        <div className="field"><label htmlFor="savef">Save to computer puts videos in</label>
+          <input id="savef" value={s.storage.save_folder} placeholder="Downloads/Vyral" onChange={(e) => up("storage", { save_folder: e.target.value })} />
+          <span className="hint">A full folder path. Leave empty to use Downloads/Vyral. Vyral creates the folder if it's missing.</span></div>
+        <div className="field"><label htmlFor="mediaf">Keep new clips in</label>
+          <input id="mediaf" value={s.storage.media_folder} placeholder="Vyral's own data folder" onChange={(e) => up("storage", { media_folder: e.target.value })} />
+          <span className="hint">A full folder path with room for your clips. Clips already made stay where they are.</span></div>
       </div>
 
       <div className="row" style={{ position: "sticky", bottom: 12 }}>

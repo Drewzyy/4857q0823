@@ -325,6 +325,12 @@ function ReviewBar({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; 
     try { await fn(); toast("ok", done); onChange(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   if (clip.safety?.status === "fail" || o.status !== "ready") return null;
+  if (o.quality?.status === "fail") return (
+    <div className="banner warn small" role="status" style={{ flexDirection: "column", gap: 2 }}>
+      <strong>This video didn't pass the quality check, so it's held back:</strong>
+      <span>{o.quality.problems.join("; ")}. Fix it in the editor (saving re-renders and checks it again).</span>
+    </div>
+  );
   const by = o.reviewed_by === "muse" ? " by Muse" : o.reviewed_by === "auto" ? " (Auto-post)" : "";
   return (
     <div className="row wrap small" style={{ gap: 8, padding: "8px 0", borderTop: "1px solid var(--line)" }}>

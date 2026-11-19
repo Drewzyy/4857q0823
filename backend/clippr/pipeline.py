@@ -21,7 +21,7 @@ from . import campaigns, content, describe, events, grade, identify, moments, no
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
-from .media import deadair, facecam, match, onscreen, overlay, sfx
+from .media import deadair, facecam, match, onscreen, overlay, quality, sfx
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
 from .media.render import Layer, OutputFormat, render, thumbnail
@@ -53,6 +53,10 @@ class Pipeline:
 
     def _dir(self, name: str) -> Path:
         d = self.media / name
+        if name == "clips":  # new clips go where the user chose; older ones keep their stored paths
+            with self.ctx.db.session() as s:
+                if folder := load_settings(s).storage.media_folder:
+                    d = Path(folder) / "Vyral clips"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -649,15 +653,16 @@ class Pipeline:
                                     rules["min_seconds"], rules["max_seconds"])
             captions_note = " ".join(filter(None, [captions_note, campaigns.too_short(rules, framing["end"] - framing["start"])]))
         renders: dict[str, Path] = {}
+        qcs: dict[str, dict] = {}
         planned = []
         for did, platform, name, handle, st in dest_info:
             fmt_raw = dict(st.get("format") or {})
             ov = lenient(OverlaySettings, st.get("overlay")).model_dump()
             key = json.dumps([fmt_raw, ov], sort_keys=True)
             if key not in renders:
-                renders[key] = self._render(source, clip_dir / f"render-{len(renders)}.mp4", fmt_raw, start, dur, ov, title, words,
-                                            work / f"ov{len(renders)}", framing)
-            planned.append((did, platform, st, fmt_raw, ov, renders[key]))
+                renders[key], qcs[key] = self._render(source, clip_dir / f"render-{len(renders)}.mp4", fmt_raw, start, dur, ov, title,
+                                                      words, work / f"ov{len(renders)}", framing)
+            planned.append((did, platform, st, fmt_raw, ov, renders[key], qcs[key]))
 
         infos = {p: probe(p) for p in {x[5] for x in planned}}  # read before the write starts: FFmpeg is slow, the lock is shared
         with self.ctx.db.session() as s:
@@ -669,12 +674,13 @@ class Pipeline:
             s.add(clip)
             s.flush()
             rules = campaigns.caption_rules(s, clip)  # the streamer's caption rules
-            for did, platform, st, fmt_raw, ov, path in planned:
+            for did, platform, st, fmt_raw, ov, path, qc in planned:
                 info = infos[path]
                 ptitle, desc = describe.build(platform, title, post_title, st, game, rules)
                 s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=ptitle, description=desc,
                                  video_title=title, overlay=ov, format=fmt_raw,
-                                 file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size))
+                                 file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size,
+                                 quality=qc))
             audit(s, "clip.ready", "clip", clip.id, {"reference": reference_id, "longform": longform_id, "destinations": len(dest_info)})
             campaigns.auto_tag(s, clip)
             clip_title, clip_id = clip.title, clip.id
@@ -716,7 +722,7 @@ class Pipeline:
         return when
 
     def _render(self, source: Path, out: Path, fmt_raw: dict, start: float, dur: float, ov: dict, title_text: str,
-                words: list[Word], ov_dir: Path, edit: dict | None = None) -> Path:
+                words: list[Word], ov_dir: Path, edit: dict | None = None) -> tuple[Path, dict]:
         """`words` are timed from `start`; an editor `edit` may move the cut, zoom/pan, change speed, cut dead air,
         lay the clip out over a facecam or gameplay, and add texts and library layers."""
         fmt = OutputFormat.from_settings(fmt_raw)
@@ -794,7 +800,10 @@ class Pipeline:
             thumbnail(out, min(cover, max(out_dur - 0.1, 0)))
         except FFmpegError:
             log.exception("thumbnail failed")  # the video itself is fine
-        return out
+        qc = quality.check(out, fmt.width, fmt.height, out_dur)  # is the file itself good enough to post?
+        if qc["status"] == "fail":
+            log.warning("quality check failed for %s: %s", out.name, "; ".join(qc["problems"]))
+        return out, qc
 
     def grade_clip(self, clip_id: int) -> dict | None:
         """Grade the clip as it now renders (after trims, cuts and speed) and store it with the clip."""
@@ -1030,7 +1039,7 @@ class Pipeline:
             out = cdir / f"output-{ids[0]}-{int(now().timestamp() * 1000)}.mp4"
             work = self._dir("tmp") / f"rerender-{ids[0]}-{random.randrange(1 << 30)}"
             try:
-                self._render(source, out, fmt_raw, start, dur, lenient(OverlaySettings, ov).model_dump(), vtitle, words, work, edit)
+                _, qc = self._render(source, out, fmt_raw, start, dur, lenient(OverlaySettings, ov).model_dump(), vtitle, words, work, edit)
                 info = probe(out)
                 olds, kept = [], 0
                 with self.ctx.db.session() as s:
@@ -1040,7 +1049,7 @@ class Pipeline:
                             continue  # edited again while this rendered: the newer job renders the latest
                         olds.append(o.file_path)
                         o.file_path, o.width, o.height, o.fps, o.size_bytes = str(out), info.width, info.height, info.fps, out.stat().st_size
-                        o.render_state, o.render_error = "ready", None
+                        o.render_state, o.render_error, o.quality = "ready", None, qc
                         kept += 1
                     s.flush()
                     unused = [p for p in set(olds) if p and not s.scalar(select(func.count()).select_from(ClipOutput).where(ClipOutput.file_path == p))]

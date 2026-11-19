@@ -1,7 +1,7 @@
 """Pick the fastest video encoder that works on this computer.
 
 Hardware encoders (Apple VideoToolbox on Macs; NVIDIA, Intel or AMD on Windows) render several times faster than
-the processor. Each is tried once with a tiny test encode, because being listed doesn't mean the graphics card or
+the processor, and the two are used together: a few renders on the graphics card, the rest on the processor. Each is tried once with a tiny test encode, because being listed doesn't mean the graphics card or
 its driver supports it. The processor encoder (libx264/libx265) always works and is the fallback.
 """
 from __future__ import annotations
@@ -17,6 +17,25 @@ log = logging.getLogger("clippr.encoders")
 
 _lock = threading.Lock()
 _found: dict[str, str | None] = {}
+# Renders the graphics card takes at once. While they're all busy the next clip renders on the processor instead of
+# waiting, so the graphics card and the processor work side by side. Every encoder Vyral uses (NVENC on any recent
+# NVIDIA driver, Intel Quick Sync, AMD AMF, Apple VideoToolbox) handles two sessions comfortably.
+GPU_SLOTS = 2
+_gpu = threading.BoundedSemaphore(GPU_SLOTS)
+
+
+class gpu_slot:
+    """`with gpu_slot(codec, wanted) as hw:` hw is True while this render holds a graphics-card slot."""
+
+    def __init__(self, codec: str, wanted: bool):
+        self.held = bool(wanted and hardware(codec) and _gpu.acquire(blocking=False))
+
+    def __enter__(self) -> bool:
+        return self.held
+
+    def __exit__(self, *exc) -> None:
+        if self.held:
+            _gpu.release()
 
 CANDIDATES = {
     "h264": {"darwin": ["h264_videotoolbox"], "win32": ["h264_nvenc", "h264_qsv", "h264_amf"]},

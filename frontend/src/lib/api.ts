@@ -50,7 +50,7 @@ export interface Dashboard {
 export interface AppSettings {
   captions: { accuracy: "fast" | "accurate" | "best"; language: string };
   monitoring: { enabled: boolean; interval_minutes: number; streams_to_search: number; max_clip_seconds: number; twitch_min_views: number; twitch_clips_per_check: number };
-  storage: { retention_days: number };
+  storage: { retention_days: number; save_folder: string; media_folder: string };
   processing: { max_concurrent_jobs: number; cut_dead_air: boolean; hardware_encoding: boolean; viral_preedit: boolean; sound_effects: "off" | "auto"; auto_sound: string; hook_first: boolean };
   intake: { clipboard: boolean };
   safety: { banned_words: string[]; banned_scenes: string[]; banned_games: string[] };
@@ -71,6 +71,7 @@ export interface ClipOutputT {
   width: number | null; height: number | null; fps: number | null; size_bytes: number | null; available: boolean; has_thumbnail: boolean; uploaded_at: string | null;
   video_title: string; overlay: Overlay; post_url: string | null; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
   review: "pending" | "approved" | "rejected"; review_note: string; reviewed_by: string;
+  quality: { status: "pass" | "fail"; problems: string[] } | null;
 }
 export interface LongformMoment { start: number; end: number; peak: number; score: number; why: string[]; text: string; clip_id?: number; tier?: string | null; clip_title?: string | null }
 export interface LongformT {

@@ -69,6 +69,8 @@ def approve(s: Session, oid: int, actor: str, *, watched: bool, caption: str | N
         raise PostingError("Watch the video before approving: nudity, gore and weapons on screen aren't machine-checked")
     if o.render_state == "rendering":
         raise PostingError("It's re-rendering; approve the new version when it's ready")
+    if (o.quality or {}).get("status") == "fail":
+        raise PostingError("The video didn't pass the quality check: " + "; ".join(o.quality.get("problems", [])))
     if caption is not None:
         o.description = caption.strip()[:2200]
     o.review, o.review_note, o.reviewed_by, o.scheduled_at = "approved", "", actor, scheduled_at

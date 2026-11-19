@@ -52,3 +52,19 @@ def test_the_picture_starts_with_the_sound_in_every_player(tmp_path):
                        capture_output=True, text=True)
     first = [l.split(",") for l in r.stdout.splitlines() if not l.startswith("#")][0]
     assert int(first[1]) == 0 and int(first[2]) == 0  # decode time = show time = 0
+
+
+def test_graphics_card_and_processor_render_side_by_side(monkeypatch):
+    from clippr.media import encoders
+    monkeypatch.setattr(encoders, "hardware", lambda codec: "h264_nvenc")
+    held = [encoders.gpu_slot("h264", True) for _ in range(encoders.GPU_SLOTS)]
+    assert all(h.held for h in held)
+    with encoders.gpu_slot("h264", True) as on_gpu:
+        assert not on_gpu  # the card is full: this one goes to the processor instead of waiting
+        assert "-crf" in encoders.args("h264", 12, on_gpu)
+    for h in held:
+        h.__exit__()
+    with encoders.gpu_slot("h264", True) as on_gpu:
+        assert on_gpu  # a slot is free again
+    with encoders.gpu_slot("h264", False) as on_gpu:
+        assert not on_gpu  # Processor only in Settings

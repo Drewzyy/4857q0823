@@ -142,6 +142,14 @@ def put_settings(body: dict, s: Session = Depends(db)):
     except ValidationError as e:
         first = e.errors()[0]
         raise ApiError(422, "validation", f"{'.'.join(str(x) for x in first['loc'])}: {first['msg']}")
+    for name, folder in (("save_folder", new.storage.save_folder), ("media_folder", new.storage.media_folder)):
+        if folder:
+            try:
+                Path(folder).mkdir(parents=True, exist_ok=True)
+                (Path(folder) / ".vyral-write-test").write_bytes(b"")
+                (Path(folder) / ".vyral-write-test").unlink()
+            except OSError as e:
+                raise ApiError(422, "folder", f"storage.{name}: Vyral can't write to {folder} ({e.strerror or e})")
     row = s.get(Setting, SETTINGS_KEY)
     if row:
         row.value = new.model_dump()

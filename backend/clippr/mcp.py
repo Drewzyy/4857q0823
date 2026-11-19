@@ -60,7 +60,7 @@ def _out(o: ClipOutput) -> dict:
             "file_path": str(Path(o.file_path).resolve()) if o.file_path else None,
             "file_exists": bool(o.file_path and Path(o.file_path).exists()), "render_state": o.render_state,
             "caption": o.description, "title": o.title, "review": o.review, "review_note": o.review_note,
-            "post_url": o.post_url, "status": o.status}
+            "post_url": o.post_url, "status": o.status, "quality": o.quality}
 
 
 def _clip(c: Clip, outs: list[ClipOutput]) -> dict:
@@ -82,7 +82,7 @@ def _clips(s, wanted: Callable[[ClipOutput], bool]) -> list[dict]:
     for c in s.scalars(select(Clip).where(Clip.status == "ready").order_by(Clip.created_at.desc()).limit(200)).unique():
         if posting.held_back(c, cfg.min_virality):
             continue  # quarantined, no permission, or under the score: never offered
-        outs = [o for o in _live_outputs(s, c.id) if wanted(o)]
+        outs = [o for o in _live_outputs(s, c.id) if wanted(o) and (o.quality or {}).get("status") != "fail"]  # broken files never offered
         if outs:
             res.append(_clip(c, outs))
     return res

@@ -1,9 +1,10 @@
 """Validated shapes for settings blobs stored as JSON."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 M = TypeVar("M", bound=BaseModel)
 
@@ -111,6 +112,16 @@ def default_destination_settings(platform: str, handle: str = "") -> dict:
 
 class StorageSettings(Strict):
     retention_days: int = Field(30, ge=1, le=365)  # clips and cached media are deleted after this
+    save_folder: str = Field("", max_length=500)  # where "Save to computer" puts videos; "" = Downloads/Vyral
+    media_folder: str = Field("", max_length=500)  # where new clips are kept while they wait; "" = the app's data folder
+
+    @field_validator("save_folder", "media_folder")
+    @classmethod
+    def _absolute(cls, v: str) -> str:
+        v = v.strip()
+        if v and not Path(v).is_absolute():
+            raise ValueError("must be a full folder path, like C:\\Users\\you\\Videos or /Users/you/Videos")
+        return v
 
 
 class MonitoringSettings(Strict):
