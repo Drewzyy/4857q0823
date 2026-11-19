@@ -28,6 +28,13 @@ export function Picker({ items, value, onChange, label, empty = "None", hint }:
       {open && (
         <div className="card" style={{ position: "absolute", zIndex: 30, top: "calc(100% + 4px)", left: 0, minWidth: 220, padding: 8, boxShadow: "var(--shadow)" }}>
           {items.length === 0 && <p className="small faint" style={{ padding: 4 }}>Nothing to pick yet</p>}
+          {items.length > 1 && (
+            <label className="check" style={{ display: "flex", padding: "5px 6px", gap: 6, borderBottom: "1px solid var(--line)", marginBottom: 4 }}>
+              <input type="checkbox" checked={items.every((c) => value.includes(c.id))}
+                onChange={(e) => onChange(e.target.checked ? items.map((c) => c.id) : [])} />
+              <strong>Select all</strong><span className="faint small">{items.length}</span>
+            </label>
+          )}
           {items.map((c) => (
             <label key={c.id} className="check" style={{ display: "flex", padding: "5px 6px", gap: 6 }}>
               <input type="checkbox" checked={value.includes(c.id)}
