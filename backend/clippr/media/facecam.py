@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import threading
 from pathlib import Path
 
 from .ffmpeg import FFmpegError, run
@@ -22,17 +23,32 @@ MODEL = Path(__file__).parent / "models" / "face_detection_yunet_2023mar.onnx"
 CAM_SHARE = 0.4  # share of the output height the facecam panel takes in the stacked layout
 
 
+_local = threading.local()  # one detector per worker thread (they aren't safe to share), kept between frames
+
+
+def _detector(cv2, w: int, h: int):
+    """The face model, loaded once per thread instead of once per frame; resized when the frame size changes."""
+    det = getattr(_local, "yunet", None)
+    if det is None:
+        det = _local.yunet = cv2.FaceDetectorYN.create(str(MODEL), "", (w, h), 0.55, 0.3, 50)
+    elif getattr(_local, "size", None) != (w, h):
+        det.setInputSize((w, h))
+    _local.size = (w, h)
+    return det
+
+
 def _faces(img) -> list[tuple[int, int, int, int]]:
     import cv2
     h, w = img.shape[:2]
     if MODEL.exists() and hasattr(cv2, "FaceDetectorYN"):
         try:
-            det = cv2.FaceDetectorYN.create(str(MODEL), "", (w, h), 0.55, 0.3, 50)
-            _, found = det.detect(img)
+            _, found = _detector(cv2, w, h).detect(img)
             return [tuple(int(v) for v in f[:4]) for f in (found if found is not None else [])]
         except cv2.error:
             log.exception("YuNet failed; using the older face model")
-    model = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    model = getattr(_local, "haar", None)
+    if model is None:
+        model = _local.haar = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     gray = cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
     found = model.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(max(16, h // 40),) * 2)
     return [tuple(int(v) for v in f) for f in found]

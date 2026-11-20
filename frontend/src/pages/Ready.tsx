@@ -20,6 +20,7 @@ function daysLeft(iso: string): string {
 }
 
 const TIERS = ["S", "A", "B", "C", "D"] as const;
+const PAGE = 20;
 const KINDS = [["gaming", "Gaming"], ["podcast", "Podcast"], ["irl", "IRL"], ["chatting", "Just chatting"]] as const;
 const saved = <T,>(key: string, fallback: T): T => {
   try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; }
@@ -61,6 +62,10 @@ export default function Ready() {
     const shown = all.filter((c) => (!grades.length || grades.includes(c.grade?.tier ?? "none")) && (!kinds.length || kinds.includes(kindOf(c))));
     return bestFirst ? [...shown].sort((a, b) => (b.grade?.score ?? -1) - (a.grade?.score ?? -1)) : shown;
   }, [all, grades, kinds, bestFirst]);
+  // Only the first clips are drawn (each card has a cover image and its own panels); more on request. Keeps the
+  // window light with hundreds of clips waiting.
+  const [shown, setShown] = useState(PAGE);
+  useEffect(() => setShown(PAGE), [tab, grades, kinds, bestFirst]);
   const toggle = (t: string) => setGrades((g) => (g.includes(t) ? g.filter((x) => x !== t) : [...g, t]));
 
   return (
@@ -105,7 +110,9 @@ export default function Ready() {
         </Empty></div>
       ) : (
         <div className="stack" style={{ gap: 16 }}>
-          {list.map((c) => <ClipCard key={c.id} clip={c} tab={tab} onChange={refresh} onRemove={setRemoving} toast={toast} />)}
+          {list.slice(0, shown).map((c) => <ClipCard key={c.id} clip={c} tab={tab} onChange={refresh} onRemove={setRemoving} toast={toast} />)}
+          {list.length > shown && <button className="btn" style={{ alignSelf: "center" }} onClick={() => setShown(shown + PAGE)}>
+            Show {Math.min(PAGE, list.length - shown)} more ({list.length - shown} left)</button>}
         </div>
       )}
       <ConfirmModal open={!!removing} title="Delete this clip?" danger confirmLabel="Delete"

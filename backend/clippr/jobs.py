@@ -43,6 +43,7 @@ class JobQueue:
         self.handlers: dict[str, Handler] = {}
         self.periodic: list[tuple[str, int, Callable[[], dict[str, Any]]]] = []
         self._stop = threading.Event()
+        self._wake = threading.Event()  # set when a job is queued, so idle workers start it at once
         self._threads: list[threading.Thread] = []
         self._last_periodic: dict[str, float] = {}
         # Heavy jobs (downloads + rendering) are capped so monitoring and notifications never wait behind them.
@@ -77,6 +78,7 @@ class JobQueue:
                     session.flush()
             except IntegrityError:
                 return None
+            self._wake.set()  # it runs once the caller's transaction commits; idle workers look again within 3 s
             return job.id
         try:
             with self.db.session() as s:
@@ -84,7 +86,9 @@ class JobQueue:
                           run_after=datetime.now(timezone.utc) + timedelta(seconds=delay))
                 s.add(job)
                 s.flush()
-                return job.id
+                jid = job.id
+            self._wake.set()
+            return jid
         except IntegrityError:
             return None  # same idempotency key already queued/ran
 
@@ -226,7 +230,9 @@ class JobQueue:
             try:
                 self._tick_periodic()
                 if not self.run_one():
-                    self._stop.wait(1.0)
+                    # Nothing to do: sleep until a job is queued (or 3 s, for scheduled ones), not a busy check every second.
+                    if self._wake.wait(3.0):
+                        self._wake.clear()
             except Exception:
                 log.exception("worker loop error")
                 self._stop.wait(5.0)
@@ -244,5 +250,6 @@ class JobQueue:
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         for t in self._threads:
             t.join(timeout=5)
