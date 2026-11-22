@@ -54,6 +54,8 @@ AUTH_URL = "https://www.dropbox.com/oauth2/authorize"
 TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 API = "https://api.dropboxapi.com/2"
 CONTENT = "https://content.dropboxapi.com/2"
+# The only permissions asked for. No team scopes: Vyral works with a personal (Basic, Plus, Essentials) account only.
+SCOPES = "files.content.write files.content.read"
 CHUNK = 8 * 1024 * 1024  # each upload piece; a multiple of Dropbox's 4 MB hash block
 BLOCK = 4 * 1024 * 1024
 STABLE_SECONDS = 6  # a file's size must hold still this long before it's sent
@@ -283,7 +285,7 @@ class DropboxSync:
             self._login = login
         return AUTH_URL + "?" + urllib.parse.urlencode({
             "client_id": app_key, "response_type": "code", "code_challenge": challenge, "code_challenge_method": "S256",
-            "token_access_type": "offline", "redirect_uri": REDIRECT_URI, "state": login["state"]})
+            "token_access_type": "offline", "scope": SCOPES, "redirect_uri": REDIRECT_URI, "state": login["state"]})
 
     def _close_listener(self, only=None) -> None:
         with self._lock:
@@ -336,9 +338,15 @@ class DropboxSync:
             client = Client(login["app_key"], j["refresh_token"], self._http)
             client._token, client._expires = j["access_token"], time.monotonic() + float(j.get("expires_in", 14400))
             account = client.account()
+            business = account.get("team") or (account.get("account_type") or {}).get(".tag") == "business" \
+                or any(x.startswith("team") for x in str(j.get("scope", "")).split())
+            if business:  # not kept: Vyral only works with a personal Dropbox
+                client.revoke()
         except (httpx.HTTPError, DropboxError, KeyError, ValueError) as e:
             log.warning("Dropbox sign-in failed: %s", type(e).__name__)
             return False, "Vyral couldn't reach Dropbox to finish signing in. Check the internet connection and try again."
+        if business:
+            return False, "That's a Dropbox Business (team) account. Vyral only connects to a personal Dropbox: sign in with your personal account."
         self.ctx.secrets.set(SECRET_KEY, {"refresh_token": j["refresh_token"], "app_key": login["app_key"]})
         name = (account.get("name") or {}).get("display_name") or account.get("email") or "your Dropbox"
         with self.ctx.db.session() as s:

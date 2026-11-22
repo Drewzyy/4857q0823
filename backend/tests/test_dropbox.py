@@ -25,6 +25,7 @@ class FakeDropbox:
         self.corrupt = 0  # finishes that store damaged bytes
         self.token_forms: list[dict] = []
         self.revoked = False
+        self.account_type = "basic"
 
     @staticmethod
     def _meta(path, data):
@@ -49,7 +50,8 @@ class FakeDropbox:
         args = json.loads(arg) if arg else json.loads(req.content or b"null")
         data = req.content if arg else b""
         if route == "/2/users/get_current_account":
-            return httpx.Response(200, json={"account_id": "dbid:1", "name": {"display_name": "Andrew"}})
+            acct = {"account_id": "dbid:1", "name": {"display_name": "Andrew"}, "account_type": {".tag": self.account_type}}
+            return httpx.Response(200, json={**acct, "team": {"name": "Acme"}} if self.account_type == "business" else acct)
         if route == "/2/auth/token/revoke":
             self.revoked = True
             return httpx.Response(200, content=b"")
@@ -113,6 +115,7 @@ def _connect(ctx, sync, fake):
         s.merge(Setting(key=SETTINGS_KEY, value={"dropbox": {"app_key": "abc123", "folder": "/Vyral", "auto_upload": True}}))
     url = sync.begin_connect("abc123")
     q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(url).query).items()}
+    assert q["scope"] == "files.content.write files.content.read" and "team" not in q["scope"]
     assert q["code_challenge_method"] == "S256" and q["token_access_type"] == "offline" and q["redirect_uri"] == dropbox.REDIRECT_URI
     ok, msg = sync.finish_connect({"code": "the-code", "state": q["state"]})
     assert ok, msg
@@ -276,3 +279,15 @@ def test_an_expired_access_token_is_renewed_and_a_revoked_sign_in_asks_to_reconn
 def test_folder_setting_is_a_dropbox_path(client):
     assert client.put("/api/settings", json={"dropbox": {"folder": "Vyral/clips/"}}).json()["dropbox"]["folder"] == "/Vyral/clips"
     assert client.put("/api/settings", json={"dropbox": {"folder": "/a/../b"}}).status_code == 422
+
+
+def test_a_business_account_is_turned_away_and_not_kept(ctx, box):
+    fake, sync = box
+    fake.account_type = "business"
+    url = sync.begin_connect("abc123")
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+    ok, msg = sync.finish_connect({"code": "c", "state": state})
+    assert not ok and "personal" in msg and fake.revoked
+    assert ctx.secrets.get(dropbox.SECRET_KEY) is None
+    with ctx.db.session() as s:
+        assert not dropbox.state(s).get("connected")
