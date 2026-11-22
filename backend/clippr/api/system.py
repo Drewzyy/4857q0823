@@ -110,6 +110,12 @@ def load_settings(s: Session) -> AppSettings:
     return lenient(AppSettings, row.value if row else None)
 
 
+def save_folder(settings: AppSettings) -> Path:
+    """Where "Save to computer" puts videos: the folder chosen in Settings, or Downloads/Vyral."""
+    chosen = settings.storage.save_folder
+    return Path(chosen) if chosen else Path(os.environ.get("CLIPPR_DOWNLOADS_DIR") or Path.home() / "Downloads") / "Vyral"
+
+
 @router.get("/needs-you")
 def needs_you(c=Depends(ctx), s: Session = Depends(db)):
     """What's waiting on the user, most important first, each with where it's handled."""

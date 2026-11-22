@@ -25,8 +25,9 @@ from typing import Any, Callable
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
+from sqlalchemy.orm import object_session
 
-from . import posting
+from . import dropbox, posting
 from .audit import audit
 from .api.analytics import link_post
 from .api.clips import _live_outputs, apply_edit
@@ -72,7 +73,13 @@ def _out(o: ClipOutput) -> dict:
             "file_path": str(Path(o.file_path).resolve()) if o.file_path else None,
             "file_exists": bool(o.file_path and Path(o.file_path).exists()), "render_state": o.render_state,
             "caption": o.description, "title": o.title, "review": o.review, "review_note": o.review_note,
-            "post_url": o.post_url, "status": o.status, "quality": o.quality}
+            "post_url": o.post_url, "status": o.status, "quality": o.quality, **_dropbox(o)}
+
+
+def _dropbox(o: ClipOutput) -> dict:
+    """Where the video is in Dropbox, for Muse to fetch it there: status queued | uploading | uploaded | failed, or None."""
+    d = dropbox.status_for(object_session(o), o.file_path)
+    return {"dropbox_status": d["status"] if d else None, "dropbox_path": d["path"] if d and d["status"] == "uploaded" else None}
 
 
 def _clip(c: Clip, outs: list[ClipOutput]) -> dict:
@@ -307,7 +314,7 @@ TOOLS: dict[str, tuple[Callable, str, dict, list[str], dict]] = {
                       "scheduled_at": {"type": "string"}}, ["clip_id", "watched"], {}),
     "reject_clip": (reject_clip, "Reject a clip (one page, or all of them) with a reason.",
                     {**ID, **DEST, "reason": {"type": "string", "minLength": 1, "maxLength": 500}}, ["clip_id", "reason"], {}),
-    "get_posting_package": (get_posting_package, "For an approved video: file path, final caption, page, aspect ratio, duration, schedule. Post it yourself, then call mark_posted.",
+    "get_posting_package": (get_posting_package, "For an approved video: file path (and dropbox_path once it's in Dropbox), final caption, page, aspect ratio, duration, schedule. Post it yourself, then call mark_posted.",
                             {**ID, **DEST}, ["clip_id"], RO),
     "mark_posted": (mark_posted, "After you posted an approved video yourself: record its link (https, on that page's platform: TikTok, "
                     "Instagram, YouTube, Facebook or X). Marks it uploaded so analytics and campaigns pick it up.",

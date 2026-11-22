@@ -100,7 +100,10 @@ def package(s: Session, oid: int) -> dict:
     d = o.destination
     from .media.ffmpeg import probe
     dur = probe(Path(o.file_path)).duration
+    from .dropbox import status_for
+    box = status_for(s, o.file_path)
     return {"output_id": o.id, "clip_id": clip.id, "video_path": str(Path(o.file_path).resolve()), "caption": o.description,
             "title": o.title, "platform": o.platform, "destination": {"id": d.id, "handle": d.handle, "name": d.display_name} if d else None,
             "width": o.width, "height": o.height, "aspect_ratio": f"{o.width}:{o.height}" if o.width else None,
-            "duration": round(dur or 0, 2), "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None}
+            "duration": round(dur or 0, 2), "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
+            "dropbox_status": box["status"] if box else None, "dropbox_path": box["path"] if box and box["status"] == "uploaded" else None}

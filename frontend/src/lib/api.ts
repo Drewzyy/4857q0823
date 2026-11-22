@@ -54,6 +54,7 @@ export interface AppSettings {
   processing: { max_concurrent_jobs: number; cut_dead_air: boolean; hardware_encoding: boolean; viral_preedit: boolean; sound_effects: "off" | "auto"; auto_sound: string; hook_first: boolean };
   intake: { clipboard: boolean };
   safety: { banned_words: string[]; banned_scenes: string[]; banned_games: string[] };
+  dropbox: { auto_upload: boolean; folder: string; app_key: string };
   posting: { auto_post_kill_switch: boolean; mcp_enabled: boolean; mcp_host: string; mcp_port: number; min_virality: number };
 }
 export interface Bridge { mcp: { running: boolean; port: number | null; error: string | null; enabled: boolean; url: string; token: string } }
@@ -72,6 +73,12 @@ export interface ClipOutputT {
   video_title: string; overlay: Overlay; post_url: string | null; render_state: "ready" | "rendering" | "failed"; render_error: string | null; version: string | null;
   review: "pending" | "approved" | "rejected"; review_note: string; reviewed_by: string;
   quality: { status: "pass" | "fail"; problems: string[] } | null;
+  dropbox: DropboxUploadT | null;
+}
+export interface DropboxUploadT { id: number; status: "queued" | "uploading" | "uploaded" | "failed"; path: string | null; error: string | null; progress: number | null; next_try_at: string | null; uploaded_at: string | null }
+export interface DropboxState {
+  connected: boolean; needs_reconnect: boolean; account: string | null; error: string | null; connecting: boolean; app_key_set: boolean; redirect_uri: string;
+  counts: { queued: number; uploading: number; uploaded: number; failed: number };
 }
 export interface LongformMoment { start: number; end: number; peak: number; score: number; why: string[]; text: string; clip_id?: number; tier?: string | null; clip_title?: string | null }
 export interface LongformT {
@@ -270,6 +277,11 @@ export const api = {
   discordInboxChannels: () => request<{ id: string; name: string; server: string }[]>("GET", "/discord-inbox/channels"),
   setDiscordInbox: (b: { token?: string; channel_id?: string }) => request<DiscordInbox>("PUT", "/discord-inbox", b),
   removeDiscordInbox: () => request<void>("DELETE", "/discord-inbox"),
+  dropbox: () => request<DropboxState>("GET", "/dropbox"),
+  connectDropbox: () => request<{ url: string }>("POST", "/dropbox/connect"),
+  disconnectDropbox: () => request<DropboxState>("POST", "/dropbox/disconnect"),
+  syncAllToDropbox: () => request<{ queued: number }>("POST", "/dropbox/sync-all"),
+  retryDropbox: (id: number) => request<{ ok: boolean }>("POST", `/dropbox/uploads/${id}/retry`),
   removeWebhook: () => request<void>("DELETE", "/notifications/webhook"),
   testNotification: (category?: string) => request<{ sent: boolean }>("POST", "/notifications/test", category ? { category } : {}),
 };

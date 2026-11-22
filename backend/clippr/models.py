@@ -311,6 +311,27 @@ class ClipOutput(Base):
     destination: Mapped[DestinationAccount | None] = relationship(lazy="joined")
 
 
+class DropboxUpload(Base):
+    """One finished video file on this computer and its copy in Dropbox (dropbox.py). Keyed by the local file."""
+
+    __tablename__ = "dropbox_uploads"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    local_path: Mapped[str] = mapped_column(Text, unique=True)
+    output_id: Mapped[int | None] = mapped_column(ForeignKey("clip_outputs.id", ondelete="SET NULL"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(200))  # file name in Dropbox without .mp4: the clip's folder, like ref31-1795094064762
+    status: Mapped[str] = mapped_column(String(12), default="queued")  # queued | uploading | uploaded | failed
+    dropbox_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_try_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Dropbox's content hash of the local file
+    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)  # an unfinished upload, carried on after a dropped connection
+    session_offset: Mapped[int] = mapped_column(Integer, default=0)
+    uploaded_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
 class MetricSnapshot(Base):
     """Public numbers for an uploaded clip at a point in time."""
 

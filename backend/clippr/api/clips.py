@@ -1,7 +1,6 @@
 """Ready-to-upload clips, the activity feed of source posts, and Discord notifications."""
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
@@ -14,8 +13,9 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
+from .. import dropbox
 from ..audit import audit
 from ..fetch import FetchError, count_links
 from ..media.ffmpeg import probe
@@ -23,7 +23,7 @@ from ..media.overlay import Word, apply_text_edit
 from ..models import Clip, ClipOutput, Creator, Job, ReferenceVideo, SourceAccount
 from ..schemas import VIDEO_HEIGHT, ClipEdit, OverlaySettings, deep_merge, lenient
 from .deps import ApiError, ctx, db, get_or_404
-from .system import load_settings
+from .system import load_settings, save_folder
 
 router = APIRouter()
 
@@ -42,6 +42,7 @@ def _output(o: ClipOutput) -> dict:
             "video_title": o.video_title, "overlay": lenient(OverlaySettings, o.overlay).model_dump(),
             "render_state": o.render_state, "render_error": o.render_error, "post_url": o.post_url,
             "review": o.review, "review_note": o.review_note, "reviewed_by": o.reviewed_by, "quality": o.quality,
+            "dropbox": dropbox.status_for(object_session(o), o.file_path),
             # Changes whenever the file is re-rendered, so the preview reloads.
             "version": Path(o.file_path).name if o.file_path else None}
 
@@ -125,8 +126,7 @@ def save_to_downloads(oid: int, s: Session = Depends(db), c=Depends(ctx)):
         raise ApiError(410, "expired", "This clip's video has expired and was deleted to save space")
     if o.render_state == "rendering":
         raise ApiError(409, "rendering", "This video is being re-rendered with your changes. Try again in a moment.")
-    chosen = load_settings(s).storage.save_folder
-    folder = Path(chosen) if chosen else Path(os.environ.get("CLIPPR_DOWNLOADS_DIR") or Path.home() / "Downloads") / "Vyral"
+    folder = save_folder(load_settings(s))
     try:
         folder.mkdir(parents=True, exist_ok=True)
     except OSError as e:

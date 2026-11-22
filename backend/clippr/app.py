@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api import accounts, analytics, campaigns as campaigns_api, clips, inbox, library, longform, notifications, streamers, system, updates
+from .api import accounts, analytics, campaigns as campaigns_api, clips, dropbox as dropbox_api, inbox, library, longform, notifications, streamers, system, updates
 from .api import posting as posting_api
 from .api.system import load_settings
 from .fetch import Fetcher, YtDlpFetcher
@@ -43,6 +43,7 @@ class AppContext:
     pipeline: Any = None
     inbox: Any = None
     mcp: Any = None
+    dropbox: Any = None
 
 
 def build_context(config: Config, secrets: SecretStore | None = None, fetcher=None, transcriber=None) -> AppContext:
@@ -69,6 +70,9 @@ def build_context(config: Config, secrets: SecretStore | None = None, fetcher=No
 
     campaigns.register(ctx)
     ctx.mcp = mcp.Server(ctx)
+    from .dropbox import DropboxSync
+
+    ctx.dropbox = DropboxSync(ctx)
 
     def heavy_limit() -> int:
         with database.session() as s:
@@ -94,7 +98,9 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
             ctx.jobs.enqueue("clips.restore", {}, max_attempts=1)  # brings back page videos a past update lost
             ctx.jobs.enqueue("clips.preedit", {}, max_attempts=1)  # clips made before the pre-edit get it once
             ctx.mcp.start()  # the local bridge for Muse (Settings can turn it off)
+            ctx.dropbox.start()  # finished videos to Dropbox, once it's connected
         yield
+        ctx.dropbox.stop()
         ctx.mcp.stop()
         ctx.inbox.stop()
         ctx.jobs.stop()
@@ -147,7 +153,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
         log.exception("unhandled error")
         return JSONResponse({"error": {"code": "internal", "message": "Something went wrong. Details are in the app log."}}, status_code=500)
 
-    for r in (accounts.router, streamers.router, library.router, longform.router, system.router, clips.router, updates.router, analytics.router, inbox.router, notifications.router, posting_api.router, campaigns_api.router):
+    for r in (accounts.router, streamers.router, library.router, longform.router, system.router, clips.router, updates.router, analytics.router, inbox.router, notifications.router, posting_api.router, campaigns_api.router, dropbox_api.router):
         app.include_router(r, prefix="/api")
 
     dist = cfg.frontend_dist

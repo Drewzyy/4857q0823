@@ -69,8 +69,10 @@ and none returns a token, key or password.
 | `update_clip` (write) | `clip_id`, any of `caption` (+ `destination_id` for one page), `hook_text`, `hook` `[start, end]` or null, `trim_start`, `trim_end`, `destination_ids` | Changes the clip. Video changes re-render through the jobs queue; the transcript is reused, never re-done. A changed video or caption needs approving again. |
 | `approve_clip` (write) | `clip_id`, `destination_id`, `watched: true`, optional `caption`, `scheduled_at` | Approves one page's video. Doesn't post. Refused for quarantined clips, streamers without clip permission, low scorers, or if `watched` isn't true. |
 | `reject_clip` (write) | `clip_id`, `reason`, optional `destination_id` | Rejects one page or all of them. |
-| `get_posting_package` | `clip_id`, `destination_id` | For an approved video: file path, final caption, page handle, aspect ratio, duration, schedule. Muse posts it with this. |
+| `get_posting_package` | `clip_id`, `destination_id` | For an approved video: file path, `dropbox_path` once the verified copy is in Dropbox, final caption, page handle, aspect ratio, duration, schedule. Muse posts it with this. |
 | `mark_posted` (write) | `clip_id`, `destination_id`, `post_url` | After Muse posted the approved video: stores the link (https, on that page's platform: TikTok, Instagram, YouTube, Facebook or X), marks the video uploaded, so Analytics and campaigns pick it up. Refused unless the video is approved. Audit entry says Muse did it. |
+
+Every clip's outputs in `list_ready_clips` and `get_clip` also carry `dropbox_status` (queued, uploading, uploaded, failed, or null) and `dropbox_path` (set only once the upload is verified). Use that path to fetch the video from Dropbox.
 
 The flow is `approve_clip` -> `get_posting_package` -> Muse posts the video -> `mark_posted`. There is deliberately no `post_to_tiktok` or `post_to_instagram` in Vyral: posting is Muse's job, after approval.
 

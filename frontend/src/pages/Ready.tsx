@@ -301,6 +301,7 @@ function OutputPanel({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT
         {o.status === "ready" && <button className="btn" onClick={() => mark("uploaded")}><CheckCircle2 size={14} />Mark uploaded</button>}
         {o.status === "uploaded" && <button className="btn ghost" onClick={() => mark("ready")}><Undo2 size={14} />Not uploaded</button>}
       </div>
+      <DropboxStatus o={o} onChange={onChange} toast={toast} />
       <ReviewBar o={o} clip={clip} onChange={onChange} toast={toast} />
       <PostLink o={o} onChange={onChange} toast={toast} />
       {clip.editable && <Link className="btn ghost sm" style={{ alignSelf: "flex-start" }} to={`/editor/${clip.id}`}>
@@ -319,6 +320,28 @@ function SafetyNote({ safety }: { safety: ClipT["safety"] }) {
       <strong>{fail ? "Quarantined: this clip won't be reviewed or posted." : "Check before approving:"}</strong>
       <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>{(safety.flags ?? []).map((f, i) => (
         <li key={i}>{f.category}: {f.reason}{f.at !== null ? ` at ${f.at.toFixed(1)} s` : ""}</li>))}</ul>
+    </div>
+  );
+}
+
+/** Where this video is in Dropbox: queued, uploading, uploaded (with its path) or failed (with Retry). */
+function DropboxStatus({ o, onChange, toast }: { o: ClipOutputT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+  const box = useQuery({ queryKey: ["dropbox"], queryFn: api.dropbox, staleTime: 30_000 });
+  const d = o.dropbox;
+  if (!box.data?.connected && !d) return null;
+  const pill = !d ? <span className="pill nodot">Not in Dropbox yet{box.data?.connected ? " (Sync all in Settings › Dropbox sends it)" : ""}</span>
+    : d.status === "uploaded" ? <span className="pill ok">Uploaded to Dropbox</span>
+    : d.status === "uploading" ? <span className="pill">Uploading to Dropbox{d.progress !== null ? ` ${d.progress}%` : ""}</span>
+    : d.status === "failed" ? <span className="pill warn" title={d.error ?? ""}>Dropbox upload failed</span>
+    : <span className="pill nodot">{box.data?.connected && !box.data.needs_reconnect ? "Queued for Dropbox" : "Waiting for Dropbox to be connected"}</span>;
+  return (
+    <div className="row wrap small" style={{ gap: 8 }}>
+      {pill}
+      {d?.status === "uploaded" && d.path && <code>{d.path}</code>}
+      {d?.status === "failed" && <span className="faint">{d.error}{d.next_try_at ? ` Next try ${relTime(d.next_try_at)}.` : ""}</span>}
+      {d?.status === "failed" && <button className="btn sm" onClick={async () => {
+        try { await api.retryDropbox(d.id); toast("ok", "Retrying the Dropbox upload"); onChange(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
+      }}>Retry</button>}
     </div>
   );
 }

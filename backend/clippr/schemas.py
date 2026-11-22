@@ -181,6 +181,22 @@ class PostingSettings(Strict):
     min_virality: int = Field(50, ge=0, le=100)  # clips scoring lower don't go to review
 
 
+class DropboxSettings(Strict):
+    """Dropbox auto-upload (dropbox.py). The sign-in itself is kept in the OS credential store, never here."""
+    auto_upload: bool = True  # each finished video goes to Dropbox by itself once Dropbox is connected
+    folder: str = Field("/Vyral", max_length=300)  # the Dropbox folder videos go in
+    app_key: str = Field("", pattern=r"^[A-Za-z0-9]{0,40}$")  # your Dropbox app's key (public; PKCE needs no secret)
+
+    @field_validator("folder")
+    @classmethod
+    def _dropbox_folder(cls, v: str) -> str:
+        v = "/" + v.strip().strip("/")
+        parts = v.split("/")[1:]
+        if "\\" in v or any(p in ("", ".", "..") or p != p.strip() for p in parts if v != "/"):
+            raise ValueError("enter a Dropbox folder like /Vyral")
+        return v
+
+
 class AppSettings(Strict):
     safety: SafetySettings = Field(default_factory=SafetySettings)
     posting: PostingSettings = Field(default_factory=PostingSettings)
@@ -189,6 +205,7 @@ class AppSettings(Strict):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
     intake: IntakeSettings = Field(default_factory=IntakeSettings)
+    dropbox: DropboxSettings = Field(default_factory=DropboxSettings)
 
 
 class TextOverlay(Strict):
