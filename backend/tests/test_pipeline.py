@@ -3,6 +3,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+
+from clippr import titles
 import pytest
 import respx
 
@@ -81,9 +83,8 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert outs["tiktok"]["width"] == 1080 and outs["tiktok"]["height"] == 1920
     assert outs["youtube"]["width"] == 720 and outs["youtube"]["height"] == 1280
     tdesc = outs["tiktok"]["description"]
-    quote = "“No way he actually did that right now”"  # the line said in the clip, not the post's own words
-    title = outs["tiktok"]["video_title"]
-    assert title.startswith(quote + " ") and len(title) > len(quote) + 1
+    title = outs["tiktok"]["video_title"]  # the line said in the clip, typed like a person: not the post's own words, no emoji
+    assert "no way he actually did that right now" in title and not titles.shouts(title)
     assert tdesc == f"{title}\n\nFollow for more\n\n#gaming #clips #vyralclips", tdesc
     assert "Streamer:" not in tdesc and "Streamed" not in tdesc and "He actually did it" not in tdesc
 
@@ -282,8 +283,8 @@ def test_one_clipping_account_covering_several_streamers(env):
     assert ref["status"] == "ready" and ref["creator"]["name"] == "Streamer B", ref["status_detail"]
     outs = c.get("/api/clips").json()[0]["outputs"]
     assert [o["destination"]["display_name"] for o in outs] == ["B page"]
-    assert outs[0]["description"].startswith("“No way he actually did that right now”")
-    assert "Streamer" not in outs[0]["description"]
+    assert "no way he actually did that right now" in outs[0]["description"].split("\n")[0]
+    assert "Streamer:" not in outs[0]["description"] and "Streamed" not in outs[0]["description"]  # no metadata lines
     # Removing one streamer keeps the other.
     r = c.patch(f"/api/sources/{src['id']}", json={"creator_ids": [b]}).json()
     assert [x["name"] for x in r["creators"]] == ["Streamer B"]

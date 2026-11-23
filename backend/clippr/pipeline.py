@@ -870,7 +870,7 @@ class Pipeline:
                              views=facts["views"], likes=facts["likes"], shares=facts["shares"], posted_at=facts["posted_at"],
                              stream_clip=facts["stream_clip"]).to_dict()
         with self.ctx.db.session() as s:
-            result["screen"] = screen.check(words, length, screen.learned(s))  # watchable on its own? (held back if not)
+            result["screen"] = screen.check(words, length, screen.learned(s), result.get("parts") or [])  # watchable on its own? (held back if not)
             clip = s.get(Clip, clip_id)
             if clip:
                 clip.grade = result

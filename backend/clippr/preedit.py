@@ -24,8 +24,9 @@ import numpy as np
 from .grade import arousal
 from .media.facecam import CAM_SHARE
 
-VERSION = 6  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim.
-# 6: at least 25 s with setup (screen.py), the headline at the top for the opening seconds only, then gone
+VERSION = 7  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim.
+# 6: at least 25 s with setup (screen.py), the headline at the top for the opening seconds only, then gone.
+# 7: titles written like a person (titles.py): the line said, lower case, no emoji or hype
 STEP = 0.1
 LONGEST = 45.0      # trimmed when longer than this (half the second batch of top clips ran 35 to 50 s)
 TARGET = 34.0       # length of the trimmed clip: room for the setup, still short enough to finish

@@ -122,3 +122,15 @@ def test_a_post_link_must_open_a_live_post_on_that_page(ctx, client, tmp_path, m
     monkeypatch.setattr(ctx.fetcher, "post_details", details, raising=False)
     r = client.put(f"/api/outputs/{oid}/post", json={"post_url": "https://www.tiktok.com/@mypage/video/7"})
     assert r.json()["post_check"]["status"] == "verified" and client.get("/api/posted").json()[0]["status"] == "verified"
+
+
+def test_chants_and_flat_clips_are_held_back():
+    lim = dict(screen.DEFAULTS)
+    chant = _words("let's go let's go chat let's go let's go chat " * 4, 0.5, 0.5)
+    assert any("same few words" in x for x in screen.check(chant, 30, lim)["reasons"])
+    story = _words("so he walks up to the guy and asks if he can borrow his car for the race tonight and the guy actually says yes "
+                   "then he drives it straight into the lake", 1.0, 0.5)
+    flat = [{"name": "Energy and emotion", "points": 2, "max": 15}, {"name": "Ends on the payoff", "points": 1, "max": 5}]
+    assert any("Flat" in x for x in screen.check(story, 30, lim, flat)["reasons"])
+    lively = [{"name": "Energy and emotion", "points": 12, "max": 15}, {"name": "Ends on the payoff", "points": 4, "max": 5}]
+    assert screen.check(story, 30, lim, lively)["pass"]

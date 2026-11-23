@@ -85,9 +85,22 @@ def meaningful(words: list[str]) -> int:
     return sum(1 for w in words if (t := re.sub(r"[^\w']", "", w)) and not NOISE.match(t))
 
 
-def check(words: list[tuple[float, float, str]], length: float, limits: dict) -> dict:
-    """words: (start, end, text) in finished-clip seconds; length: the finished clip in seconds."""
+def _part(parts: list[dict], name: str) -> float | None:
+    p = next((x for x in parts if x.get("name") == name), None)
+    return p["points"] / p["max"] if p and p.get("max") else None
+
+
+def check(words: list[tuple[float, float, str]], length: float, limits: dict, parts: list[dict] = ()) -> dict:
+    """words: (start, end, text) in finished-clip seconds; length: the finished clip in seconds; parts: the grade's
+    breakdown (grade.py), for how much happens in the clip."""
     reasons = []
+    real = [re.sub(r"[^\w']", "", w).lower() for _, _, w in words]
+    real = [x for x in real if x and not NOISE.match(x)]
+    if len(real) >= 12 and len(set(real)) / len(real) < 0.35:
+        reasons.append("The same few words over and over (a chant or a scream), not something a viewer can follow")
+    energy, payoff = _part(list(parts), "Energy and emotion"), _part(list(parts), "Ends on the payoff")
+    if energy is not None and payoff is not None and energy < 0.25 and payoff < 0.4:
+        reasons.append("Flat: no clear reaction or moment, and it doesn't build to anything")
     if length < limits["min_seconds"] - 0.5:
         reasons.append(f"Too short: {length:.0f} s (at least {limits['min_seconds']:.0f} s, so the moment has its setup)")
     said = meaningful([w for _, _, w in words])

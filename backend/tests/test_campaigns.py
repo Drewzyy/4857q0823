@@ -284,7 +284,7 @@ def test_every_new_clip_of_a_streamer_follows_their_rules(env):
     assert len(clip["outputs"]) == 2
     for o in clip["outputs"]:
         assert o["description"].endswith("#STREAMERA"), o["description"]
-        assert "Clipped by Vyral" in o["description"] and describe.has_name(o["description"] + o["video_title"], "Streamer A")
+        assert "Clipped by Vyral" in o["description"] and describe.has_name(o["description"] + "\n" + o["video_title"], "Streamer A")
 
 
 BULLETS = """## Summer Clip-Off Campaign
@@ -351,7 +351,7 @@ def test_titles_and_cuts_follow_a_campaigns_length_and_names():
     from clippr.media.overlay import Word
     words = [Word(6.0 + i * 0.4, 6.3 + i * 0.4, t) for i, t in enumerate("no way he actually did that".split())]
     quote, is_quote = titles.make_title(words, "Lacy", 6.5, ["LACY"])
-    assert is_quote and quote.startswith("LACY: “No way") and titles.make_title(words, "Lacy", 6.5)[0].startswith("“No way")  # named only when asked
+    assert is_quote and quote.startswith("LACY: “no way") and "LACY" not in titles.make_title(words, "Lacy", 6.5)[0]  # named only when asked
     assert titles.make_title(words, "Lacy", 6.5, ["Dani", "Lacy"])[0].startswith("Dani and Lacy: ")
     assert titles.make_title([], "Lacy", None, ["LACY"])[0].count("Lacy") == 1 and "Dani" in titles.make_title([], "Lacy", None, ["Dani"])[0]  # a summary already names the streamer
     db = np.full(600, -30.0)
@@ -394,7 +394,7 @@ def test_a_new_clip_is_cut_and_titled_for_its_campaign(env):
     ctx.pipeline.check_source(sid)
     drain(ctx)
     [clip] = c.get("/api/clips").json()
-    assert clip["title"].startswith("STREAMER A: “No way he actually did that")  # its name is on the video, the quote word for word
+    assert clip["title"].startswith("STREAMER A: “no way he actually did that")  # its name is on the video, the quote word for word
     with ctx.db.session() as s:
         e = s.get(Clip, clip["id"]).edit
     assert e["texts"][0]["text"] == clip["title"] and 0 < clip_seconds(e) <= 14, e  # cut to the campaign's longest (the teaser counts)
