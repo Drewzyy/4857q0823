@@ -62,7 +62,7 @@ export function DropboxSettings() {
           <ol className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
             <li>Signed in with your <strong>personal</strong> Dropbox (not Dropbox Business), open <a href="https://www.dropbox.com/developers/apps" target="_blank" rel="noopener noreferrer">dropbox.com/developers/apps</a> and click <strong>Create app</strong>:
               <strong> Scoped access</strong>, <strong>Full Dropbox</strong>, any name.</li>
-            <li>In <strong>Permissions</strong>, tick only <strong>files.content.write</strong> and <strong>files.content.read</strong> (Dropbox ticks files.metadata.read with them by itself), then <strong>Submit</strong>. No team permissions.</li>
+            <li>In <strong>Permissions</strong>, tick <strong>files.content.write</strong> and <strong>files.content.read</strong> (files.metadata.read and account_info.read come with them), untick anything starting with <strong>team</strong>, then <strong>Submit</strong>.</li>
             <li>In <strong>Settings</strong>, under OAuth 2 Redirect URIs, add <code>{data.redirect_uri}</code>.</li>
             <li>Copy the <strong>App key</strong> (the secret isn't needed) and paste it here.</li>
           </ol>

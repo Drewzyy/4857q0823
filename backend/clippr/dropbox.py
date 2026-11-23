@@ -57,9 +57,11 @@ AUTH_URL = "https://www.dropbox.com/oauth2/authorize"
 TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 API = "https://api.dropboxapi.com/2"
 CONTENT = "https://content.dropboxapi.com/2"
-# What the sign-in must grant, from the permissions ticked in your Dropbox app (files.metadata.read comes with the two
-# content ones). Any team scope, or a Dropbox Business account, is turned away: personal accounts only. No scope list
-# is sent with the sign-in: an explicit list leaves out account_info.read, which Dropbox needs to name the account.
+# Exactly what the sign-in asks for, whatever else is ticked in your Dropbox app: the file permissions plus
+# account_info.read (Dropbox's basic one, to name the account; without it 0.4.99's sign-in failed after the code was
+# traded). Asking for exactly these keeps any team permission ticked in the app out of the request, so Dropbox never
+# asks for a Business ("professional") account. A Business account itself is still turned away.
+SCOPES = "account_info.read files.metadata.read files.content.read files.content.write"
 NEEDED = {"files.content.write", "files.content.read", "files.metadata.read"}
 CHUNK = 8 * 1024 * 1024  # each upload piece; a multiple of Dropbox's 4 MB hash block
 BLOCK = 4 * 1024 * 1024
@@ -328,7 +330,7 @@ class DropboxSync:
         timer.start()
         return AUTH_URL + "?" + urllib.parse.urlencode({
             "client_id": app_key, "response_type": "code", "code_challenge": challenge, "code_challenge_method": "S256",
-            "token_access_type": "offline", "redirect_uri": REDIRECT_URI, "state": login["state"]})
+            "token_access_type": "offline", "scope": SCOPES, "redirect_uri": REDIRECT_URI, "state": login["state"]})
 
     def _expire(self) -> None:
         if not self.connecting():  # a newer sign-in that's still open keeps the listener

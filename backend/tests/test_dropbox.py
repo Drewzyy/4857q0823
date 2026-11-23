@@ -132,7 +132,7 @@ def _connect(ctx, sync, fake):
         s.merge(Setting(key=SETTINGS_KEY, value={"dropbox": {"app_key": "abc123", "folder": "/Vyral", "auto_upload": True}}))
     url = sync.begin_connect("abc123")
     q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(url).query).items()}
-    assert "scope" not in q  # an explicit list would leave out account_info.read
+    assert q["scope"] == "account_info.read files.metadata.read files.content.read files.content.write"  # never a team scope
     assert q["code_challenge_method"] == "S256" and q["token_access_type"] == "offline" and q["redirect_uri"] == dropbox.REDIRECT_URI
     ok, msg = sync.finish_connect({"code": "the-code", "state": q["state"]})
     assert ok, msg
