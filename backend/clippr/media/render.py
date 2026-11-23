@@ -49,6 +49,7 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
            video_height: float = 0.0, cam: list[float] | None = None, bottom: Path | None = None,
            gaps: list[tuple[float, float]] | None = None, layers: list[Layer] = (), use_hardware: bool = True,
            sounds: list[tuple[Path, float, float]] = (), hook: tuple[float, float] | None = None,
+           bleeps: list[tuple[float, float]] = (),
            punch: list[tuple[float, float]] = ()) -> Path:
     """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in).
     video_height: how much of the frame's height the sharp video fills (0.45 = 45%). A wide stream is trimmed at
@@ -150,7 +151,7 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
     if info.has_audio:
         tempo = f"atempo={speed:.4f}" if abs(speed - 1) > 1e-3 else "anull"
         level = "loudnorm=I=-14:TP=-1.5:LRA=11"
-        if keep or sounds:
+        if keep or sounds or bleeps:
             if keep:
                 n = len(keep)
                 au = (f"[0:a:0]asplit={n}" + "".join(f"[ak{i}]" for i in range(n)) + ";") if n > 1 else ""
@@ -166,11 +167,23 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
             for j, (_, at, vol) in enumerate(sounds):
                 ms = max(0, round(at * 1000))
                 au += f";[{first + j}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={ms}|{ms},volume={vol:.2f}[sx{j}]"
+            if bleeps:  # swearing: the voice muted under a 1 kHz tone for each word (times in the finished clip)
+                spans = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in bleeps)
+                au += f";[amain]volume=0:enable='{spans}'[amb]"
+                for k, (a, b) in enumerate(bleeps):
+                    ms = max(0, round(a * 1000))
+                    au += (f";aevalsrc=0.18*sin(2*PI*1000*t):s=48000:d={max(b - a, 0.05):.3f},aformat=sample_rates=48000:channel_layouts=stereo,"
+                           f"adelay={ms}|{ms}[bp{k}]")
+                au += ";[amb]aformat=sample_rates=48000:channel_layouts=stereo[ambs];[ambs]" + "".join(f"[bp{k}]" for k in range(len(bleeps))) \
+                    + f"amix=inputs={len(bleeps) + 1}:duration=first:normalize=0[amb2]"
+                main = "amb2"
+            else:
+                main = "amain"
             if sounds:
-                au += (";[amain]aformat=sample_rates=48000:channel_layouts=stereo[am];[am]" + "".join(f"[sx{j}]" for j in range(len(sounds)))
+                au += (f";[{main}]aformat=sample_rates=48000:channel_layouts=stereo[am];[am]" + "".join(f"[sx{j}]" for j in range(len(sounds)))
                        + f"amix=inputs={len(sounds) + 1}:duration=first:normalize=0,{level}[aout]")
             else:
-                au += f";[amain]{level}[aout]"
+                au += f";[{main}]{level}[aout]"
             args[args.index("-filter_complex") + 1] += ";" + au
             args += ["-map", "[aout]"]
         else:

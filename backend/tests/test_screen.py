@@ -16,32 +16,32 @@ def _words(text, start=0.0, step=0.4):
 def test_screams_with_no_context_and_short_clips_are_held_back():
     lim = dict(screen.DEFAULTS)
     noise = _words("ahh haha bro what no no ahhh haha lmao bro " * 4)
-    r = screen.check(noise, 30, lim)
+    r = screen.check(noise, 45, lim)
     assert not r["pass"] and "Little is said" in r["reasons"][0]
     story = _words("so he walks up to the guy and asks if he can borrow his car for the race tonight and the guy actually says yes "
                    "then he drives it straight into the lake", 1.0, 0.5)
-    assert screen.check(story, 30, lim)["pass"]
-    short = screen.check(story, 18, lim)
+    assert screen.check(story, 45, lim)["pass"]
+    short = screen.check(story, 20, lim)
     assert not short["pass"] and "Too short" in short["reasons"][0]
     late = _words("ahh haha bro " * 6) + _words("then he drives the car straight into the lake and everyone in chat loses it completely "
-                                                "nobody saw that coming at all honestly and the streamer just sat there staring at the screen for a while", 15.5, 0.3)
-    assert any("No setup" in x for x in screen.check(late, 30, lim)["reasons"])
+                                                "nobody saw that coming at all honestly and the streamer just sat there staring at the screen for a while", 23.0, 0.3)
+    assert any("No setup" in x for x in screen.check(late, 45, lim)["reasons"])
 
 
 def test_review_notes_move_the_limits_and_reset_puts_them_back(ctx):
     with ctx.db.session() as s:
-        assert screen.learn(s, "this clip is too short", 1) == {"min_seconds": [25.0, 28.0], "setup_words": [8, 10]}
+        assert screen.learn(s, "this clip is too short", 1) == {"min_seconds": [35.0, 38.0], "setup_words": [8, 10]}
         screen.learn(s, "boring, nothing happens")
         screen.learn(s, "great clip")  # says nothing usable: no change
     with ctx.db.session() as s:
         got = screen.learned(s)
-        assert got["min_seconds"] == 28.0 and got["min_score"] == 3 and len(got["history"]) == 2
+        assert got["min_seconds"] == 38.0 and got["min_score"] == 3 and len(got["history"]) == 2
         for _ in range(20):
             screen.learn(s, "too short")
-        assert screen.learned(s)["min_seconds"] == 45.0  # never past its limit
+        assert screen.learned(s)["min_seconds"] == 60.0  # never past its limit
         screen.reset(s)
     with ctx.db.session() as s:
-        assert screen.learned(s)["min_seconds"] == 25.0
+        assert screen.learned(s)["min_seconds"] == 35.0
 
 
 def test_the_headline_shows_for_the_opening_seconds_only():
@@ -127,13 +127,13 @@ def test_a_post_link_must_open_a_live_post_on_that_page(ctx, client, tmp_path, m
 def test_chants_and_flat_clips_are_held_back():
     lim = dict(screen.DEFAULTS)
     chant = _words("let's go let's go chat let's go let's go chat " * 4, 0.5, 0.5)
-    assert any("same few words" in x for x in screen.check(chant, 30, lim)["reasons"])
+    assert any("same few words" in x for x in screen.check(chant, 45, lim)["reasons"])
     story = _words("so he walks up to the guy and asks if he can borrow his car for the race tonight and the guy actually says yes "
                    "then he drives it straight into the lake", 1.0, 0.5)
     flat = [{"name": "Energy and emotion", "points": 2, "max": 15}, {"name": "Ends on the payoff", "points": 1, "max": 5}]
-    assert any("Flat" in x for x in screen.check(story, 30, lim, flat)["reasons"])
+    assert any("Flat" in x for x in screen.check(story, 45, lim, flat)["reasons"])
     lively = [{"name": "Energy and emotion", "points": 12, "max": 15}, {"name": "Ends on the payoff", "points": 4, "max": 5}]
-    assert screen.check(story, 30, lim, lively)["pass"]
+    assert screen.check(story, 45, lim, lively)["pass"]
 
 
 def test_the_picture_is_checked_for_nudity(tmp_path):
@@ -162,3 +162,16 @@ def test_titles_never_swear_or_say_only_a_reaction():
         assert not quoted and not titles.PROFANE.search(title), (line, title)
     title, quoted = titles.make_title(w("he just sold my sword for a sandwich!"), "Kai", 1.0)
     assert quoted and "he just sold my sword for a sandwich" in title and "!" not in title
+
+
+def test_swearing_is_bleeped_and_starred_out(tmp_path):
+    from clippr import titles
+    from clippr.media.ffmpeg import probe, run
+    from clippr.media.render import OutputFormat, render
+    assert titles.censor("what the fuck, that's fucking shit") == "what the f***, that's f****** s***"
+    src = tmp_path / "s.mp4"
+    run(["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=4", "-f", "lavfi", "-i", "sine=f=220:d=4",
+         "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src)])
+    out = render(src, tmp_path / "o.mp4", OutputFormat(180, 320, 30), duration=4, bleeps=[(1.0, 1.4), (2.5, 2.8)], use_hardware=False)
+    info = probe(out)
+    assert info.has_audio and abs(info.duration - 4) < 0.3

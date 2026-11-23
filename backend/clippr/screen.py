@@ -2,7 +2,7 @@
 
 A clip only goes to review when it's watchable on its own. What short-form clip pages and the platforms' own
 creator guidance agree on, and what the clips that did well for you had in common:
-- Long enough to set up the moment: at least 25 seconds. Under that there's rarely time for the setup, so the
+- Long enough to set up the moment: at least 35 seconds (you aim for 45 s to a minute). Under that there's rarely time for the setup, so the
   payoff means nothing to someone who wasn't watching the stream.
 - Something is said. A clip that's only laughing, screaming or "bro" with no words around it has no context. A
   viewer scrolling past doesn't know why it's funny and swipes in the first seconds.
@@ -24,8 +24,8 @@ from sqlalchemy.orm import Session
 from .models import Setting
 
 KEY = "learned"
-DEFAULTS = {"min_seconds": 25.0, "max_seconds": 60.0, "min_words": 25, "setup_words": 8, "min_score": 0}
-LIMITS = {"min_seconds": (25.0, 45.0), "max_seconds": (35.0, 90.0), "min_words": (15, 80), "setup_words": (4, 30), "min_score": (0, 80)}
+DEFAULTS = {"min_seconds": 35.0, "max_seconds": 80.0, "min_words": 25, "setup_words": 8, "min_score": 0}
+LIMITS = {"min_seconds": (25.0, 60.0), "max_seconds": (45.0, 120.0), "min_words": (15, 80), "setup_words": (4, 30), "min_score": (0, 80)}
 
 # Sounds that carry no context: laughing, screaming, filler.
 NOISE = re.compile(r"^(?:a+h+|a+|o+h+|o+|u+h+|u+m+|h+m+|ha(?:ha)*h?|he(?:he)+|lol|lmao|lmfao|bro|bruh|yo+|what|no+|yes+|yeah|yea|"

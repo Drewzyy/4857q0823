@@ -150,3 +150,8 @@ def said_at(words: list, title: str) -> float | None:
         if line and line in want:
             return t0
     return None
+
+
+def censor(text: str) -> str:
+    """Swear words starred out after their first letter, the way captions show them: "fucking" -> "f******"."""
+    return PROFANE.sub(lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1), text)

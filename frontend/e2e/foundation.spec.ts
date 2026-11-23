@@ -23,10 +23,10 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1 && v.duration > 10)).toBe(true);
   expect(await video.evaluate((v: HTMLVideoElement) => v.videoHeight)).toBe(1920);
 
-  // TikTok tab: post text, streamer + stream date, original hashtags + page hashtags + #vyralclips.
+  // TikTok tab: the caption is the streamer's @ and hashtags, with the page's own tag.
   await card.getByRole("tab", { name: /Streamer A TikTok/ }).click();
   const caption = card.getByLabel("Caption");
-  await expect(caption).toHaveValue(/^no way he actually drove the car into the lake\n\n#gaming #vyralclips$/);  // the pre-edit headline (with its emoji) leads; the page tag first; generic #fyp dropped
+  await expect(caption).toHaveValue("@streamera #streamera #fyp #funny #gaming");  // the streamer's @ and hashtags only: never the title again
   await expect(card.getByText(/Streamed Nov [78], 2026/).first()).toBeVisible();
   await card.getByRole("button", { name: "Save to computer" }).click();
   await expect(page.getByText(/Saved to .*Downloads.Vyral.*Streamer A TikTok - no way he actually drove the car into the lake\.mp4/)).toBeVisible();
@@ -41,7 +41,7 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   // YouTube tab has a separate title and #shorts.
   await page.getByRole("tab", { name: /Streamer A YouTube/ }).click();
   await expect(page.getByLabel("Title")).toHaveValue(/^no way he actually drove the car into the lake/);
-  await expect(page.getByLabel("Description")).toHaveValue("#vyralclips #shorts");
+  await expect(page.getByLabel("Description")).toHaveValue("#streamera #fyp #funny #shorts");
 
   // Mark TikTok uploaded -> it moves to the Uploaded tab, YouTube stays Ready.
   await page.getByRole("tab", { name: /Streamer A TikTok/ }).click();

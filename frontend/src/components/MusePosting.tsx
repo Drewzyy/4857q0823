@@ -76,6 +76,9 @@ export function MusePosting() {
           Kill switch: nothing posts by itself, whatever each page's Auto-post says</label>
         <div className="field"><label htmlFor="min-viral">Minimum virality score to reach review: {s.posting.min_virality}</label>
           <input id="min-viral" type="range" min={0} max={100} value={s.posting.min_virality} onChange={(e) => P({ min_virality: Number(e.target.value) })} /></div>
+        <div className="field"><label htmlFor="spacing">Space posts on a page at least {s.posting.spacing_minutes} minutes apart</label>
+          <input id="spacing" type="range" min={0} max={360} step={15} value={s.posting.spacing_minutes} onChange={(e) => P({ spacing_minutes: Number(e.target.value) })} />
+          <span className="hint">Muse gets a "post after" time with each approved clip, so a batch doesn't go up at once.</span></div>
         <p className="small faint">Auto-post is set per page (Destinations). It stays off until you turn it on, and unlocks only after 5 reviewed posts on that page were posted. It lets Muse post approved clips that passed the safety check without asking you first.</p>
       </div>
 

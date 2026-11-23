@@ -7,9 +7,10 @@ import re
 LIMITS = {"tiktok": 2200, "instagram": 2200, "youtube": 5000, "facebook": 5000}
 # 3 to 5 specific hashtags beat 20 generic ones (TikTok's own guidance as relayed by creator playbooks; the
 # platforms read the caption for topic). Generic reach tags say nothing about the clip, so they're left out.
-MAX_TAGS = {"instagram": 5, "tiktok": 5, "youtube": 5, "facebook": 5}
+MAX_TAGS = {"instagram": 6, "tiktok": 6, "youtube": 6, "facebook": 6}
+DEFAULT_TAGS = ["#fyp", "#funny"]  # yours: @lacy #lacy #gta6 #fyp #funny #core
+# Taken out of a source post's own tags (Vyral adds #fyp itself, once).
 GENERIC_TAGS = {"#fyp", "#foryou", "#foryoupage", "#fy", "#fypシ", "#viral", "#viralvideo", "#trending", "#xyzbca", "#explore", "#explorepage"}
-BRAND_TAG = "#vyralclips"
 NOT_GAMES = {"just chatting", "irl", "talk shows & podcasts", "music", "art", "special events", "pools, hot tubs, and beaches", "asmr", "sports"}
 
 
@@ -27,23 +28,20 @@ def original_hashtags(text: str) -> list[str]:
     return re.findall(r"#[\w]+", text or "")
 
 
-def _tags(original: list[str], page: list[str], platform: str) -> list[str]:
+def _tags(first: list[str], page: list[str], original: list[str], platform: str) -> list[str]:
     tags, seen = [], set()
-    extra = [BRAND_TAG] + (["#shorts"] if platform == "youtube" else [])
-    for t in [*page, *original, *extra]:  # the page's own tags first: the user picked them for this page
+    extra = ["#shorts"] if platform == "youtube" else []
+    for t in [*first, *page, *[x for x in original if x.lower() not in GENERIC_TAGS], *extra]:
         t = t.strip()
-        if not t:
+        if not t or t == "#":
             continue
         t = t if t.startswith("#") else f"#{t}"
-        if t.lower() in GENERIC_TAGS:
-            continue
         if t.lower() not in seen:
             seen.add(t.lower())
             tags.append(t)
-    limit = MAX_TAGS.get(platform, 5)
-    if len(tags) > limit:  # always keep #vyralclips (and #shorts on YouTube) when trimming
-        keep = [t.lower() for t in extra]
-        tags = [t for t in tags if t.lower() not in keep][: limit - len(extra)] + extra
+    limit = MAX_TAGS.get(platform, 6)
+    if len(tags) > limit:  # always keep #shorts on YouTube when trimming
+        tags = [t for t in tags if t.lower() not in extra][: limit - len(extra)] + extra
     return tags
 
 
@@ -80,7 +78,7 @@ def apply_rules(caption: str, rules: dict | None, platform: str = "", title: str
     caption is too long for the platform the text is cut, never the rules. `title` counts as where a name can be said."""
     rules = rules or {}
     body, _, tail = caption.rstrip().rpartition("\n")
-    if not tail.lstrip().startswith("#"):
+    if not tail.lstrip().startswith(("#", "@")):  # the tag line: hashtags, or the streamer's @ then hashtags
         body, tail = caption.rstrip(), ""
     body = body.rstrip()
     seen = f"{caption}\n{title}"
@@ -94,13 +92,20 @@ def apply_rules(caption: str, rules: dict | None, platform: str = "", title: str
     return "\n\n".join(p for p in [body[: max(0, limit - len(end) - 2)], end] if p)[:limit]
 
 
-def build(platform: str, title: str, tags_from: str, settings: dict, game: str = "", rules: dict | None = None) -> tuple[str, str]:
-    """(title, caption). The caption is the title itself, then the page's own extra line if it has one, then 3 to 5
-    specific hashtags (the source post's, the page's and the game's). Nothing else: the title is the hook, and extra
-    lines (streamer, date) only push the hashtags below the fold. YouTube shows the title separately."""
-    parts = [title] if platform != "youtube" else []
-    if settings.get("default_caption"):
-        parts.append(settings["default_caption"].strip())
-    parts.append(" ".join(_tags([game_tag(game)] + original_hashtags(tags_from), settings.get("hashtags") or [], platform)))
+def handle(name: str) -> str:
+    """'Jason Levine' -> 'jasonlevine': how a streamer is tagged."""
+    return re.sub(r"[^\w]", "", (name or "").lower())
+
+
+def build(platform: str, title: str, tags_from: str, settings: dict, game: str = "", rules: dict | None = None,
+          streamer: str = "") -> tuple[str, str]:
+    """(title, caption). The caption is nearly empty on purpose, the way you post: the page's own line if it has
+    one, then the streamer's @ and the hashtags (the streamer, the game, #fyp, #funny, the page's own, then the
+    source post's). It never repeats the title or the headline on the video, and has no emoji. YouTube shows
+    the title separately. streamer: the streamer's handle (their stream channel name), for @ and #."""
+    who = handle(streamer)
+    tags = _tags([f"#{who}" if who else "", game_tag(game).lower(), *DEFAULT_TAGS], settings.get("hashtags") or [],
+                 original_hashtags(tags_from), platform)
+    parts = [settings.get("default_caption", "").strip(), " ".join(([f"@{who}"] if who and platform != "youtube" else []) + tags)]
     desc = "\n\n".join(p for p in parts if p)
     return title[:100], apply_rules(desc[: LIMITS.get(platform, 2200)], rules, platform, title)

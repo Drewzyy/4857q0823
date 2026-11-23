@@ -427,8 +427,8 @@ class Pipeline:
             else:
                 with self.ctx.db.session() as s:
                     least = screen.learned(s)["min_seconds"]
-                lead = max(8.0, least - (m.end - m.start) + 4.0)  # a short moment gets more of the stream before it: the setup
-                section = self.ctx.fetcher.download_section(vod.url, max(0.0, m.start - lead), m.end + 3, work / "section")
+                lead = max(8.0, least - (m.end - m.start) + 6.0)  # a short moment gets more of the stream before it: the setup
+                section = self.ctx.fetcher.download_section(vod.url, max(0.0, m.start - lead), m.end + 8, work / "section")  # + the reaction
                 # The download may start at a keyframe before the requested time; re-align on audio for a frame-exact cut.
                 local = match.find_in_stream(ref_feats, match.extract_features(section), pad=0.4)
                 start, dur = (local.start, local.end - local.start) if local else (min(lead, m.start), m.end - m.start)
@@ -687,7 +687,7 @@ class Pipeline:
             rules = campaigns.caption_rules(s, clip)  # the streamer's caption rules
             for did, platform, st, fmt_raw, ov, path, qc in planned:
                 info = infos[path]
-                ptitle, desc = describe.build(platform, title, post_title, st, game, rules)
+                ptitle, desc = describe.build(platform, title, post_title, st, game, rules, streamer_handle(clip.creator))
                 s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=ptitle, description=desc,
                                  video_title=title, overlay=ov, format=fmt_raw,
                                  file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size,
@@ -707,7 +707,9 @@ class Pipeline:
                  "-vn", "-ac", "1", "-ar", "16000", str(audio)])
             raw = self.ctx.transcriber.words(audio, hints)
             shifted = [Word(w.start - pad_before, w.end - pad_before, w.text) for w in raw]
-            return overlay.clean_words(shifted, dur), ""
+            with self.ctx.db.session() as s:
+                fixes = load_settings(s).captions.fixes
+            return overlay.fix_words(overlay.clean_words(shifted, dur), fixes), ""
         except (TranscribeError, FFmpegError) as e:
             return [], f"Captions skipped: {e}"
         except Exception as e:
@@ -743,6 +745,7 @@ class Pipeline:
         sounds: list = []
         punch: list = []
         hook, lead = None, 0.0
+        captions_on = True
         zoom, pan, speed, texts, video_height = 1.0, (0.5, 0.5), 1.0, [], 0.0  # no edit: a clip from before framing was saved
         if edit:
             video_height = edit.get("video_height", 0)  # edits saved before framing existed were fit to frame
@@ -751,8 +754,7 @@ class Pipeline:
             zoom, pan, speed, texts = edit["zoom"], (edit["pan_x"], edit["pan_y"]), edit["speed"], edit["texts"]
             if edit.get("hide_title"):
                 title_text = ""  # the clip's own headline replaces the page title
-            if not edit.get("captions", True):
-                words = []  # captions off for this clip (e.g. the footage already has its own)
+            captions_on = edit.get("captions", True)  # off: the footage already has its own (swearing is still bleeped)
             files = self._library_files([edit.get("bottom_media")] + [ly["media_id"] for ly in edit.get("layers") or []])
             if edit.get("layout") == "stacked" and edit.get("cam"):
                 cam = edit["cam"]
@@ -791,6 +793,9 @@ class Pipeline:
                     if in_hook(p0):
                         punch.append(((p0 - hook[0]) / speed, (min(p1, hook[1]) - hook[0]) / speed))
         out_dur = (dur - sum(b - a for a, b in rel)) / speed + lead
+        # Swearing: bleeped in the sound and starred out in the captions ("f***"), never cut (your rule).
+        bleeps = [(w.start, w.end) for w in words if titles.PROFANE.search(w.text)]
+        words = [Word(w.start, w.end, titles.censor(w.text)) for w in words] if captions_on else []
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         placed: list = []
         if use_text:
@@ -802,7 +807,7 @@ class Pipeline:
             use_hardware = load_settings(s).processing.hardware_encoding
         render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan,
                speed=speed, video_height=video_height, cam=cam, bottom=bottom, gaps=rel, layers=layers, use_hardware=use_hardware,
-               sounds=sounds, hook=hook, punch=punch)
+               sounds=sounds, hook=hook, punch=punch, bleeps=bleeps)
         cover = 1.0
         if edit and edit.get("thumb_at") is not None:
             t = min(max(edit["thumb_at"] - start, 0.0), dur)
@@ -1002,6 +1007,9 @@ class Pipeline:
             e = dict(clip.edit or ClipEdit(start=base, end=base + (clip.source_duration or 0.0)).model_dump())
             if redo:
                 e.update(start=base, end=base + (clip.source_duration or 0.0), preedited=False, preedit_version=0, sounds=[], hook=None, punch=None)
+            fixes = load_settings(s).captions.fixes
+            if fixes and clip.words:  # names the speech model got wrong, fixed in clips made before the fix was added
+                clip.words = [w.to_dict() for w in overlay.fix_words([Word.from_dict(w) for w in clip.words], fixes)]
             rules = campaigns.clip_rules_of(s, clip)
             lim = screen.learned(s)  # the length you've taught it, inside any campaign's own rules
             min_s = max(rules["min_seconds"] or 0, lim["min_seconds"])
@@ -1023,7 +1031,8 @@ class Pipeline:
             outs = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)) if o.status == "ready"]
             for o in outs:
                 o.title, o.description = describe.build(o.platform, title, tags_from, dict(o.destination.settings or {}) if o.destination else {},
-                                                       rules=campaigns.caption_rules(s, clip))
+                                                       game=(clip.safety or {}).get("game", ""), rules=campaigns.caption_rules(s, clip),
+                                                       streamer=streamer_handle(clip.creator))
                 o.video_title = title
                 o.render_state, o.render_error = "rendering", None
                 if redo and o.review == "approved":  # a new cut needs a new look before it's posted
@@ -1067,7 +1076,8 @@ class Pipeline:
                 ref = clip.reference
                 for d in dests:
                     st = dict(d.settings or {})
-                    title, desc = describe.build(d.platform, clip.title, ref.title if ref else "", st, rules=campaigns.caption_rules(s, clip))
+                    title, desc = describe.build(d.platform, clip.title, ref.title if ref else "", st, rules=campaigns.caption_rules(s, clip),
+                                                 streamer=streamer_handle(clip.creator))
                     o = ClipOutput(clip_id=clip.id, destination_id=d.id, platform=d.platform, title=title, description=desc,
                                    video_title=clip.title, overlay=lenient(OverlaySettings, st.get("overlay")).model_dump(),
                                    format=dict(st.get("format") or {}), render_state="rendering")
@@ -1277,6 +1287,13 @@ class Pipeline:
                 if datetime.fromtimestamp(p.stat().st_mtime, timezone.utc) < now() - timedelta(hours=12):
                     files.remove(p)
         return {"clips_expired": expired, "streams_forgotten": vods, "events_forgotten": events.cleanup(self.ctx)}
+
+
+def streamer_handle(creator) -> str:
+    """The streamer's channel name (twitch.tv/jasontheween -> jasontheween) for @ and # in captions, or their name."""
+    if not creator:
+        return ""
+    return next((h for h in map(identify.channel_handle, creator.vod_channels or []) if h), creator.name)
 
 
 def _hms(sec: float) -> str:

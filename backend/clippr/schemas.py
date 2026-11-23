@@ -77,7 +77,7 @@ class TitleStyle(TextStyle):
 class CaptionStyle(TextStyle):
     size: int = Field(88, ge=20, le=200)
     y_percent: int = Field(70, ge=3, le=97)
-    words_per_caption: int = Field(3, ge=1, le=6)
+    words_per_caption: int = Field(2, ge=1, le=6)  # short phrases, close to word by word
 
 
 class OverlaySettings(Strict):
@@ -136,6 +136,18 @@ class MonitoringSettings(Strict):
 class CaptionEngineSettings(Strict):
     accuracy: Literal["fast", "accurate", "best"] = "accurate"
     language: str = Field("auto", pattern=r"^(auto|[a-z]{2})$")
+    # Words the speech model gets wrong, fixed in every transcript: "asian jeff => Jason Levine" (one per line).
+    fixes: list[str] = Field(default_factory=list, max_length=200)
+
+    @field_validator("fixes")
+    @classmethod
+    def _fix_pairs(cls, v: list[str]) -> list[str]:
+        v = [x.strip() for x in v if x.strip()]
+        for x in v:
+            wrong, _, right = x.partition("=>")
+            if not wrong.strip() or not right.strip() or len(x) > 120:
+                raise ValueError('write each fix as "what it hears => what it should say", like "asian jeff => Jason Levine"')
+        return v
 
 
 class ProcessingSettings(Strict):
@@ -179,6 +191,7 @@ class PostingSettings(Strict):
             raise ValueError("only this computer (127.0.0.1) or a Tailscale address (100.64.x.x to 100.127.x.x) is allowed")
         return str(ip)
     min_virality: int = Field(50, ge=0, le=100)  # clips scoring lower don't go to review
+    spacing_minutes: int = Field(90, ge=0, le=1440)  # at least this long between two posts on one page (too many at once flop)
 
 
 class DropboxSettings(Strict):

@@ -42,6 +42,34 @@ class Word:
         return cls(float(d["start"]), float(d["end"]), str(d["text"]))
 
 
+def fix_words(words: list[Word], fixes: list[str]) -> list[Word]:
+    """Fix what the speech model keeps getting wrong ("asian jeff => Jason Levine"), matching whole words in a row,
+    ignoring case and punctuation. The fixed phrase spans the time of the words it replaces."""
+    import re as _re
+    pairs = []
+    for f in fixes:
+        wrong, _, right = f.partition("=>")
+        toks = [_re.sub(r"[^\w']", "", x).lower() for x in wrong.split()]
+        if toks and all(toks) and right.strip():
+            pairs.append((toks, right.strip()))
+    if not pairs:
+        return words
+    out, i = [], 0
+    norm = [_re.sub(r"[^\w']", "", w.text).lower() for w in words]
+    while i < len(words):
+        hit = next(((toks, right) for toks, right in pairs if norm[i:i + len(toks)] == toks), None)
+        if hit:
+            toks, right = hit
+            last = words[i + len(toks) - 1]
+            tail = _re.search(r"[^\w']*$", last.text).group(0)  # keep the punctuation after it
+            out.append(Word(words[i].start, last.end, right + tail))
+            i += len(toks)
+        else:
+            out.append(words[i])
+            i += 1
+    return out
+
+
 def clean_words(words: list[Word], duration: float) -> list[Word]:
     """Make raw speech-model output safe to display: no invented filler, no repeats, no overlaps."""
     # 1. Merge punctuation-only tokens into the previous word; drop empties.

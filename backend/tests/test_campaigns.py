@@ -283,7 +283,7 @@ def test_every_new_clip_of_a_streamer_follows_their_rules(env):
     [clip] = c.get("/api/clips").json()
     assert len(clip["outputs"]) == 2
     for o in clip["outputs"]:
-        assert o["description"].endswith("#STREAMERA"), o["description"]
+        assert describe.has_tag(o["description"].rsplit("\n", 1)[-1], "#STREAMERA"), o["description"]  # in the tag line, once
         assert "Clipped by Vyral" in o["description"] and describe.has_name(o["description"] + "\n" + o["video_title"], "Streamer A")
 
 

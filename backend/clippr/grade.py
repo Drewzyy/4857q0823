@@ -237,14 +237,15 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
 
     # Gaming clip tools find under ~20 s lacks setup for the payoff, over ~45 s loses people before the reaction.
     # 18 clips past 200k views ran 11 to 50 s, most 15 to 45: short enough to finish, long enough to set up.
-    if 15 <= length <= 45:
+    # Your rule: 35 s to 1:20 works across platforms, 45 s to a minute is best (a minute or more is also monetized).
+    if 35 <= length <= 80:
         fit = 1.0
-    elif length < 15:
-        fit = max(0.0, (length - 6) / 9)
+    elif length < 35:
+        fit = max(0.0, (length - 15) / 20)
     else:
-        fit = max(0.0, 1 - (length - 45) / 45)
-    add("Length", fit, 10, f"{length:.0f} s long; 15 to 45 s is the sweet spot.",
-        "Trim it toward 15 to 45 seconds." if length > 45 else "It's very short; give the moment a little setup.")
+        fit = max(0.0, 1 - (length - 80) / 60)
+    add("Length", fit, 10, f"{length:.0f} s long; 35 s to 1:20 is the range, 45 s to a minute the sweet spot.",
+        "Trim it toward a minute." if length > 80 else "It's short; give the moment its setup (35 s at least).")
 
     # The picture: moving from the first frame (the best clips' first frame is already interesting), and the person
     # visible enough to read their reaction, judged for the kind of clip (content.py): a facecam in a gaming clip, the

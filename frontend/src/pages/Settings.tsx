@@ -106,6 +106,10 @@ function General() {
               <option value="best">Best (about 3 GB, much slower)</option>
             </select>
             <span className="hint">Accurate handles fast talkers, slang and names much better than Fast. Best is for when Accurate still mishears.</span></div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}><label htmlFor="fixes">Name fixes (one per line)</label>
+            <textarea id="fixes" className="textarea" rows={3} placeholder="asian jeff => Jason Levine" value={s.captions.fixes.join("\n")}
+              onChange={(e) => up("captions", { fixes: e.target.value.split("\n") })} />
+            <span className="hint">What the speech model keeps hearing wrong, and what it should say. Fixed in captions and titles, new clips and waiting ones.</span></div>
           <div className="field"><label htmlFor="lang">Language spoken on stream</label>
             <select id="lang" className="select" value={s.captions.language} onChange={(e) => up("captions", { language: e.target.value })}>
               {[["auto", "Detect automatically"], ["en", "English"], ["es", "Spanish"], ["pt", "Portuguese"], ["fr", "French"], ["de", "German"], ["it", "Italian"],

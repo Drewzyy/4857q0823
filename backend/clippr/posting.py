@@ -12,7 +12,7 @@ rejected -> Muse posts it (get_posting_package) -> Muse reports the link (mark_p
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -112,7 +112,12 @@ def package(s: Session, oid: int) -> dict:
     dur = probe(Path(o.file_path)).duration
     from .dropbox import status_for
     box = status_for(s, o.file_path)
-    return {"output_id": o.id, "clip_id": clip.id, "video_path": str(Path(o.file_path).resolve()), "caption": o.description,
+    # Posts too close together on one page flop: the earliest time this one should go up (now, or after the last one).
+    gap = timedelta(minutes=load_settings(s).posting.spacing_minutes)
+    last = s.scalar(select(func.max(ClipOutput.uploaded_at)).where(ClipOutput.destination_id == o.destination_id,
+                                                                   ClipOutput.status == "uploaded")) if o.destination_id else None
+    post_after = max(datetime.now(timezone.utc), last + gap) if last else datetime.now(timezone.utc)
+    return {"post_after": post_after.isoformat(timespec="minutes"), "output_id": o.id, "clip_id": clip.id, "video_path": str(Path(o.file_path).resolve()), "caption": o.description,
             "title": o.title, "platform": o.platform, "destination": {"id": d.id, "handle": d.handle, "name": d.display_name} if d else None,
             "width": o.width, "height": o.height, "aspect_ratio": f"{o.width}:{o.height}" if o.width else None,
             "duration": round(dur or 0, 2), "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,

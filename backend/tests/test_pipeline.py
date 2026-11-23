@@ -85,7 +85,9 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     tdesc = outs["tiktok"]["description"]
     title = outs["tiktok"]["video_title"]  # the line said in the clip, typed like a person: not the post's own words, no emoji
     assert "no way he actually drove the car into the lake" in title and not titles.shouts(title)
-    assert tdesc == f"{title}\n\nFollow for more\n\n#gaming #clips #vyralclips", tdesc
+    # The caption never repeats the title: the streamer's @, hashtags, then the page's own line.
+    assert tdesc == "Follow for more\n\n@streamera #streamera #fyp #funny #gaming #clips", tdesc
+    assert title not in tdesc
     assert "Streamer:" not in tdesc and "Streamed" not in tdesc and "He actually did it" not in tdesc
 
     # The viral pre-edit, opening on sound. The clip opens on its line, which the captions show, so there's no headline
@@ -105,7 +107,7 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert all(o["render_state"] == "ready" for o in c.get("/api/clips").json()[0]["outputs"])
     assert "@someone" not in tdesc
     assert outs["youtube"]["title"] == title
-    assert outs["youtube"]["description"] == "#vyralclips #shorts"  # generic #fyp dropped
+    assert outs["youtube"]["description"] == "#streamera #fyp #funny #shorts"  # the title shows on its own on YouTube
 
     # Text on the video: ALL CAPS bold, white title at the top for 5 s, yellow captions from speech.
     tt_out = outs["tiktok"]
@@ -115,11 +117,11 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert clips[0]["captions_text"] == "no way he actually drove the car into the lake" and clips[0]["editable"]
     assert outs["tiktok"]["destination"]["handle"] == "@streamera.tt"
 
-    # Rendered from the original stream: the 20 s moment widened to 25 s with the setup before it, plus the hook up front.
+    # Rendered from the original stream: the 20 s moment widened to 35 s with the setup before it, plus the hook up front.
     with ctx.db.session() as s:
         path = Path(s.get(ClipOutput, outs["tiktok"]["id"]).file_path)
     info = probe(path)
-    assert 25 <= info.duration < 31.5 and info.has_audio
+    assert 35 <= info.duration < 42 and info.has_audio  # at least 35 s, plus the hook up front
     assert white_pixels(path, 2.0, 0.1, 0.25) < 1000  # no headline box burned in at the top
     assert yellow_pixels(path, 1.2, top=False) > 2000  # yellow caption "NO WAY HE" in the lower part
     assert info.fps == 30  # the stream is 30 fps; never padded with fake frames
@@ -282,7 +284,7 @@ def test_one_clipping_account_covering_several_streamers(env):
     assert ref["status"] == "ready" and ref["creator"]["name"] == "Streamer B", ref["status_detail"]
     outs = c.get("/api/clips").json()[0]["outputs"]
     assert [o["destination"]["display_name"] for o in outs] == ["B page"]
-    assert "no way he actually drove the car into the lake" in outs[0]["description"].split("\n")[0]
+    assert outs[0]["description"].startswith("@") and "no way he" not in outs[0]["description"]
     assert "Streamer:" not in outs[0]["description"] and "Streamed" not in outs[0]["description"]  # no metadata lines
     # Removing one streamer keeps the other.
     r = c.patch(f"/api/sources/{src['id']}", json={"creator_ids": [b]}).json()
@@ -872,13 +874,14 @@ def test_database_updates_never_cascade_deletes():
         assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
 
 
-def test_hashtags_are_few_specific_and_the_pages_own_first():
+def test_captions_are_the_streamer_and_hashtags_only():
     from clippr.describe import build
-    _, desc = build("tiktok", "“No way he actually did that right now” 💀", "insane clutch #fyp #viral #warzone #clutch #fps #ranked",
-                    {"hashtags": ["#streamera", "gaming"]})
-    assert desc.startswith("“No way he actually did that right now” 💀\n\n")
-    tags = desc.rsplit("\n\n", 1)[-1].split()
-    assert tags == ["#streamera", "#gaming", "#warzone", "#clutch", "#vyralclips"]
+    # Your format: @lacy #lacy #gta6 #fyp #funny #core. Never the title again, no emoji, a source's generic tags dropped.
+    _, desc = build("tiktok", "“no way he actually did that right now”", "insane clutch #fyp #viral #warzone #clutch",
+                    {"hashtags": ["#core"]}, streamer="Lacy")
+    assert desc == "@lacy #lacy #fyp #funny #core #warzone #clutch"  # 6 hashtags at most
+    _, yt = build("youtube", "he got away", "", {}, streamer="Lacy")
+    assert yt == "#lacy #fyp #funny #shorts"  # YouTube shows the title on its own
 
 
 def test_retry_makes_a_clip_of_a_moment_that_was_already_made(env):
@@ -898,14 +901,13 @@ def test_retry_makes_a_clip_of_a_moment_that_was_already_made(env):
     assert len(c.get("/api/clips").json()) == 2
 
 
-def test_the_game_goes_in_the_caption_and_as_a_specific_hashtag():
+def test_the_game_goes_in_the_caption_as_a_specific_hashtag():
     from clippr.describe import build, game_tag
     assert game_tag("Grand Theft Auto VI") == "#GrandTheftAutoVI" and game_tag("Just Chatting") == ""
-    _, desc = build("instagram", "“He got away” 😳", "he got away #fyp #heist", {"hashtags": ["#streamera"]}, "Grand Theft Auto VI")
-    assert desc.startswith("“He got away” 😳\n\n") and "Game:" not in desc
-    assert desc.rsplit("\n\n", 1)[-1].split() == ["#streamera", "#GrandTheftAutoVI", "#heist", "#vyralclips"]
-    _, chat = build("tiktok", "“lol” 😳", "lol", {}, "Just Chatting")
-    assert "Game:" not in chat and chat.rsplit("\n\n", 1)[-1] == "#vyralclips"
+    _, desc = build("instagram", "he got away", "he got away #fyp #heist", {"hashtags": ["#streamera"]}, "Grand Theft Auto VI", streamer="streamera")
+    assert desc == "@streamera #streamera #grandtheftautovi #fyp #funny #heist" and "Game:" not in desc
+    _, chat = build("tiktok", "lol", "lol", {}, "Just Chatting")
+    assert chat == "#fyp #funny"
 
 
 def test_retry_all_remove_and_day_old_dead_ends(env):

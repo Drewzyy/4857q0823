@@ -25,14 +25,15 @@ from . import titles
 from .grade import arousal
 from .media.facecam import CAM_SHARE
 
-VERSION = 8  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim.
+VERSION = 9  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim.
 # 6: at least 25 s with setup (screen.py), the headline at the top for the opening seconds only, then gone.
 # 7: titles written like a person (titles.py): the line said, lower case, no emoji or hype.
-# 8: a headline only when it adds something (a line said later in the clip); otherwise none
+# 8: a headline only when it adds something (a line said later in the clip); otherwise none.
+# 9: your answers: 35 s to 1:20 (aim 45 s to a minute), a 2-4 s hook, the reaction played out, caps headline
 STEP = 0.1
-LONGEST = 45.0      # trimmed when longer than this (half the second batch of top clips ran 35 to 50 s)
-TARGET = 34.0       # length of the trimmed clip: room for the setup, still short enough to finish
-SHORTEST = 25.0     # never trimmed below this (screen.py: under 25 s there's no room for the setup)
+LONGEST = 80.0      # trimmed when longer than this (what you asked for: 35 s to 1:20, most 45 s to a minute)
+TARGET = 52.0       # length of a trimmed clip: the whole setup and the reaction played out (a minute or more also earns money)
+SHORTEST = 35.0     # never trimmed below this (screen.py: shorter has no room for the setup)
 HEADLINE_Y = 17     # % from the top
 HEADLINE_LEAD = 4.0  # a line said within this many seconds of the start needs no headline: it's heard right away
 TITLE_SECONDS = 4.0  # the headline shows for the opening seconds (after the hook), then gets out of the way
@@ -63,18 +64,18 @@ def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0
         if firsts:
             start = max(0.0, min(firsts, key=lambda a: abs(a - start)) - 0.1)
     # The climax: on any clip with a clear peak, end once it has settled (the reaction plays out, then cut: no
-    # trailing chatter), and don't spend more than ~25 s building up to it.
+    # trailing chatter, a few seconds after it), and keep up to ~45 s of build-up: the context is the point.
     peak = peak_moment(db, start, end)
     if peak is not None:
         level = np.convolve(db - np.median(db), np.ones(10) / 10, mode="same")
         calm = next((k * STEP for k in range(int((peak + 2) / STEP), int(end / STEP)) if (level[k:k + 15] < 2).all()), None)
         if calm is not None and end - calm > 3:
             spoken = [w.end for w in words if calm - 1 <= w.end <= calm + 2.5]  # finish the sentence being said
-            end = round(min(end, (max(spoken) if spoken else calm) + 0.6), 2)
-        if peak - start > 28:
-            starts = [w.start for i, w in enumerate(words) if peak - 26 <= w.start <= peak - 12
+            end = round(min(end, (max(spoken) if spoken else calm) + 3.0), 2)  # let the reaction play out
+        if peak - start > 50:
+            starts = [w.start for i, w in enumerate(words) if peak - 45 <= w.start <= peak - 20
                       and (i == 0 or w.start - words[i - 1].end > 0.35 or words[i - 1].text.rstrip().endswith((".", "!", "?")))]
-            start = (min(starts) - 0.1) if starts else peak - 25
+            start = (min(starts) - 0.1) if starts else peak - 45
     if end - start < shortest:
         start = max(0.0, end - shortest)
     # Open on sound: the first word, or the first moment that isn't near silence.
@@ -122,7 +123,7 @@ def auto_sound(db: np.ndarray | None, a: float, b: float, speech: str) -> tuple[
     return "boom", round(peak, 2)
 
 
-HOOK_MIN, HOOK_MAX = 3.0, 6.0
+HOOK_MIN, HOOK_MAX = 2.0, 4.0  # the climax up front for 2 to 4 seconds, then the story from its start
 
 
 def pick_hook(db: np.ndarray | None, words: list, a: float, b: float) -> tuple[float, float] | None:
@@ -146,7 +147,7 @@ def pick_hook(db: np.ndarray | None, words: list, a: float, b: float) -> tuple[f
     opening = score(a, a + 5)
     best, at = -1e9, None
     for t in np.arange(a + 6, b - HOOK_MIN, 0.5):  # never the opening itself: that's already first
-        for length in (4.0, 5.0, 6.0):
+        for length in (2.5, 3.0, 4.0):
             if t + length <= b:
                 v = score(t, t + length)
                 if v > best:
@@ -193,7 +194,7 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
         # gaming clips do), for the opening seconds only: a line across the picture for the whole clip covers it.
         y = round(CAM_SHARE * 100) if stacked else HEADLINE_Y
         texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(min(b - a, TITLE_SECONDS) + HOOK_MAX, 2), "y_percent": y,
-                         "size": HEADLINE_SIZE, "color": "#141414", "font": "poppins", "all_caps": False, "outline": 0, "box": True, "headline": True})
+                         "size": HEADLINE_SIZE, "color": "#141414", "font": "poppins", "all_caps": True, "outline": 0, "box": True, "headline": True})
     if sound and not e.get("sounds"):
         pick = auto_sound(db, a, b, " ".join(w.text for w in words))
         if pick:

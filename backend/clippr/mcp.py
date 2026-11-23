@@ -343,7 +343,7 @@ TOOLS: dict[str, tuple[Callable, str, dict, list[str], dict]] = {
     "give_feedback": (give_feedback, "Tell Vyral what you think of a clip without rejecting it (\"good but too long\", \"needs more setup\"). "
                       "It adjusts how the next clips are cut and screened; returns what changed.",
                       {**ID, "note": {"type": "string", "minLength": 1, "maxLength": 500}}, ["clip_id", "note"], {}),
-    "get_posting_package": (get_posting_package, "For an approved video: file path (and dropbox_path once it's in Dropbox), final caption, page, aspect ratio, duration, schedule. Post it yourself, then call mark_posted.",
+    "get_posting_package": (get_posting_package, "For an approved video: post_after (don't post it before this: posts on one page are spaced out so they don't flop), file path (and dropbox_path once it's in Dropbox), final caption, page, aspect ratio, duration, schedule. Post it yourself, then call mark_posted.",
                             {**ID, **DEST}, ["clip_id"], RO),
     "mark_posted": (mark_posted, "After you posted an approved video yourself: record its link. Vyral opens the link and only records it if "
                     "it's a live post on that page (TikTok, YouTube; Instagram, Facebook and X are kept as unverified). (https, on that page's platform: TikTok, "
