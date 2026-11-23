@@ -158,7 +158,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
 
     dist = cfg.frontend_dist
     if dist and (dist / "index.html").exists():
-        index_html = (dist / "index.html").read_text()
+        index_html = (dist / "index.html").read_text(encoding="utf-8")
         token_tag = f'<meta name="clippr-token" content="{html.escape(cfg.api_token)}">'
 
         def serve_index() -> HTMLResponse:

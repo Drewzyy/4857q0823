@@ -12,6 +12,7 @@ queue), each with an audit entry saying Muse did it. No tool deletes anything, a
 from __future__ import annotations
 
 import hmac
+import re
 import json
 import os
 import logging
@@ -27,9 +28,9 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import object_session
 
-from . import dropbox, posting
+from . import dropbox, posting, screen
 from .audit import audit
-from .api.analytics import link_post
+from .api.analytics import HOSTS, link_post
 from .api.clips import _live_outputs, apply_edit
 from .api.deps import ApiError
 from .api.system import load_settings
@@ -262,7 +263,16 @@ def reject_clip(ctx, a):
     with ctx.db.session() as s:
         c = _get(s, a["clip_id"])
         outs = [_pick_output(s, c, a["destination_id"])] if a.get("destination_id") is not None else _live_outputs(s, c.id)
-        return [_out(posting.reject(s, o.id, ACTOR, a["reason"])) for o in outs]
+        return [_out(posting.reject(s, o.id, ACTOR, a["reason"], teach=i == 0)) for i, o in enumerate(outs)]  # one note teaches once
+
+
+def give_feedback(ctx, a):
+    """What you think of a clip, approved or not ("good but too long"): the next clips are cut to it."""
+    with ctx.db.session() as s:
+        c = _get(s, a["clip_id"])
+        changed = screen.learn(s, a["note"], c.id)
+        audit(s, "clip.feedback", "clip", c.id, {"by": ACTOR, "note": a["note"][:200], "learned": changed})
+        return {"learned": changed, "now": {k: v for k, v in screen.learned(s).items() if k != "history"}}
 
 
 def get_posting_package(ctx, a):
@@ -276,11 +286,20 @@ def mark_posted(ctx, a):
         o = _pick_output(s, _get(s, a["clip_id"]), a.get("destination_id"))
         if o.review != "approved":
             raise ToolError("Approve it first")
-        try:
-            link_post(s, ctx.jobs, o, a["post_url"], ACTOR)
-        except ApiError as e:
-            raise ToolError(e.message)
-        return _out(o)
+        if not re.match(rf"^https://([\w-]+\.)?{HOSTS.get(o.platform, '')}/", a["post_url"].strip()):
+            raise ToolError(f"That isn't a {o.platform.title()} link. Send the link to the post itself.")
+        chk = {**posting.check_post(s, ctx.fetcher, o, a["post_url"]), "by": ACTOR}
+        if chk["status"] == "failed":  # kept in the posted history as a claim that didn't hold up
+            o.post_check = chk
+            audit(s, "post.claim_refused", "output", o.id, {"by": ACTOR, "url": chk["url"], "reason": chk["reason"]})
+        else:
+            try:
+                link_post(s, ctx.jobs, o, a["post_url"], ACTOR)
+            except ApiError as e:
+                raise ToolError(e.message)
+            o.post_check = chk
+            return {**_out(o), "post_check": chk}
+    raise ToolError(f"Not recorded as posted: {chk['reason']}. Post the video, then send the link to the live post.")
 
 
 ID = {"clip_id": {"type": "integer"}}
@@ -312,11 +331,16 @@ TOOLS: dict[str, tuple[Callable, str, dict, list[str], dict]] = {
                      "watched must be true: the picture isn't machine-checked. Optional final caption and scheduled_at (ISO 8601).",
                      {**ID, **DEST, "watched": {"type": "boolean"}, "caption": {"type": "string", "maxLength": 2200},
                       "scheduled_at": {"type": "string"}}, ["clip_id", "watched"], {}),
-    "reject_clip": (reject_clip, "Reject a clip (one page, or all of them) with a reason.",
+    "reject_clip": (reject_clip, "Reject a clip (one page, or all of them) with a reason. Say it plainly (too short, too long, boring, "
+                    "no context, just screaming): Vyral learns from it and cuts and screens the next clips to match.",
                     {**ID, **DEST, "reason": {"type": "string", "minLength": 1, "maxLength": 500}}, ["clip_id", "reason"], {}),
+    "give_feedback": (give_feedback, "Tell Vyral what you think of a clip without rejecting it (\"good but too long\", \"needs more setup\"). "
+                      "It adjusts how the next clips are cut and screened; returns what changed.",
+                      {**ID, "note": {"type": "string", "minLength": 1, "maxLength": 500}}, ["clip_id", "note"], {}),
     "get_posting_package": (get_posting_package, "For an approved video: file path (and dropbox_path once it's in Dropbox), final caption, page, aspect ratio, duration, schedule. Post it yourself, then call mark_posted.",
                             {**ID, **DEST}, ["clip_id"], RO),
-    "mark_posted": (mark_posted, "After you posted an approved video yourself: record its link (https, on that page's platform: TikTok, "
+    "mark_posted": (mark_posted, "After you posted an approved video yourself: record its link. Vyral opens the link and only records it if "
+                    "it's a live post on that page (TikTok, YouTube; Instagram, Facebook and X are kept as unverified). (https, on that page's platform: TikTok, "
                     "Instagram, YouTube, Facebook or X). Marks it uploaded so analytics and campaigns pick it up.",
                     {**ID, **DEST, "post_url": {"type": "string", "minLength": 8, "maxLength": 500}}, ["clip_id", "post_url"], {}),
 }

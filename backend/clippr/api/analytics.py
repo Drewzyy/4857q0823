@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from ..audit import audit
 from ..models import Clip, ClipOutput, Job, MetricSnapshot, ReferenceVideo
 from .deps import ApiError, ctx, db, get_or_404
+from ..posting import check_post
 
 router = APIRouter()
 AUTO_PLATFORMS = ("tiktok", "youtube")  # public numbers readable without logging in
@@ -48,8 +49,27 @@ def link_post(s: Session, jobs, o: ClipOutput, url: str, by: str) -> str:
 @router.put("/outputs/{oid}/post")
 def set_post_link(oid: int, body: PostIn, c=Depends(ctx), s: Session = Depends(db)):
     o = get_or_404(s, ClipOutput, oid, "Clip")
+    chk = {**check_post(s, c.fetcher, o, body.post_url), "by": "you"}
+    if chk["status"] == "failed":
+        raise ApiError(422, "not_a_post", f"Not recorded as posted: {chk['reason']}.")
     url = link_post(s, c.jobs, o, body.post_url, "you")
-    return {"post_url": url, "auto": o.platform in AUTO_PLATFORMS}
+    o.post_check = chk
+    return {"post_url": url, "auto": o.platform in AUTO_PLATFORMS, "post_check": chk}
+
+
+@router.get("/posted")
+def posted_history(limit: int = 200, s: Session = Depends(db)):
+    """Every post link recorded or refused, newest first: where it went, who said it was posted, and whether the link
+    was opened and found live on that page (verified), couldn't be checked (unverified) or didn't hold up (refused)."""
+    rows = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.post_check.is_not(None))).unique()]
+    rows.sort(key=lambda o: o.post_check.get("at", ""), reverse=True)
+    out = []
+    for o in rows[:min(max(limit, 1), 500)]:
+        clip = s.get(Clip, o.clip_id)
+        d = o.destination
+        out.append({"output_id": o.id, "clip_id": o.clip_id, "clip_title": clip.title if clip else "", "platform": o.platform,
+                    "page": d.display_name or d.handle if d else o.platform, "post_url": o.post_url, **o.post_check})
+    return out
 
 
 class ManualMetrics(BaseModel):

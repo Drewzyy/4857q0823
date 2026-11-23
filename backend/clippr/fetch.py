@@ -33,6 +33,7 @@ class RemotePost:
     comments: int | None = None
     shares: int | None = None
     thumbnail: str | None = None
+    channels: tuple[str, ...] = ()  # who posted it: handle, name, channel (any yt-dlp knows)
 
 
 @dataclass
@@ -163,6 +164,7 @@ def _post(e: dict, fallback_url: str = "") -> RemotePost:
         posted_at=_ts(e.get("timestamp")), duration=e.get("duration"), views=e.get("view_count"), likes=e.get("like_count"),
         comments=e.get("comment_count"), shares=e.get("repost_count"),
         thumbnail=e.get("thumbnail") or ((e.get("thumbnails") or [{}])[-1].get("url")),
+        channels=tuple(str(e[k]) for k in ("uploader_id", "uploader", "channel", "channel_id") if e.get(k)),
     )
 
 

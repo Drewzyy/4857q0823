@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import mcp, posting
+from .. import mcp, posting, screen
 from .deps import ApiError, ctx, db
 from .system import load_settings
 
@@ -48,3 +48,16 @@ def restart(c=Depends(ctx)):
     if c.mcp:
         c.mcp.restart()
     return c.mcp.state() if c.mcp else {}
+
+
+@router.get("/learned")
+def get_learned(s: Session = Depends(db)):
+    """What the screener has learned from your review notes (screen.py), with the note behind each change."""
+    return screen.learned(s)
+
+
+@router.post("/learned/reset")
+def reset_learned(s: Session = Depends(db)):
+    screen.reset(s)
+    s.flush()
+    return screen.learned(s)

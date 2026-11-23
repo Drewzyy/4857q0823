@@ -31,7 +31,8 @@ class JobContext:
 
     def cancelled(self) -> bool:
         with self.queue.db.session() as s:
-            return s.get(Job, self.job_id).status == "cancelled"
+            j = s.get(Job, self.job_id)
+            return j is None or j.status == "cancelled"
 
 
 Handler = Callable[[JobContext, dict[str, Any]], dict[str, Any] | None]
@@ -167,8 +168,10 @@ class JobQueue:
     def _finish(self, job_id: int, status: str, *, result: dict | None = None, error: str | None = None) -> None:
         with self.db.session() as s:
             j = s.get(Job, job_id)
-            if j.status == "cancelled" and status != "cancelled":
+            if not j or (j.status == "cancelled" and status != "cancelled"):
                 return
+            if j.status == "failed" and j.finished_at and status == "succeeded":
+                return  # given up on as stuck (its failure is already recorded): a late finish doesn't undo that
             j.status, j.result, j.error, j.finished_at = status, result, error, datetime.now(timezone.utc)
 
     def _tick_periodic(self) -> None:

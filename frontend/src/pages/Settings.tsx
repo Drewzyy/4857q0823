@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { Bell, ExternalLink, Send, ShieldCheck, Trash2 } from "lucide-react";
 import { DropboxSettings } from "../components/DropboxSettings";
 import { MusePosting } from "../components/MusePosting";
-import { api, type AppSettings, type NotifyCategory, type NotifyState } from "../lib/api";
+import { api, type AppSettings, type Learned, type NotifyCategory, type NotifyState } from "../lib/api";
 import { ErrorNote, Loading, relTime, Toggle, useToast } from "../components/ui";
 
 type Tab = "general" | "muse" | "dropbox" | "notifications" | "security" | "shortcuts";
@@ -21,7 +21,7 @@ export default function SettingsPage() {
         ))}
       </div>
       {tab === "general" && <General />}
-      {tab === "muse" && <MusePosting />}
+      {tab === "muse" && <><MusePosting /><LearnedCard /></>}
       {tab === "dropbox" && <DropboxSettings />}
       {tab === "notifications" && <><Notifications /><PhoneInbox /></>}
       {tab === "security" && <Security />}
@@ -357,6 +357,7 @@ function Security() {
         <div className="small faint">Data folder: <span className="mono">{dash.data?.storage.data_dir}</span></div>
         <div className="small faint">Emoji on videos: Twemoji by Twitter and contributors, CC-BY 4.0. Fonts: SIL Open Font License.</div>
       </div>
+      <ClearAllClips />
       <div className="card">
         <h2 style={{ marginBottom: 8 }}>Activity log</h2>
         {audit.isLoading ? <Loading /> : (audit.data ?? []).length === 0 ? <p className="muted small">Nothing yet.</p> : (
@@ -404,5 +405,51 @@ function ChooseFolder({ onPick }: { onPick: (path: string) => void }) {
       try { const r = await api.pickFolder(); if (r.path) onPick(r.path); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
       finally { setBusy(false); }
     }}>{busy ? <span className="spinner" /> : null}Choose folder</button>
+  );
+}
+
+const LABELS: Record<string, string> = { min_seconds: "Shortest clip (s)", max_seconds: "Longest clip (s)", min_words: "Words said (besides laughing and filler)",
+  setup_words: "Words of setup before the halfway point", min_score: "Lowest virality score" };
+
+/** What the screener learned from review notes (yours and Muse's), with the note behind each change. */
+function LearnedCard() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { data } = useQuery({ queryKey: ["learned"], queryFn: api.learned });
+  if (!data) return null;
+  return (
+    <div className="card stack" style={{ maxWidth: 820, marginTop: 16 }}>
+      <h2>What Vyral learned from your reviews</h2>
+      <p className="small muted">When you or Muse reject a clip and say why ("too short", "boring", "no context", "just screaming"), these limits move a step,
+        and the next clips are cut and screened to them. Clips that don't meet them are held back from review with the reason.</p>
+      <div className="grid cols-2 small">{Object.entries(LABELS).map(([k, l]) => <div key={k}>{l}: <strong>{String(data[k as Exclude<keyof Learned, "history">])}</strong></div>)}</div>
+      {data.history.length > 0 && <ul className="small faint" style={{ margin: 0, paddingLeft: 18 }}>{data.history.slice(-8).reverse().map((h, i) => (
+        <li key={i}>{relTime(h.at)}: "{h.note}": {Object.entries(h.changed).map(([k, [a, b]]) => `${LABELS[k] ?? k} ${a} → ${b}`).join(", ")}</li>))}</ul>}
+      <div><button className="btn ghost sm" onClick={async () => { qc.setQueryData(["learned"], await api.resetLearned()); toast("ok", "Back to the defaults"); }}>Reset to defaults</button></div>
+    </div>
+  );
+}
+
+/** Deletes every clip and its videos from this computer, after the phrase is typed. */
+function ClearAllClips() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const PHRASE = "DELETE ALL CLIPS";
+  return (
+    <div className="card stack">
+      <h2>Clear all clips</h2>
+      <p className="small muted">Deletes every clip and its videos from this computer. Your sources, pages, campaigns and settings stay, and so do copies already
+        in Dropbox. This can't be undone. Type <code>{PHRASE}</code> to confirm.</p>
+      <div className="row">
+        <input className="input" aria-label="Type the phrase to confirm" value={text} onChange={(e) => setText(e.target.value)} placeholder={PHRASE} />
+        <button className="btn danger" disabled={text !== PHRASE || busy} onClick={async () => {
+          setBusy(true);
+          try { const r = await api.clearAllClips(text); toast("ok", `${r.deleted} clips deleted`); setText(""); qc.invalidateQueries(); }
+          catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+        }}>{busy && <span className="spinner" />}Delete all clips</button>
+      </div>
+    </div>
   );
 }

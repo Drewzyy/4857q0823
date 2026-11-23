@@ -76,6 +76,14 @@ export interface ClipOutputT {
   dropbox: DropboxUploadT | null;
 }
 export interface DropboxUploadT { id: number; status: "queued" | "uploading" | "uploaded" | "failed"; path: string | null; error: string | null; progress: number | null; next_try_at: string | null; uploaded_at: string | null }
+export interface PostedRow {
+  output_id: number; clip_id: number; clip_title: string; platform: string; page: string; post_url: string | null; url: string;
+  status: "verified" | "unverified" | "failed"; reason?: string; by?: string; at: string; posted_by?: string | null;
+}
+export interface Learned {
+  min_seconds: number; max_seconds: number; min_words: number; setup_words: number; min_score: number;
+  history: { at: string; note: string; clip_id: number | null; changed: Record<string, [number, number]> }[];
+}
 export interface DropboxState {
   connected: boolean; needs_reconnect: boolean; account: string | null; error: string | null; connect_error: string | null; connecting: boolean; app_key_set: boolean; redirect_uri: string;
   counts: { queued: number; uploading: number; uploaded: number; failed: number };
@@ -277,6 +285,10 @@ export const api = {
   discordInboxChannels: () => request<{ id: string; name: string; server: string }[]>("GET", "/discord-inbox/channels"),
   setDiscordInbox: (b: { token?: string; channel_id?: string }) => request<DiscordInbox>("PUT", "/discord-inbox", b),
   removeDiscordInbox: () => request<void>("DELETE", "/discord-inbox"),
+  clearAllClips: (confirm: string) => request<{ deleted: number }>("POST", "/clips/clear-all", { confirm }),
+  learned: () => request<Learned>("GET", "/learned"),
+  postedHistory: () => request<PostedRow[]>("GET", "/posted"),
+  resetLearned: () => request<Learned>("POST", "/learned/reset"),
   dropbox: () => request<DropboxState>("GET", "/dropbox"),
   connectDropbox: () => request<{ url: string }>("POST", "/dropbox/connect"),
   disconnectDropbox: () => request<DropboxState>("POST", "/dropbox/disconnect"),

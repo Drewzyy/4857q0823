@@ -300,6 +300,8 @@ class ClipOutput(Base):
     render_state: Mapped[str] = mapped_column(String(16), default="ready")  # ready | rendering | failed
     render_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     post_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # where you uploaded it (for analytics)
+    # Was the post link checked to be a real, live post on this page? posting.check_post: verified | unverified | failed
+    post_check: Mapped[dict[str, Any] | None] = mapped_column(nullable=True)
     quality: Mapped[dict[str, Any] | None] = mapped_column(nullable=True)  # media/quality.check(): pass | fail, and why
     review: Mapped[str] = mapped_column(String(16), default="pending")  # pending | approved | rejected
     review_note: Mapped[str] = mapped_column(Text, default="")

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from clippr import mcp, safety
 from clippr.fetch import RemotePost
-from clippr.models import AuditLog, Clip, ClipOutput
+from clippr.models import AuditLog, Clip, ClipOutput, Setting
 from fakes import drain
 from test_pipeline import setup_accounts
 
@@ -24,7 +24,9 @@ def _clip(ctx, c, fake):
     cid = c.get("/api/clips").json()[0]["id"]
     with ctx.db.session() as s:  # the fake stream is quiet test audio: give it a passing grade, as a real clip would earn
         clip = s.get(Clip, cid)
-        clip.grade = {**(clip.grade or {}), "score": 70, "tier": "B"}
+        clip.grade = {**(clip.grade or {}), "score": 70, "tier": "B", "screen": {"pass": True, "reasons": []}}
+        # The fake stream says only a few words: let the screener pass it when it's graded again after edits.
+        s.merge(Setting(key="learned", value={"min_seconds": 0, "min_words": 0, "setup_words": 0}))
     return cid, tt, yt
 
 
@@ -82,7 +84,7 @@ def test_muse_reviews_approves_and_posts_and_marks_posted(env, tmp_path):
     assert init["result"]["serverInfo"]["name"] == "vyral" and "tools" in init["result"]["capabilities"]
     names = {t["name"] for t in _rpc(mc, "tools/list", token=tok).json()["result"]["tools"]}
     assert names == {"list_ready_clips", "get_clip", "list_sources", "list_destinations", "list_funnel_routes", "list_clips_for_review",
-                     "review_clip", "update_clip", "approve_clip", "reject_clip", "get_posting_package", "mark_posted",
+                     "review_clip", "update_clip", "approve_clip", "reject_clip", "give_feedback", "get_posting_package", "mark_posted",
                      "get_safety_check", "list_quarantined_clips", "list_campaigns"}
 
     err, ready = _call(mc, tok, "list_ready_clips")

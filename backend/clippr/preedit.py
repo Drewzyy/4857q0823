@@ -5,7 +5,8 @@ ear, November 2026). What they shared:
 - Length: seven of eight ran 18 to 28 seconds. Longer cuts are trimmed to the strongest stretch, kept whole
   around the loudest moment so the payoff lands.
 - They open on sound: the first sound comes within the first quarter second. Lead-in silence is cut.
-- One headline for the whole clip, at the top, in dark text on a white box, in plain sentence case:
+- One headline at the top, in dark text on a white box, in plain sentence case, for the opening seconds only
+  (it says what's happening, then gets out of the way of the picture):
   "Lacy couldn't believe Dani from Outside drank a random person's drink 😭". Third person, names the
   streamer, says what happens without giving away the payoff, and ends on one or two emoji.
 - Gaming clips put the streamer's face on top and the game under it, headline on the seam.
@@ -23,13 +24,14 @@ import numpy as np
 from .grade import arousal
 from .media.facecam import CAM_SHARE
 
-VERSION = 5  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim
+VERSION = 6  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim.
+# 6: at least 25 s with setup (screen.py), the headline at the top for the opening seconds only, then gone
 STEP = 0.1
 LONGEST = 45.0      # trimmed when longer than this (half the second batch of top clips ran 35 to 50 s)
 TARGET = 34.0       # length of the trimmed clip: room for the setup, still short enough to finish
-SHORTEST = 12.0     # never trimmed below this
+SHORTEST = 25.0     # never trimmed below this (screen.py: under 25 s there's no room for the setup)
 HEADLINE_Y = 17     # % from the top
-QUOTE_Y, QUOTE_SIZE = 58, 66  # a quote headline: white, mid-frame
+TITLE_SECONDS = 4.0  # the headline shows for the opening seconds (after the hook), then gets out of the way
 HEADLINE_SIZE = 76  # pixels on a 1080-wide video: about 3% of the height per line, like the top clips
 SHOCK = re.compile(r"\b(wtf|what the|no way|bro|oh my god|omg|are you serious|insane|crazy)\b", re.I)
 
@@ -69,6 +71,8 @@ def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0
             starts = [w.start for i, w in enumerate(words) if peak - 26 <= w.start <= peak - 12
                       and (i == 0 or w.start - words[i - 1].end > 0.35 or words[i - 1].text.rstrip().endswith((".", "!", "?")))]
             start = (min(starts) - 0.1) if starts else peak - 25
+    if end - start < shortest:
+        start = max(0.0, end - shortest)
     # Open on sound: the first word, or the first moment that isn't near silence.
     first_word = next((w.start for w in words if w.start >= start), None)
     first_sound = None
@@ -80,8 +84,6 @@ def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0
     lead = min(min(found), start + 5.0) if found else start  # a long silent opening is more likely a problem than intent
     if lead - start > 0.3:
         start = lead - 0.15
-    if end - start < shortest:
-        start = max(0.0, end - shortest)
     if min_s and end - start < min(min_s, hi):  # the clip was ended early (the climax settled): the campaign wants more, if there is any
         end = min(dur, start + min(min_s, hi))
     if end - start > hi:  # the climax trim or the sound opening can leave more than the campaign allows
@@ -173,14 +175,11 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     texts = [t for t in e.get("texts") or [] if not (t.get("box") or t.get("headline"))]
     if headline_text:
         stacked = e.get("layout") == "stacked" and e.get("cam")
-        if quote:  # white words across the middle, above where the captions run
-            texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(b - a + HOOK_MAX + 2, 2), "y_percent": QUOTE_Y,
-                             "size": QUOTE_SIZE, "color": "#FFFFFF", "font": "poppins", "all_caps": False, "outline": 5, "headline": True})
-        else:
-            # With the facecam on top, the headline sits on the seam between face and gameplay, as the top gaming clips do.
-            y = round(CAM_SHARE * 100) if stacked else HEADLINE_Y
-            texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(b - a + HOOK_MAX + 2, 2), "y_percent": y, "size": HEADLINE_SIZE,
-                             "color": "#141414", "font": "poppins", "all_caps": False, "outline": 0, "box": True, "headline": True})
+        # One headline, at the top (on the seam between face and gameplay when the facecam is on top, as the top
+        # gaming clips do), for the opening seconds only: a line across the picture for the whole clip covers it.
+        y = round(CAM_SHARE * 100) if stacked else HEADLINE_Y
+        texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(min(b - a, TITLE_SECONDS) + HOOK_MAX, 2), "y_percent": y,
+                         "size": HEADLINE_SIZE, "color": "#141414", "font": "poppins", "all_caps": False, "outline": 0, "box": True, "headline": True})
         e["hide_title"] = True
     if sound and not e.get("sounds"):
         pick = auto_sound(db, a, b, " ".join(w.text for w in words))
@@ -197,5 +196,8 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
         h = pick_hook(db, words, a, b)
         if h and (not max_s or b - a + h[1] - h[0] <= max_s):
             e["hook"] = [round(edit["start"] + h[0], 3), round(edit["start"] + h[1], 3)]
+    for x in e["texts"]:
+        if x.get("headline"):  # the hook plays first, so the headline stays through it and a few seconds more
+            x["end"] = round(min(b - a, TITLE_SECONDS) + ((e["hook"][1] - e["hook"][0]) if e.get("hook") else 0), 2)
     e["preedited"], e["preedit_version"] = True, VERSION
     return e

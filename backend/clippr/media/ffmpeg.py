@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
@@ -74,7 +75,10 @@ class MediaInfo:
 
 def probe(path: Path) -> MediaInfo:
     cmd = [ffmpeg_exe(), "-hide_banner", "-nostdin", "-i", str(path)]
-    p = subprocess.run(cmd, capture_output=True, timeout=60, creationflags=_FLAGS, preexec_fn=_PRE)
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=60, creationflags=_FLAGS, preexec_fn=_PRE)
+    except subprocess.TimeoutExpired:
+        raise FFmpegError(f"Reading {path.name} took over a minute (the file may be damaged or on a slow drive)")
     text = p.stderr.decode("utf-8", "replace")
     dur = None
     m = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", text)
@@ -97,7 +101,8 @@ def decode_audio_chunks(path: Path, sample_rate: int, chunk_seconds: float = 120
     """Stream mono float32 audio without loading hours of audio into memory."""
     cmd = [ffmpeg_exe(), "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(path),
            "-vn", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=_FLAGS, preexec_fn=_PRE)
+    errors = tempfile.TemporaryFile()  # a file, not a pipe: a chatty error log can't fill it and stall FFmpeg
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors, creationflags=_FLAGS, preexec_fn=_PRE)
     n = int(sample_rate * chunk_seconds) * 2
     try:
         assert proc.stdout is not None
@@ -110,5 +115,8 @@ def decode_audio_chunks(path: Path, sample_rate: int, chunk_seconds: float = 120
         proc.stdout.close() if proc.stdout else None
         proc.wait(timeout=30)
     if proc.returncode not in (0, None):
-        err = proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
+        errors.seek(0)
+        err = errors.read().decode("utf-8", "replace")
+        errors.close()
         raise FFmpegError("Couldn't read audio: " + err.strip()[-300:])
+    errors.close()

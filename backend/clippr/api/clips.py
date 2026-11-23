@@ -9,13 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, object_session
 
-from .. import dropbox
+from .. import dropbox, files
 from ..audit import audit
 from ..fetch import FetchError, count_links
 from ..media.ffmpeg import probe
@@ -291,17 +291,51 @@ def edit_captions(cid: int, body: CaptionsIn, c=Depends(ctx), s: Session = Depen
     return {"captions_text": " ".join(w["text"] for w in clip.words), "rendering": len(outs)}
 
 
-@router.delete("/clips/{cid}", status_code=204)
-def delete_clip(cid: int, s: Session = Depends(db)):
-    clip = get_or_404(s, Clip, cid, "Clip")
-    for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)).unique():
+def _remove_clip(s: Session, clip: Clip) -> list[str]:
+    """The clip and its page videos from the database; returns its files (videos, thumbnails, footage) to delete
+    once that's saved. Copies already in Dropbox stay there."""
+    gone = []
+    for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id)).unique():
         if o.file_path:
-            Path(o.file_path).unlink(missing_ok=True)
-            Path(o.file_path).with_suffix(".jpg").unlink(missing_ok=True)
+            gone.append(o.file_path)
     if clip.files_dir:
-        shutil.rmtree(clip.files_dir, ignore_errors=True)
-    audit(s, "clip.deleted", "clip", cid)
+        gone.append(clip.files_dir)
     s.delete(clip)
+    return gone
+
+
+def _delete_files(paths: list[str]) -> None:
+    for p in paths:
+        files.remove_video(p) if p.endswith(".mp4") else files.remove(p)
+
+
+@router.delete("/clips/{cid}", status_code=204)
+def delete_clip(cid: int, tasks: BackgroundTasks, s: Session = Depends(db)):
+    clip = get_or_404(s, Clip, cid, "Clip")
+    audit(s, "clip.deleted", "clip", cid)
+    tasks.add_task(_delete_files, _remove_clip(s, clip))
+
+
+CLEAR_PHRASE = "DELETE ALL CLIPS"
+
+
+class ClearAll(BaseModel):
+    confirm: str = Field(max_length=40)
+
+
+@router.post("/clips/clear-all")
+def clear_all_clips(body: ClearAll, tasks: BackgroundTasks, s: Session = Depends(db)):
+    """Deletes every clip and its videos from this computer. Sources, pages, campaigns and settings stay, and so do
+    copies already in Dropbox. Needs the phrase typed out, so it can't happen by a stray click."""
+    if body.confirm != CLEAR_PHRASE:
+        raise ApiError(422, "confirm", f'Type {CLEAR_PHRASE} to delete every clip.')
+    clips = s.scalars(select(Clip)).unique().all()
+    gone = [p for clip in clips for p in _remove_clip(s, clip)]
+    tasks.add_task(_delete_files, gone)  # after the database is saved
+    for job in s.scalars(select(Job).where(Job.kind.in_(("clip.rerender", "clip.recut")), Job.status == "queued")):
+        job.status = "cancelled"  # nothing left for them to work on
+    audit(s, "clips.cleared", "clip", "", {"deleted": len(clips)})
+    return {"deleted": len(clips)}
 
 
 # ---------------- activity (source posts) ----------------

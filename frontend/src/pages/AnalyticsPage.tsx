@@ -49,8 +49,9 @@ export default function AnalyticsPage() {
     <div className="page">
       <div className="page-head">
         <div><h1>Analytics</h1>
-          <p>How the clips you uploaded are doing. Add each post's link in Ready to Upload after you upload it: Vyral reads TikTok and YouTube numbers every few hours, and you can type Instagram and Facebook numbers in. A dash means no numbers yet, not zero.</p></div>
+          <p>How the clips you uploaded are doing. Posts on your TikTok and YouTube pages are found and linked by themselves (Muse's links are checked too); Vyral reads their numbers every few hours, and you can type Instagram and Facebook numbers in. A dash means no numbers yet, not zero.</p></div>
       </div>
+      <PostedHistory />
       <div className="row wrap" style={{ marginBottom: 16 }}>
         <div className="seg" role="group" aria-label="Time range">
           {[[7, "7 days"], [30, "30 days"], [90, "90 days"], [3650, "All time"]].map(([d, l]) => (
@@ -120,6 +121,29 @@ export default function AnalyticsPage() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Every post link recorded or refused: proof each "posted" is a real, live post on the right page. */
+function PostedHistory() {
+  const { data } = useQuery({ queryKey: ["posted"], queryFn: api.postedHistory, refetchInterval: 60_000 });
+  if (!data?.length) return null;
+  const pill = { verified: <span className="pill ok">Live post, checked</span>, unverified: <span className="pill nodot">Not checked yet</span>,
+    failed: <span className="pill warn">Refused: not a real post</span> };
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <h2 style={{ marginBottom: 4 }}>Posted history</h2>
+      <p className="small muted" style={{ marginTop: 0 }}>A video only counts as posted once its link opens a live post on that page. TikTok and YouTube links are checked;
+        Instagram, Facebook and X can't be opened without logging in, so they stay "not checked".</p>
+      <table className="table"><thead><tr><th>When</th><th>Clip</th><th>Page</th><th>Said by</th><th>Proof</th><th>Link</th></tr></thead><tbody>
+        {data.slice(0, 40).map((r) => (
+          <tr key={`${r.output_id}-${r.at}`}><td className="small muted" style={{ whiteSpace: "nowrap" }}>{relTime(r.at)}</td>
+            <td className="ellipsis" style={{ maxWidth: 260 }}>{r.clip_title}</td><td className="small">{PLATFORM_LABEL[r.platform] ?? r.platform} · {r.page}</td>
+            <td className="small">{r.by === "muse" ? "Muse" : r.by || "?"}</td>
+            <td className="small" title={r.reason}>{pill[r.status]}{r.reason && r.status !== "verified" ? <div className="faint">{r.reason}</div> : null}</td>
+            <td><a href={r.url} target="_blank" rel="noopener noreferrer" aria-label="Open post"><ExternalLink size={12} /></a></td></tr>))}
+      </tbody></table>
     </div>
   );
 }

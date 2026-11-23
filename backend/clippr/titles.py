@@ -75,7 +75,7 @@ def best_quote(words: list, peak: float | None = None) -> tuple[str, float] | No
                  + (3.0 if peak is not None and abs(t - peak) <= 4 else 0))
         if best is None or score > best[1]:
             best = (clean, score)
-    return best if best and best[1] >= 5 else None
+    return best if best and best[1] >= 7 else None  # only a line that clearly lands; otherwise a summary of the moment
 
 
 def make_title(words: list, creator: str | None, peak: float | None = None, names: list[str] = ()) -> tuple[str, bool]:

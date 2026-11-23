@@ -74,10 +74,10 @@ def test_one_sound_on_the_biggest_moment_only():
     assert ClipEdit(**e).sounds[0].volume == 0.6
 
 
-def test_quote_headlines_are_white_text_and_pages_add_their_emoji():
+def test_quote_headlines_sit_at_the_top_briefly_and_pages_add_their_emoji():
     e = preedit.apply(ClipEdit(start=0, end=20).model_dump(), [], None, "“You're not growing” 😭", quote=True)
-    t = e["texts"][0]
-    assert t["headline"] and not t.get("box") and t["color"] == "#FFFFFF" and t["y_percent"] == preedit.QUOTE_Y
+    t = e["texts"][0]  # never a line across the middle of the picture for the whole clip
+    assert t["headline"] and t["box"] and t["y_percent"] == preedit.HEADLINE_Y and t["end"] <= preedit.TITLE_SECONDS
     assert overlay.with_signature(t["text"], "😭❤️") == "“You're not growing” 😭❤️"
     assert overlay.with_signature("Kai lost it", "🔥") == "Kai lost it 🔥" and overlay.with_signature("Kai 😭", "") == "Kai 😭"
 

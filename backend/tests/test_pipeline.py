@@ -87,17 +87,17 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert tdesc == f"{title}\n\nFollow for more\n\n#gaming #clips #vyralclips", tdesc
     assert "Streamer:" not in tdesc and "Streamed" not in tdesc and "He actually did it" not in tdesc
 
-    # The viral pre-edit: one headline box for the whole clip in place of the page title, opening on sound.
+    # The viral pre-edit: one headline box for the opening seconds in place of the page title, opening on sound.
     from clippr.models import Clip
     with ctx.db.session() as s:
         clip = s.get(Clip, clips[0]["id"])
         e = dict(clip.edit)
-        assert e["preedited"] and e["hide_title"] and e["texts"][0]["headline"] and not e["texts"][0].get("box") and e["texts"][0]["text"] == title
+        assert e["preedited"] and e["hide_title"] and e["texts"][0]["headline"] and e["texts"][0]["box"] and e["texts"][0]["text"] == title
         # A clip from before the pre-edit gets it once at startup, and is re-rendered.
         clip.edit = {**e, "preedited": False, "preedit_version": 0, "hide_title": False, "texts": [], "sounds": []}
-    assert ctx.pipeline.preedit_ready() == {"preedited": 1}
+    assert ctx.pipeline.preedit_ready() == {"preedited": 1, "screened": 0}
     drain(ctx)
-    assert ctx.pipeline.preedit_ready() == {"preedited": 0}  # never twice
+    assert ctx.pipeline.preedit_ready() == {"preedited": 0, "screened": 0}  # never twice
     with ctx.db.session() as s:
         assert s.get(Clip, clips[0]["id"]).edit["texts"][0]["headline"]
     assert all(o["render_state"] == "ready" for o in c.get("/api/clips").json()[0]["outputs"])
@@ -113,14 +113,14 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert clips[0]["captions_text"] == "no way he actually did that right now" and clips[0]["editable"]
     assert outs["tiktok"]["destination"]["handle"] == "@streamera.tt"
 
-    # Rendered from the original stream, cut to the moment (20 s clip + 3 s jump cut + padding).
+    # Rendered from the original stream: the 20 s moment widened to 25 s with the setup before it, plus the hook up front.
     with ctx.db.session() as s:
         path = Path(s.get(ClipOutput, outs["tiktok"]["id"]).file_path)
     info = probe(path)
-    assert 22.5 < info.duration < 25.5 and info.has_audio
-    # The quote headline (white text, mid-frame) is really burned in, and stays for the whole clip (the pre-edit).
-    assert white_pixels(path, 2.0, 0.45, 0.7) > 1000, white_pixels(path, 2.0, 0.45, 0.7)
-    assert white_pixels(path, 7.0, 0.45, 0.7) > 1000
+    assert 25 <= info.duration < 31.5 and info.has_audio
+    # The headline (a white box at the top) is really burned in for the opening seconds, then gone (the pre-edit).
+    early, late = white_pixels(path, 2.0, 0.1, 0.25), white_pixels(path, info.duration - 3, 0.1, 0.25)
+    assert early > 1000 and late < early / 5, (early, late)
     assert yellow_pixels(path, 1.2, top=False) > 2000  # yellow caption "NO WAY HE" in the lower part
     assert info.fps == 30  # the stream is 30 fps; never padded with fake frames
 

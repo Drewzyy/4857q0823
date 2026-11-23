@@ -11,14 +11,17 @@ rejected -> Muse posts it (get_posting_package) -> Muse reports the link (mark_p
 """
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
+from . import screen
 from .api.system import load_settings
 from .audit import audit
+from .fetch import FetchError
 from .models import Clip, ClipOutput, DestinationAccount
 
 UNLOCK_AFTER = 5  # reviewed posts on a page before its Auto-post can be turned on
@@ -40,8 +43,14 @@ def held_back(clip: Clip, min_virality: int) -> str | None:
     score = (clip.grade or {}).get("score")
     if score is None:
         return "Not graded yet"
-    if score < min_virality:
-        return f"Virality score {score} is under the minimum of {min_virality} (Settings)"
+    scr = (clip.grade or {}).get("screen")
+    if scr and not scr.get("pass"):
+        return "Held back by the screener: " + "; ".join(scr.get("reasons", []))
+    s = object_session(clip)
+    taught = screen.learned(s)["min_score"] if s else 0
+    if score < max(min_virality, taught):
+        return f"Virality score {score} is under the minimum of {max(min_virality, taught)}" + \
+            (" (Settings)" if min_virality >= taught else " (raised by your reviews)")
     return None
 
 
@@ -78,10 +87,11 @@ def approve(s: Session, oid: int, actor: str, *, watched: bool, caption: str | N
     return o
 
 
-def reject(s: Session, oid: int, actor: str, reason: str) -> ClipOutput:
+def reject(s: Session, oid: int, actor: str, reason: str, teach: bool = True) -> ClipOutput:
     o, clip = _output(s, oid)
     o.review, o.review_note, o.reviewed_by = "rejected", reason.strip()[:500], actor
-    audit(s, "output.rejected", "clip_output", oid, {"by": actor, "clip": clip.id, "reason": o.review_note})
+    learned = screen.learn(s, o.review_note, clip.id) if teach else {}  # "too short", "boring", "no context": the next clips are cut to it
+    audit(s, "output.rejected", "clip_output", oid, {"by": actor, "clip": clip.id, "reason": o.review_note, "learned": learned})
     return o
 
 
@@ -107,3 +117,38 @@ def package(s: Session, oid: int) -> dict:
             "width": o.width, "height": o.height, "aspect_ratio": f"{o.width}:{o.height}" if o.width else None,
             "duration": round(dur or 0, 2), "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
             "dropbox_status": box["status"] if box else None, "dropbox_path": box["path"] if box and box["status"] == "uploaded" else None}
+
+
+GONE = re.compile(r"not available|unavailable|removed|doesn'?t exist|does not exist|not found|404|private|deleted|no video", re.I)
+CHECKABLE = ("tiktok", "youtube")  # public posts Vyral can open without logging in
+
+
+def _who(x: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", x.lower())
+
+
+def check_post(s: Session, fetcher, o: ClipOutput, url: str) -> dict:
+    """Opens the post link and checks it's a real, live post on this page, before it counts as posted.
+    TikTok and YouTube are checked outright: a link that doesn't open, or a post on another account, is refused.
+    Instagram, Facebook and X need a login to read, so their links are kept but marked unverified."""
+    url = url.strip()
+    when = datetime.now(timezone.utc).isoformat()
+    base = url.split("?")[0].rstrip("/")
+    other = s.scalar(select(ClipOutput).where(ClipOutput.post_url.like(f"{base}%"), ClipOutput.id != o.id).limit(1))
+    if other:
+        return {"status": "failed", "url": url, "at": when, "reason": f"That post is already recorded for clip {other.clip_id}"}
+    try:
+        p = fetcher.post_details(url)
+    except FetchError as e:
+        if o.platform in CHECKABLE and GONE.search(str(e)):
+            return {"status": "failed", "url": url, "at": when, "reason": f"That link doesn't open a live post ({str(e)[:160]})"}
+        why = "couldn't be opened right now; checked again later" if o.platform in CHECKABLE else \
+            f"{o.platform.title()} posts can't be opened without logging in"
+        return {"status": "unverified", "url": url, "at": when, "reason": why}
+    handle = _who((o.destination.handle if o.destination else "") or "")
+    names = {_who(x) for x in p.channels if x}
+    if handle and names and handle not in names:
+        return {"status": "failed", "url": url, "at": when,
+                "reason": f"That post is on {', '.join(sorted(x for x in p.channels if x)[:2])}, not this page (@{handle})"}
+    return {"status": "verified", "url": url, "at": when, "posted_by": p.channels[0] if p.channels else None,
+            "post_caption": (p.title or "")[:200], "posted_at": p.posted_at.isoformat() if p.posted_at else None}

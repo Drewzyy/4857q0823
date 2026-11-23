@@ -63,6 +63,18 @@ class FakeDropbox:
         if route == "/2/files/get_metadata":
             p = args["path"]
             return httpx.Response(200, json=self._meta(p, self.files[p])) if p in self.files else self._err("path/not_found/")
+        if route == "/2/files/download":
+            p = args["path"]
+            if p not in self.files:
+                return self._err("path/not_found/")
+            return httpx.Response(200, content=self.files[p], headers={"Dropbox-API-Result": json.dumps({"rev": f"r{hash(self.files[p]) & 0xffff}"})})
+        if route == "/2/files/upload":
+            p, mode = args["path"], args["mode"]
+            cur = self.files.get(p)
+            if (mode[".tag"] == "add" and cur is not None) or (mode[".tag"] == "update" and (cur is None or mode["update"] != f"r{hash(cur) & 0xffff}")):
+                return self._err("path/conflict/file/")
+            self.files[p] = data
+            return httpx.Response(200, json=self._meta(p, data))
         if route == "/2/files/delete_v2":
             self.files.pop(args["path"])
             return httpx.Response(200, json={"metadata": {}})
@@ -327,3 +339,25 @@ def test_missing_file_permissions_are_named(ctx, box):
     state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
     ok, msg = sync.finish_connect({"code": "c", "state": state})
     assert not ok and "files.content.write" in msg and ctx.secrets.get(dropbox.SECRET_KEY) is None
+
+
+def test_another_computer_already_sent_this_clip(ctx, box, tmp_path):
+    fake, sync = box
+    _connect(ctx, sync, fake)
+    f, oid = _render(ctx, tmp_path)
+    with ctx.db.session() as s:
+        o = s.get(ClipOutput, oid)
+        s.get(Clip, o.clip_id).vod_url, s.get(Clip, o.clip_id).vod_start = "https://www.twitch.tv/videos/1", 3600.4
+    fake.files["/Vyral/ref9-1.mp4"] = b"the other computer's render"
+    fake.files["/Vyral/.vyral/uploaded.json"] = json.dumps({"clips": {"https://www.twitch.tv/videos/1#3600|tiktok": {
+        "path": "/Vyral/ref9-1.mp4", "device": "the-pc"}}}).encode()
+    _run(sync)
+    st = _row(ctx, f)
+    assert st["status"] == "uploaded" and st["path"] == "/Vyral/ref9-1.mp4" and len(fake.sessions) == 0
+    g, gid = _render(ctx, tmp_path, folder="ref-new", seed=7)
+    with ctx.db.session() as s:
+        c = s.get(Clip, s.get(ClipOutput, gid).clip_id)
+        c.vod_url, c.vod_start = "https://www.twitch.tv/videos/2", 10.0
+    _run(sync)
+    shared = json.loads(fake.files["/Vyral/.vyral/uploaded.json"])["clips"]
+    assert _row(ctx, g)["status"] == "uploaded" and shared["https://www.twitch.tv/videos/2#10|tiktok"]["path"] == "/Vyral/ref-new.mp4"

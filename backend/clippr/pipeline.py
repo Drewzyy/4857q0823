@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import re
 import shutil
 
 import numpy as np
@@ -17,7 +18,7 @@ from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
-from . import campaigns, content, describe, events, grade, identify, moments, notify, preedit, safety, titles
+from . import campaigns, content, describe, events, files, grade, identify, moments, notify, preedit, safety, screen, titles
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
@@ -424,11 +425,18 @@ class Pipeline:
                 section = self.ctx.fetcher.download_post(ref_url, work / "section")
                 start, dur = 0.0, min(probe(section).duration or (m.end - m.start), cfg.monitoring.max_clip_seconds)
             else:
-                lead = 8.0
+                with self.ctx.db.session() as s:
+                    least = screen.learned(s)["min_seconds"]
+                lead = max(8.0, least - (m.end - m.start) + 4.0)  # a short moment gets more of the stream before it: the setup
                 section = self.ctx.fetcher.download_section(vod.url, max(0.0, m.start - lead), m.end + 3, work / "section")
                 # The download may start at a keyframe before the requested time; re-align on audio for a frame-exact cut.
                 local = match.find_in_stream(ref_feats, match.extract_features(section), pad=0.4)
                 start, dur = (local.start, local.end - local.start) if local else (min(lead, m.start), m.end - m.start)
+                if dur < least:  # under the minimum: take the setup from before it (and a little after)
+                    total = probe(section).duration or start + dur
+                    pre = min(start, least - dur + 2.0)
+                    post = min(max(0.0, total - start - dur), max(0.0, least - dur - pre + 1.0))
+                    start, dur = start - pre, dur + pre + post
 
             channels = next((chs for cid, _, chs in candidates if cid == matched_id), [])
             # The streamer's name and channel handles (every member's, for a group) help the speech model hear names.
@@ -836,9 +844,16 @@ class Pipeline:
             db = grade.loudness(facts["source"], facts["start"], facts["dur"], facts["rel"])
             if hook:  # graded as it plays: the hook first
                 db = np.concatenate([grade.loudness(facts["source"], facts["start"] + hook[0], hook[1] - hook[0]), db])
-        except FFmpegError:
-            log.exception("grading failed")
-            return None
+        except FFmpegError as e:  # most often a video with no sound track: held back with that reason, still safety-checked
+            log.warning("grading failed for clip %s: %s", clip_id, e)
+            result = {"score": 0, "tier": "D", "parts": [], "tips": ["Vyral couldn't read this clip's sound. Check the footage has audio."],
+                      "screen": {"pass": False, "reasons": ["Vyral couldn't read this clip's sound (it may have none)"]}}
+            with self.ctx.db.session() as s:
+                clip = s.get(Clip, clip_id)
+                if clip:
+                    clip.grade = result
+            self.check_safety(clip_id)
+            return result
         lead = (hook[1] - hook[0]) / facts["speed"] if hook else 0.0
 
         def at(t: float) -> float:
@@ -855,6 +870,7 @@ class Pipeline:
                              views=facts["views"], likes=facts["likes"], shares=facts["shares"], posted_at=facts["posted_at"],
                              stream_clip=facts["stream_clip"]).to_dict()
         with self.ctx.db.session() as s:
+            result["screen"] = screen.check(words, length, screen.learned(s))  # watchable on its own? (held back if not)
             clip = s.get(Clip, clip_id)
             if clip:
                 clip.grade = result
@@ -913,15 +929,54 @@ class Pipeline:
             if not proc.viral_preedit:
                 return {"skipped": "off"}
             edited = {int(x) for x in s.scalars(select(AuditLog.entity_id).where(AuditLog.action == "clip.edited")) if x.isdigit()}
-            ids = [c.id for c in s.scalars(select(Clip).where(Clip.status == "ready")) if c.id not in edited
-                   and (c.edit or {}).get("preedit_version", 1 if (c.edit or {}).get("preedited") else 0) < preedit.VERSION]
+            old = [c for c in s.scalars(select(Clip).where(Clip.status == "ready"))
+                   if (c.edit or {}).get("preedit_version", 1 if (c.edit or {}).get("preedited") else 0) < preedit.VERSION]
+            ids = [c.id for c in old if c.id not in edited]
+            mine = [c.id for c in old if c.id in edited]
         done = 0
-        for cid in ids:
+        for cid in ids:  # cut again from all the footage kept with it, to the current rules (length, setup, headline)
             try:
-                done += self.preedit_clip(cid, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first)
+                self.widen_clip(cid)
+                done += self.preedit_clip(cid, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first, redo=True)
             except Exception:
                 log.exception("pre-edit failed for clip %s; it keeps its current edit", cid)
-        return {"preedited": done}
+        for cid in mine:  # your edit stays; it's only screened again
+            try:
+                self.grade_clip(cid)
+            except Exception:
+                log.exception("re-grading clip %s failed", cid)
+        return {"preedited": done, "screened": len(mine)}
+
+    def widen_clip(self, cid: int) -> bool:
+        """A clip shorter than the minimum gets more of the stream around it, from the footage kept with it (stream
+        clips keep 8 s before the moment and 3 s after), mostly before it: that's the setup. Its words are heard
+        again so the captions cover the new part."""
+        with self.ctx.db.session() as s:
+            clip = s.get(Clip, cid)
+            if not clip or not clip.source_path or not Path(clip.source_path).exists():
+                return False
+            source, base, dur = Path(clip.source_path), clip.source_start or 0.0, clip.source_duration or 0.0
+            least = screen.learned(s)["min_seconds"]
+            hints = [clip.creator.name] if clip.creator else []
+        if dur >= least:
+            return False
+        total = probe(source).duration or base + dur
+        pre = min(base, least - dur + 2.0)
+        post = min(max(0.0, total - base - dur), max(0.0, least - dur - pre + 1.0))
+        if pre + post < 1.0:
+            return False
+        work = self._dir("tmp") / f"widen-{cid}-{random.randrange(1 << 30)}"
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            words, _ = self._transcribe(source, base - pre, dur + pre + post, work, hints)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        if not words:
+            return False  # without the words, captions would stop short: leave it
+        with self.ctx.db.session() as s:
+            clip = s.get(Clip, cid)
+            clip.source_start, clip.source_duration, clip.words = round(base - pre, 3), round(dur + pre + post, 3), [w.to_dict() for w in words]
+        return True
 
     def preedit_clip(self, cid: int, sound: bool = True, choice: str = "", hook: bool = True, redo: bool = False) -> int:
         """redo: cut and title it again from the whole footage (a campaign's rules changed what it should be)."""
@@ -934,6 +989,9 @@ class Pipeline:
             if redo:
                 e.update(start=base, end=base + (clip.source_duration or 0.0), preedited=False, preedit_version=0, sounds=[], hook=None, punch=None)
             rules = campaigns.clip_rules_of(s, clip)
+            lim = screen.learned(s)  # the length you've taught it, inside any campaign's own rules
+            min_s = max(rules["min_seconds"] or 0, lim["min_seconds"])
+            max_s = min(rules["max_seconds"] or lim["max_seconds"], lim["max_seconds"])
             words = [Word(w["start"] - (e["start"] - base), w["end"] - (e["start"] - base), w["text"]) for w in clip.words or []]
             source = Path(clip.source_path)
             ref = clip.reference
@@ -941,7 +999,7 @@ class Pipeline:
             creator = clip.creator.name if clip.creator else ""
         db = self._loudness(source, e["start"], e["end"] - e["start"])
         title, quote = titles.make_title(words, creator, preedit.peak_moment(db, 0, e["end"] - e["start"]), rules["overlay_mentions"])
-        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, rules["min_seconds"], rules["max_seconds"])).model_dump()
+        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s)).model_dump()
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             clip.edit, clip.title = new, title
@@ -954,6 +1012,8 @@ class Pipeline:
                                                        rules=campaigns.caption_rules(s, clip))
                 o.video_title = title
                 o.render_state, o.render_error = "rendering", None
+                if redo and o.review == "approved":  # a new cut needs a new look before it's posted
+                    o.review, o.review_note, o.reviewed_by = "pending", "Re-cut to the new rules: watch it again", ""
             s.flush()
             if outs:
                 self.ctx.jobs.enqueue("clip.rerender", {"output_ids": [o.id for o in outs]}, max_attempts=1, session=s)
@@ -1054,17 +1114,18 @@ class Pipeline:
                     s.flush()
                     unused = [p for p in set(olds) if p and not s.scalar(select(func.count()).select_from(ClipOutput).where(ClipOutput.file_path == p))]
                 if not kept:
-                    out.unlink(missing_ok=True)
-                    out.with_suffix(".jpg").unlink(missing_ok=True)
+                    files.remove_video(out)
                 for p in unused:
-                    Path(p).unlink(missing_ok=True)
-                    Path(p).with_suffix(".jpg").unlink(missing_ok=True)
+                    files.remove_video(p)
                 done += kept
-            except FFmpegError as e:
+            except Exception as e:  # never left on "rendering": it fails with the reason, and the other pages carry on
+                log.exception("re-render failed for outputs %s", ids)
+                msg = str(e)[:300] if isinstance(e, FFmpegError) else f"The re-render failed ({type(e).__name__}: {str(e)[:200]}). Save your edit again to retry."
                 with self.ctx.db.session() as s:
                     for oid in ids:
                         x = s.get(ClipOutput, oid)
-                        x.render_state, x.render_error = "failed", str(e)[:300]
+                        if x:
+                            x.render_state, x.render_error = "failed", msg
             finally:
                 shutil.rmtree(work, ignore_errors=True)
         for clip_id in {json.loads(k)[0] for k in groups}:
@@ -1083,6 +1144,77 @@ class Pipeline:
         with self.ctx.db.session() as s:
             s.add(MetricSnapshot(output_id=output_id, views=post.views, likes=post.likes, comments=post.comments, shares=post.shares))
         return {"views": post.views}
+
+    def detect_posts(self) -> dict:
+        """Find what was posted on your TikTok and YouTube pages and link each post to its clip, so Analytics
+        tracks it with no link pasted by hand. A post is matched only to an approved video on that same page that
+        has no link yet, by its caption (TikTok) or title (YouTube): Vyral's caption starts with the clip's title,
+        so a post made from the posting package matches it closely. Instagram, Facebook and X can't be read without
+        logging in: Muse's mark_posted links those."""
+        from difflib import SequenceMatcher
+
+        from .api.analytics import link_post
+
+        def norm(text: str) -> str:
+            return " ".join(re.sub(r"#\w+|[^\w\s']", " ", (text or "").lower()).split())[:120]
+
+        with self.ctx.db.session() as s:
+            pages = [(d.id, d.platform, d.handle.lstrip("@")) for d in s.scalars(select(DestinationAccount).where(
+                DestinationAccount.enabled.is_(True), DestinationAccount.platform.in_(("tiktok", "youtube")))).unique() if d.handle]
+        linked = 0
+        for did, platform, handle in pages:
+            try:
+                posts = self.ctx.fetcher.recent_posts(platform, handle, f"https://www.youtube.com/@{handle}", 20)
+            except FetchError as e:
+                log.info("couldn't read @%s's posts on %s: %s", handle, platform, e)
+                continue
+            with self.ctx.db.session() as s:
+                known = {(o.post_url or "").split("?")[0].rstrip("/") for o in s.scalars(select(ClipOutput).where(ClipOutput.post_url.is_not(None)))}
+                waiting = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.destination_id == did, ClipOutput.post_url.is_(None),
+                                                                         ClipOutput.review == "approved")).unique()]
+                for p in posts:
+                    if not waiting or p.url.split("?")[0].rstrip("/") in known or not norm(p.title):
+                        continue
+                    said = norm(p.title)
+                    score, o = max(((max(SequenceMatcher(None, said, norm(x.description)).ratio(),
+                                         SequenceMatcher(None, said[:len(norm(x.title)) + 10], norm(x.title)).ratio()), x) for x in waiting),
+                                   key=lambda z: z[0])
+                    if score < 0.75:
+                        continue
+                    try:
+                        link_post(s, self.ctx.jobs, o, p.url, "auto-detected")
+                    except Exception as e:  # a link on the wrong platform: skip it, never stop the rest
+                        log.info("auto-detected post %s not linked: %s", p.url, e)
+                        continue
+                    o.post_check = {"status": "verified", "url": p.url, "at": now().isoformat(), "by": "auto-detected",
+                                    "posted_by": handle, "post_caption": (p.title or "")[:200]}  # found on the page itself
+                    waiting.remove(o)
+                    linked += 1
+        return {"linked": linked}
+
+    def verify_posts(self) -> dict:
+        """Links that couldn't be opened when they were recorded (TikTok, YouTube) are checked again. One that turns
+        out not to be a live post on that page is taken back: the video goes back to waiting, and you're told."""
+        from .posting import CHECKABLE, check_post
+
+        with self.ctx.db.session() as s:
+            ids = [o.id for o in s.scalars(select(ClipOutput).where(ClipOutput.post_url.is_not(None), ClipOutput.platform.in_(CHECKABLE))).unique()
+                   if (o.post_check or {}).get("status") == "unverified"]
+        refused = 0
+        for oid in ids:
+            with self.ctx.db.session() as s:
+                o = s.get(ClipOutput, oid)
+                chk = {**check_post(s, self.ctx.fetcher, o, o.post_url), "by": (o.post_check or {}).get("by", "")}
+                o.post_check = chk
+                if chk["status"] == "failed":
+                    title = s.get(Clip, o.clip_id).title
+                    o.post_url, o.status, o.uploaded_at = None, "ready", None
+                    audit(s, "post.claim_refused", "output", oid, {"by": chk["by"], "url": chk["url"], "reason": chk["reason"]})
+                    refused += 1
+            if chk["status"] == "failed":
+                events.emit(self.ctx, "approvals", f"Not actually posted: {title}", body=f"{chk['by'] or 'Someone'} recorded {chk['url']}, but {chk['reason']}. "
+                            "It's back in Ready to Upload.", dedupe_key=f"claim:{oid}:{chk['url']}", data={"output_id": oid})
+        return {"checked": len(ids), "refused": refused}
 
     def refresh_metrics(self) -> dict:
         """Every few hours: refresh numbers for posts uploaded in the last 60 days."""
@@ -1105,30 +1237,31 @@ class Pipeline:
         with self.ctx.db.session() as s:
             days = load_settings(s).storage.retention_days
             cutoff = now() - timedelta(days=days)
-            expired = 0
+            expired, gone = 0, []  # files are deleted after the database is saved: a slow or locked delete holds nothing up
             for clip in s.scalars(select(Clip).where(Clip.status == "ready", Clip.expires_at <= now())).unique():
                 for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id)).unique():
                     if o.file_path:
-                        Path(o.file_path).unlink(missing_ok=True)
-                        Path(o.file_path).with_suffix(".jpg").unlink(missing_ok=True)
+                        gone += [o.file_path, str(Path(o.file_path).with_suffix(".jpg"))]
                     o.file_path, o.status = None, "expired"
                 if clip.files_dir:
-                    shutil.rmtree(clip.files_dir, ignore_errors=True)  # renders + the kept source cut
+                    gone.append(clip.files_dir)  # renders + the kept source cut
                 clip.status, clip.source_path = "expired", None
                 expired += 1
             vods = 0
             for v in s.scalars(select(VodAsset).where(VodAsset.last_used_at <= cutoff)):
                 if v.features_path:
-                    Path(v.features_path).unlink(missing_ok=True)
+                    gone.append(v.features_path)
                 s.delete(v)
                 vods += 1
             # Finished background jobs are only useful for a few days of history.
             s.execute(delete(Job).where(Job.status.in_(("succeeded", "cancelled", "failed")), Job.finished_at <= now() - timedelta(days=7)))
+        for p in gone:
+            files.remove(p)
         tmp = self.media / "tmp"
         if tmp.exists():
             for p in tmp.iterdir():
                 if datetime.fromtimestamp(p.stat().st_mtime, timezone.utc) < now() - timedelta(hours=12):
-                    shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
+                    files.remove(p)
         return {"clips_expired": expired, "streams_forgotten": vods, "events_forgotten": events.cleanup(self.ctx)}
 
 
@@ -1182,11 +1315,15 @@ def register(ctx: Any) -> Pipeline:
     q.register("clip.rerender", lambda jc, pl: p.rerender(pl["output_ids"]))
     q.register("metrics.fetch", lambda jc, pl: p.fetch_metrics(pl["output_id"]))
     q.register("metrics.refresh", lambda jc, pl: p.refresh_metrics())
+    q.register("posts.detect", lambda jc, pl: p.detect_posts())
+    q.every("posts.detect", 30 * 60)
+    q.register("posts.verify", lambda jc, pl: p.verify_posts())
+    q.every("posts.verify", 60 * 60)
     q.every("metrics.refresh", 3 * 3600)
     q.every("monitor.tick", 60)
     q.every("storage.cleanup", 6 * 3600)
     q.heavy = {"clip.build", "clip.rerender", "longform.make"}
-    q.needs_network = {"clip.build", "longform.make", "intake.link", "source.check", "monitor.tick", "metrics.fetch", "metrics.refresh", "notify.discord"}
+    q.needs_network = {"clip.build", "longform.make", "intake.link", "source.check", "monitor.tick", "metrics.fetch", "metrics.refresh", "notify.discord", "posts.detect", "posts.verify"}
     # How long a job may go without any progress (a step finished, data downloaded) before it's given up on.
     # Long searches are fine as long as they keep moving.
     q.time_limits = {"longform.make": 20 * 60, "clip.build": 20 * 60, "clip.rerender": 20 * 60, "intake.link": 10 * 60, "source.check": 10 * 60}

@@ -11,7 +11,9 @@ from there.
   Videos made before Dropbox was connected go up with Sync all.
 - File name: the clip's folder, like ref31-1795094064762.mp4. If that name is taken by a file with the same size and
   content, it's skipped. If it's taken by a different file, -2, -3 and so on are added. Nothing in Dropbox is ever
-  overwritten. A copy of a video that is already up (the save folder holds copies) isn't sent twice.
+  overwritten. A copy of a video that is already up (the save folder holds copies) isn't sent twice, and neither is
+  a clip another computer signed in to the same Dropbox already sent for the same page: a shared list in the
+  folder (.vyral/uploaded.json) says which clip went up as which file.
 - Uploading: the file's bytes as they are. Nothing is re-encoded, resized or re-muxed. They go in 8 MB pieces
   through an upload session, each piece checked by Dropbox against its hash. A dropped connection carries on from
   the last piece Dropbox has, and nothing shows in Dropbox until the last piece is in. The finished file is then
@@ -29,6 +31,7 @@ import json
 import logging
 import re
 import secrets as pysecrets
+import socket
 import threading
 import time
 import urllib.parse
@@ -42,7 +45,7 @@ from sqlalchemy.orm import Session
 from . import net
 from .api.system import load_settings, save_folder
 from .audit import audit
-from .models import ClipOutput, DropboxUpload, Setting
+from .models import Clip, ClipOutput, DropboxUpload, Setting
 
 log = logging.getLogger("clippr.dropbox")
 
@@ -60,6 +63,8 @@ CONTENT = "https://content.dropboxapi.com/2"
 NEEDED = {"files.content.write", "files.content.read", "files.metadata.read"}
 CHUNK = 8 * 1024 * 1024  # each upload piece; a multiple of Dropbox's 4 MB hash block
 BLOCK = 4 * 1024 * 1024
+LEDGER = ".vyral/uploaded.json"  # in the Dropbox folder: which clip went up as which file, from every computer
+DEVICE = socket.gethostname() or "this computer"
 STABLE_SECONDS = 6  # a file's size must hold still this long before it's sent
 SCAN_EVERY = 5  # seconds between looks for new videos
 LOGIN_SECONDS = 600
@@ -174,7 +179,7 @@ class Client:
             self._token, self._expires = j["access_token"], time.monotonic() + float(j.get("expires_in", 14400))
         return self._token
 
-    def call(self, host: str, route: str, args: dict | None = None, data: bytes | None = None) -> dict:
+    def call(self, host: str, route: str, args: dict | None = None, data: bytes | None = None, raw: bool = False):
         for renew in (False, True):
             headers = {"Authorization": f"Bearer {self._access(renew)}"}
             if host == CONTENT:
@@ -200,8 +205,26 @@ class Client:
                 raise DropboxError(f"Dropbox is busy ({r.status_code}); trying again shortly")
             if r.status_code != 200:
                 raise DropboxError(f"Dropbox refused the request ({r.status_code}): {r.text[:200]}")
+            if raw:
+                return r
             return r.json() if r.content else {}
         raise AuthError("Dropbox sign-in failed")
+
+    def download(self, path: str) -> tuple[bytes, str] | None:
+        """A small file's bytes and revision, or None if there's no such file."""
+        try:
+            r = self.call(CONTENT, "files/download", {"path": path}, raw=True)
+        except ApiError as e:
+            if "not_found" in e.summary:
+                return None
+            raise
+        return r.content, json.loads(r.headers.get("dropbox-api-result", "{}")).get("rev", "")
+
+    def put(self, path: str, data: bytes, rev: str | None) -> dict:
+        """A small file, replacing revision rev only (a conflict if someone else changed it first); a new file if rev is None."""
+        mode = {".tag": "update", "update": rev} if rev else {".tag": "add"}
+        return self.call(CONTENT, "files/upload", {"path": path, "mode": mode, "autorename": False, "mute": True,
+                                                   "content_hash": hash_bytes(data)}, data)
 
     def account(self) -> dict:
         return self.call(API, "users/get_current_account")
@@ -246,7 +269,7 @@ class DropboxSync:
         self._seen: dict[str, tuple[int, float, float]] = {}  # path -> (size, mtime, first seen with them)
         self._scanned = 0.0
         self._login: dict | None = None
-        self._server: http.server.HTTPServer | None = None
+        self._server: http.server.ThreadingHTTPServer | None = None
         self._lock = threading.Lock()
 
     # ---------- lifecycle ----------
@@ -289,7 +312,8 @@ class DropboxSync:
                 error: OSError | None = None
                 for wait in (0.1, 0.3, 0.6, 1.0, 0):  # the last sign-in's listener may still be closing
                     try:
-                        self._server = http.server.HTTPServer(("127.0.0.1", REDIRECT_PORT), self._handler())
+                        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", REDIRECT_PORT), self._handler())
+                        self._server.daemon_threads = True  # a browser's idle extra connection can't hold up the real reply
                         break
                     except OSError as e:
                         error = e
@@ -298,18 +322,20 @@ class DropboxSync:
                     raise DropboxError(f"Vyral couldn't listen on 127.0.0.1:{REDIRECT_PORT} for Dropbox's reply "
                                        f"({getattr(error, 'strerror', None) or error}). Close whatever is using that port and try again.")
                 threading.Thread(target=self._server.serve_forever, name="dropbox-login", daemon=True).start()
-                timer = threading.Timer(LOGIN_SECONDS, self._close_listener, (self._server,))
-                timer.daemon = True
-                timer.start()
             self._login = login
+        timer = threading.Timer(LOGIN_SECONDS + 1, self._expire)  # each sign-in gets its full 10 minutes
+        timer.daemon = True
+        timer.start()
         return AUTH_URL + "?" + urllib.parse.urlencode({
             "client_id": app_key, "response_type": "code", "code_challenge": challenge, "code_challenge_method": "S256",
             "token_access_type": "offline", "redirect_uri": REDIRECT_URI, "state": login["state"]})
 
-    def _close_listener(self, only=None) -> None:
+    def _expire(self) -> None:
+        if not self.connecting():  # a newer sign-in that's still open keeps the listener
+            self._close_listener()
+
+    def _close_listener(self) -> None:
         with self._lock:
-            if only is not None and self._server is not only:
-                return  # an older sign-in's timer: the listener now open belongs to a newer one
             server, self._server = self._server, None
         if server:
             threading.Thread(target=lambda: (server.shutdown(), server.server_close()), daemon=True).start()
@@ -348,7 +374,7 @@ class DropboxSync:
         """Dropbox's reply to the browser: check it's the sign-in Vyral started, then trade the code for tokens, once.
         Every step's outcome is logged (never the code or the tokens) and a failure shows Dropbox's own error."""
         login = self._login
-        if not login or time.monotonic() > login["until"] or not pysecrets.compare_digest(q.get("state", ""), login["state"]):
+        if not login or time.monotonic() > login["until"] or not pysecrets.compare_digest(q.get("state", "").encode(), login["state"].encode()):
             return self._failed("This sign-in link is old or wasn't started by Vyral. Press Connect in Vyral's Settings to start a new one.")
         self._login = None  # the code is traded exactly once: a repeat of this page can't trade it again
         self._close_listener()
@@ -543,6 +569,14 @@ class DropboxSync:
                     return
             if digest != old_hash or not target:
                 session_id, offset = None, 0  # the file changed, or nothing was started: start over
+            key = self._clip_key(uid)
+            if key and not session_id:  # this clip for this page was already sent from another computer?
+                entry = self._ledger(client, folder)[0].get(key)
+                # Only another computer's copy counts: here, a newer file for the same clip is its edited or re-cut version.
+                if entry and entry.get("device") != DEVICE and client.metadata(entry["path"]):
+                    with self.ctx.db.session() as s:
+                        self._done(s, s.get(DropboxUpload, uid), entry["path"], f"already uploaded from {entry.get('device') or 'another computer'}")
+                    return
             if not session_id:
                 target, already = self._free_path(client, folder, name, size, digest)
                 if already:
@@ -557,15 +591,20 @@ class DropboxSync:
                 raise DropboxError("The copy in Dropbox didn't match the file on this computer, so it was deleted and will be sent again.")
             with self.ctx.db.session() as s:
                 self._done(s, s.get(DropboxUpload, uid), target, "uploaded")
+            if key:
+                try:
+                    self._remember(client, folder, key, target, digest)
+                except (DropboxError, httpx.HTTPError) as e:  # the video is up and verified; only the shared list missed it
+                    log.warning("couldn't add %s to the shared Dropbox upload list: %s", target, e)
             log.info("uploaded %s to Dropbox (%d bytes, verified)", path.name, size)
         except AuthError as e:
             self._client = None
             with self.ctx.db.session() as s:
                 _save_state(s, needs_reconnect=True, error=str(e))
                 s.get(DropboxUpload, uid).status = "queued"  # waits for Dropbox to be connected again
-        except (DropboxError, httpx.HTTPError, OSError) as e:
+        except Exception as e:  # anything else (a proxy's web page instead of Dropbox's answer, say): retried, never stuck
             msg = str(e) if isinstance(e, DropboxError) else "The connection to Dropbox dropped." if isinstance(e, httpx.TransportError) \
-                else f"Dropbox upload failed ({type(e).__name__})"
+                else f"Dropbox upload failed ({type(e).__name__}: {str(e)[:120]})"
             with self.ctx.db.session() as s:
                 r = s.get(DropboxUpload, uid)
                 if isinstance(e, ApiError) and (_correct_offset(e.error) is None or "conflict" in e.summary):
@@ -579,6 +618,48 @@ class DropboxSync:
         r.status, r.dropbox_path, r.error, r.next_try_at, r.attempts = "uploaded", dropbox_path, None, None, 0
         r.session_id, r.session_offset, r.uploaded_at = None, 0, datetime.now(timezone.utc)
         audit(s, "dropbox.uploaded", "output", r.output_id or "", {"path": dropbox_path, "how": how})
+
+    # ---------- the shared list (every computer signed in to this Dropbox) ----------
+    def _clip_key(self, uid: int) -> str | None:
+        """Which clip and page this file is, the same on every computer: the post or stream moment it came from,
+        and the page it's for."""
+        with self.ctx.db.session() as s:
+            r = s.get(DropboxUpload, uid)
+            o = s.get(ClipOutput, r.output_id) if r and r.output_id else None
+            clip = s.get(Clip, o.clip_id) if o else None
+            if not clip:
+                return None
+            ref = clip.reference
+            if ref and ref.url:
+                moment = ref.url.split("?")[0].rstrip("/")
+            elif clip.vod_url and clip.vod_start is not None:
+                moment = f"{clip.vod_url.split('?')[0]}#{round(clip.vod_start)}"
+            else:
+                return None
+            page = f"{o.destination.platform}:{o.destination.handle.lstrip('@').lower()}" if o.destination else o.platform
+            return f"{moment}|{page}"
+
+    def _ledger(self, client: Client, folder: str) -> tuple[dict, str | None]:
+        got = client.download(f"{folder.rstrip('/')}/{LEDGER}")
+        if not got:
+            return {}, None
+        try:
+            return dict(json.loads(got[0]).get("clips") or {}), got[1]
+        except (ValueError, AttributeError):
+            log.warning("the shared Dropbox upload list is unreadable; starting a new one")
+            return {}, got[1]
+
+    def _remember(self, client: Client, folder: str, key: str, path: str, digest: str) -> None:
+        for _ in range(4):  # another computer may write it at the same moment: read again and retry
+            clips, rev = self._ledger(client, folder)
+            clips[key] = {"path": path, "hash": digest, "device": DEVICE, "at": datetime.now(timezone.utc).isoformat()}
+            try:
+                client.put(f"{folder.rstrip('/')}/{LEDGER}", json.dumps({"clips": clips}, indent=1).encode(), rev)
+                return
+            except ApiError as e:
+                if "conflict" not in e.summary:
+                    raise
+        log.warning("couldn't update the shared Dropbox upload list for %s", key)
 
     @staticmethod
     def _free_path(client: Client, folder: str, name: str, size: int, digest: str) -> tuple[str, bool]:
