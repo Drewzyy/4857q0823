@@ -81,16 +81,39 @@ def test_clear_all_needs_the_phrase_and_removes_every_clip(ctx, client, tmp_path
     assert client.get("/api/clips").json() == [] and not (tmp_path / "c0").exists()
 
 
-def test_posts_on_your_page_are_linked_to_their_clips(ctx, tmp_path, monkeypatch):
+def test_posts_on_your_page_are_linked_to_their_clips_by_length(ctx, tmp_path, monkeypatch):
+    from clippr.media.ffmpeg import run
     _clip(ctx, tmp_path)
-    posts = [RemotePost("1", "https://www.tiktok.com/@mypage/video/1", "Kai could not stop laughing at the chat 1 😭 #kai"),
-             RemotePost("2", "https://www.tiktok.com/@mypage/video/2", "something else entirely")]
-    monkeypatch.setattr(ctx.fetcher, "recent_posts", lambda *a, **k: posts, raising=False)
-    assert ctx.pipeline.detect_posts() == {"linked": 1}
+    for i, secs in enumerate((12, 20)):  # two clips, same caption style: told apart by their length
+        run(["-y", "-f", "lavfi", "-i", f"color=c=gray:size=64x64:rate=10:duration={secs}", "-c:v", "libx264", "-preset", "ultrafast",
+             "-f", "mp4", str(tmp_path / f"c{i}" / "render-0.mp4")])
+    later = datetime.now(timezone.utc) + timedelta(minutes=5)
+    listed = [RemotePost("1", "https://www.tiktok.com/@mypage/video/1", "@kai #kai #fyp"),  # the page list has no lengths
+              RemotePost("2", "https://www.tiktok.com/@mypage/video/2", "@kai #kai #fyp", posted_at=later, duration=33)]
+    full = {"https://www.tiktok.com/@mypage/video/1": RemotePost("1", "https://www.tiktok.com/@mypage/video/1", "@kai #kai #fyp",
+                                                                 posted_at=later, duration=20.3)}
+    monkeypatch.setattr(ctx.fetcher, "recent_posts", lambda *a, **k: listed, raising=False)
+    monkeypatch.setattr(ctx.fetcher, "post_details", lambda url: full[url], raising=False)
+    assert ctx.pipeline.detect_posts() == {"linked": 1}  # the 33 s post matches no clip
     with ctx.db.session() as s:
         linked = [o for o in s.query(ClipOutput).all() if o.post_url]
         assert len(linked) == 1 and linked[0].post_url.endswith("/video/1") and linked[0].status == "uploaded"
+        assert linked[0].file_path.endswith("c1/render-0.mp4") and linked[0].post_check["by"] == "auto-detected"
     assert ctx.pipeline.detect_posts() == {"linked": 0}  # never linked twice
+
+
+def test_captions_tag_the_streamers_channel_not_their_name(ctx):
+    from clippr.models import Creator, SourceAccount
+    from clippr.pipeline import streamer_handle
+    with ctx.db.session() as s:
+        c = Creator(name="Jason Levine")
+        s.add(c)
+        s.flush()
+        assert streamer_handle(c) == "Jason Levine"  # nothing else known yet
+        s.add(SourceAccount(platform="twitch", username="jasontheween", profile_url="https://www.twitch.tv/jasontheween",
+                            creator_id=c.id, creator_ids=[c.id]))
+        s.flush()
+        assert streamer_handle(c) == "jasontheween"
 
 
 def test_a_post_link_must_open_a_live_post_on_that_page(ctx, client, tmp_path, monkeypatch):

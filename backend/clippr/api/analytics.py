@@ -166,3 +166,10 @@ def analytics(days: int = 30, platform: str | None = None, creator_id: int | Non
                  "comments": snaps[o.id].comments, "shares": snaps[o.id].shares, "updated": snaps[o.id].ts.isoformat()} for o in top],
         "timeline": [{"day": d, **v} for d, v in sorted(by_day.items())],
     }
+
+
+@router.post("/posted/detect")
+def detect_now(c=Depends(ctx)):
+    """Look on your TikTok and YouTube pages for new posts now, instead of waiting for the half-hourly check."""
+    c.jobs.enqueue("posts.detect", {}, max_attempts=1)
+    return {"queued": True}

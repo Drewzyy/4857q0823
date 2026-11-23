@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from sqlalchemy.orm import object_session
 from sqlalchemy import delete, func, select
 
 from . import campaigns, content, describe, events, files, grade, identify, moments, notify, preedit, safety, screen, titles
@@ -950,8 +951,11 @@ class Pipeline:
             edited = {int(x) for x in s.scalars(select(AuditLog.entity_id).where(AuditLog.action == "clip.edited")) if x.isdigit()}
             old = [c for c in s.scalars(select(Clip).where(Clip.status == "ready"))
                    if (c.edit or {}).get("preedit_version", 1 if (c.edit or {}).get("preedited") else 0) < preedit.VERSION]
-            ids = [c.id for c in old if c.id not in edited]
-            mine = [c.id for c in old if c.id in edited]
+            # You asked for every clip to be redone to your answers (version 10), the ones you edited too; after that,
+            # your edits win again and edited clips are only screened.
+            redo_all = [c.id for c in old if (c.edit or {}).get("preedit_version", 0) < preedit.REDO_EDITED_BELOW]
+            ids = [c.id for c in old if c.id not in edited or c.id in redo_all]
+            mine = [c.id for c in old if c.id in edited and c.id not in redo_all]
         done = 0
         for cid in ids:  # cut again from all the footage kept with it, to the current rules (length, setup, headline)
             try:
@@ -1170,41 +1174,64 @@ class Pipeline:
         return {"views": post.views}
 
     def detect_posts(self) -> dict:
-        """Find what was posted on your TikTok and YouTube pages and link each post to its clip, so Analytics
-        tracks it with no link pasted by hand. A post is matched only to an approved video on that same page that
-        has no link yet, by its caption (TikTok) or title (YouTube): Vyral's caption starts with the clip's title,
-        so a post made from the posting package matches it closely. Instagram, Facebook and X can't be read without
-        logging in: Muse's mark_posted links those."""
+        """Find what was posted on your TikTok and YouTube pages and link each post to its clip: the clip is marked
+        uploaded and its link fills in, so Analytics tracks its views with nothing pasted by hand.
+        A post is matched to a video on that same page with no link yet, made before the post went up, of the same
+        length (to within a second: captions are now just the @ and hashtags, so most clips of one streamer read
+        the same). If several fit, an approved one wins, then the one whose caption matches, then the latest made.
+        Instagram, Facebook and X can't be read without logging in: Muse's mark_posted links those."""
         from difflib import SequenceMatcher
 
         from .api.analytics import link_post
 
         def norm(text: str) -> str:
-            return " ".join(re.sub(r"#\w+|[^\w\s']", " ", (text or "").lower()).split())[:120]
+            return " ".join(re.sub(r"[^\w\s#@']", " ", (text or "").lower()).split())[:200]
 
         with self.ctx.db.session() as s:
             pages = [(d.id, d.platform, d.handle.lstrip("@")) for d in s.scalars(select(DestinationAccount).where(
                 DestinationAccount.enabled.is_(True), DestinationAccount.platform.in_(("tiktok", "youtube")))).unique() if d.handle]
+        lengths: dict[str, float | None] = {}
+
+        def length(path: str | None) -> float | None:
+            if path and path not in lengths:
+                try:
+                    lengths[path] = probe(Path(path)).duration if Path(path).exists() else None
+                except FFmpegError:
+                    lengths[path] = None
+            return lengths.get(path) if path else None
+
         linked = 0
         for did, platform, handle in pages:
             try:
-                posts = self.ctx.fetcher.recent_posts(platform, handle, f"https://www.youtube.com/@{handle}", 20)
+                posts = self.ctx.fetcher.recent_posts(platform, handle, f"https://www.youtube.com/@{handle}", 30)
             except FetchError as e:
                 log.info("couldn't read @%s's posts on %s: %s", handle, platform, e)
                 continue
             with self.ctx.db.session() as s:
                 known = {(o.post_url or "").split("?")[0].rstrip("/") for o in s.scalars(select(ClipOutput).where(ClipOutput.post_url.is_not(None)))}
+            fresh = []
+            for p in posts:  # a page's list may leave out each post's length and time: those are read from the post itself
+                if p.url.split("?")[0].rstrip("/") in known:
+                    continue
+                if not p.duration or not p.posted_at:
+                    try:
+                        p = self.ctx.fetcher.post_details(p.url)
+                    except FetchError:
+                        continue
+                fresh.append(p)
+            posts = fresh
+            with self.ctx.db.session() as s:
                 waiting = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.destination_id == did, ClipOutput.post_url.is_(None),
-                                                                         ClipOutput.review == "approved")).unique()]
-                for p in posts:
-                    if not waiting or p.url.split("?")[0].rstrip("/") in known or not norm(p.title):
+                                                                         ClipOutput.status == "ready", ClipOutput.render_state == "ready")).unique()]
+                for p in sorted(posts, key=lambda x: x.posted_at or now()):  # oldest first: each post takes the clip made just before it
+                    if not waiting:
+                        break
+                    fits = [o for o in waiting if (p.posted_at is None or o.created_at <= p.posted_at)
+                            and p.duration and (n := length(o.file_path)) and abs(n - p.duration) <= 1.0]
+                    if not fits:
                         continue
-                    said = norm(p.title)
-                    score, o = max(((max(SequenceMatcher(None, said, norm(x.description)).ratio(),
-                                         SequenceMatcher(None, said[:len(norm(x.title)) + 10], norm(x.title)).ratio()), x) for x in waiting),
-                                   key=lambda z: z[0])
-                    if score < 0.75:
-                        continue
+                    o = max(fits, key=lambda x: (x.review == "approved", SequenceMatcher(None, norm(p.title), norm(x.description)).ratio() > 0.8,
+                                                 x.created_at))
                     try:
                         link_post(s, self.ctx.jobs, o, p.url, "auto-detected")
                     except Exception as e:  # a link on the wrong platform: skip it, never stop the rest
@@ -1290,10 +1317,17 @@ class Pipeline:
 
 
 def streamer_handle(creator) -> str:
-    """The streamer's channel name (twitch.tv/jasontheween -> jasontheween) for @ and # in captions, or their name."""
+    """The streamer's channel name for @ and # in captions (Jason -> jasontheween, never "jasonlevine"): from their
+    stream link, else their own Twitch or Kick source account, else (only if neither is known) their name."""
     if not creator:
         return ""
-    return next((h for h in map(identify.channel_handle, creator.vod_channels or []) if h), creator.name)
+    found = next((h for h in map(identify.channel_handle, creator.vod_channels or []) if h), "")
+    s = object_session(creator)
+    if not found and s is not None:
+        own = [a for a in s.scalars(select(SourceAccount).where(SourceAccount.platform.in_(("twitch", "kick")))).unique()
+               if (a.creator_ids or [a.creator_id]) == [creator.id]]  # their own channel, not a page that clips several
+        found = own[0].username if own else ""
+    return found or creator.name
 
 
 def _hms(sec: float) -> str:

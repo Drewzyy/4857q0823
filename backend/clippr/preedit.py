@@ -25,11 +25,13 @@ from . import titles
 from .grade import arousal
 from .media.facecam import CAM_SHARE
 
-VERSION = 9  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim.
+VERSION = 10  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim.
 # 6: at least 25 s with setup (screen.py), the headline at the top for the opening seconds only, then gone.
 # 7: titles written like a person (titles.py): the line said, lower case, no emoji or hype.
 # 8: a headline only when it adds something (a line said later in the clip); otherwise none.
-# 9: your answers: 35 s to 1:20 (aim 45 s to a minute), a 2-4 s hook, the reaction played out, caps headline
+# 9: your answers: 35 s to 1:20 (aim 45 s to a minute), a 2-4 s hook, the reaction played out, caps headline.
+# 10: captions tag the streamer's channel (@jasontheween); every waiting clip redone, edited ones too
+REDO_EDITED_BELOW = 10  # clips you edited are redone too when they're older than this
 STEP = 0.1
 LONGEST = 80.0      # trimmed when longer than this (what you asked for: 35 s to 1:20, most 45 s to a minute)
 TARGET = 52.0       # length of a trimmed clip: the whole setup and the reaction played out (a minute or more also earns money)

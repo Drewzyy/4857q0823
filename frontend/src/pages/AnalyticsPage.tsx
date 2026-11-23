@@ -128,14 +128,18 @@ export default function AnalyticsPage() {
 /** Every post link recorded or refused: proof each "posted" is a real, live post on the right page. */
 function PostedHistory() {
   const { data } = useQuery({ queryKey: ["posted"], queryFn: api.postedHistory, refetchInterval: 60_000 });
-  if (!data?.length) return null;
+  const [asked, setAsked] = useState(false);
+  if (!data) return null;
   const pill = { verified: <span className="pill ok">Live post, checked</span>, unverified: <span className="pill nodot">Not checked yet</span>,
     failed: <span className="pill warn">Refused: not a real post</span> };
   return (
     <div className="card" style={{ marginBottom: 16 }}>
-      <h2 style={{ marginBottom: 4 }}>Posted history</h2>
+      <div className="row"><h2 style={{ marginBottom: 4 }}>Posted history</h2><span className="spacer" />
+        <button className="btn sm" disabled={asked} onClick={async () => { await api.detectPosts(); setAsked(true); }}>{asked ? "Looking…" : "Find my posts now"}</button></div>
       <p className="small muted" style={{ marginTop: 0 }}>A video only counts as posted once its link opens a live post on that page. TikTok and YouTube links are checked;
-        Instagram, Facebook and X can't be opened without logging in, so they stay "not checked".</p>
+        Instagram, Facebook and X can't be opened without logging in, so they stay "not checked". Posts on your TikTok and YouTube pages
+        are found every 30 minutes and matched to their clip by length: the clip is marked uploaded and its link fills in.</p>
+      {data.length === 0 && <p className="small faint">Nothing posted yet.</p>}
       <table className="table"><thead><tr><th>When</th><th>Clip</th><th>Page</th><th>Said by</th><th>Proof</th><th>Link</th></tr></thead><tbody>
         {data.slice(0, 40).map((r) => (
           <tr key={`${r.output_id}-${r.at}`}><td className="small muted" style={{ whiteSpace: "nowrap" }}>{relTime(r.at)}</td>

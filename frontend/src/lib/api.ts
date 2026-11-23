@@ -288,6 +288,7 @@ export const api = {
   clearAllClips: (confirm: string) => request<{ deleted: number }>("POST", "/clips/clear-all", { confirm }),
   learned: () => request<Learned>("GET", "/learned"),
   postedHistory: () => request<PostedRow[]>("GET", "/posted"),
+  detectPosts: () => request<{ queued: boolean }>("POST", "/posted/detect"),
   resetLearned: () => request<Learned>("POST", "/learned/reset"),
   dropbox: () => request<DropboxState>("GET", "/dropbox"),
   connectDropbox: () => request<{ url: string }>("POST", "/dropbox/connect"),
