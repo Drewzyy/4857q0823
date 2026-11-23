@@ -54,8 +54,10 @@ AUTH_URL = "https://www.dropbox.com/oauth2/authorize"
 TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 API = "https://api.dropboxapi.com/2"
 CONTENT = "https://content.dropboxapi.com/2"
-# The only permissions asked for. No team scopes: Vyral works with a personal (Basic, Plus, Essentials) account only.
-SCOPES = "files.content.write files.content.read"
+# What the sign-in must grant, from the permissions ticked in your Dropbox app (files.metadata.read comes with the two
+# content ones). Any team scope, or a Dropbox Business account, is turned away: personal accounts only. No scope list
+# is sent with the sign-in: an explicit list leaves out account_info.read, which Dropbox needs to name the account.
+NEEDED = {"files.content.write", "files.content.read", "files.metadata.read"}
 CHUNK = 8 * 1024 * 1024  # each upload piece; a multiple of Dropbox's 4 MB hash block
 BLOCK = 4 * 1024 * 1024
 STABLE_SECONDS = 6  # a file's size must hold still this long before it's sent
@@ -106,6 +108,19 @@ def _correct_offset(err) -> int | None:
             if found is not None:
                 return found
     return None
+
+
+def _summary(r: httpx.Response) -> str:
+    """Dropbox's own words for an error: error_summary, or error and error_description, or the start of the body."""
+    try:
+        j = r.json()
+    except ValueError:
+        return r.text[:300] or "no details"
+    if j.get("error_summary"):
+        return str(j["error_summary"])
+    err = j.get("error")
+    err = err.get(".tag") if isinstance(err, dict) else err
+    return f"{err}: {j.get('error_description', '')}".strip(": ") or r.text[:300]
 
 
 def safe_name(name: str) -> str:
@@ -170,10 +185,14 @@ class Client:
                 r = self._http.post(f"{host}/{route}", headers=headers)
             else:
                 r = self._http.post(f"{host}/{route}", headers=headers, json=args)
-            if r.status_code == 401 and not renew:
-                continue  # the access token ran out early: renew it once
             if r.status_code == 401:
-                raise AuthError("Dropbox no longer accepts Vyral's sign-in. Connect Dropbox again in Settings.")
+                summary = _summary(r)
+                if "missing_scope" in summary:
+                    raise DropboxError(f"Dropbox says Vyral's app lacks a permission (HTTP 401, {summary}). Tick it under Permissions "
+                                       "in your Dropbox app, then connect again.")
+                if not renew:
+                    continue  # the access token ran out early: renew it once
+                raise AuthError(f"Dropbox no longer accepts Vyral's sign-in (HTTP 401, {summary}). Connect Dropbox again in Settings.")
             if r.status_code == 409:
                 j = r.json()
                 raise ApiError(j.get("error_summary", "conflict"), j.get("error"))
@@ -285,7 +304,7 @@ class DropboxSync:
             self._login = login
         return AUTH_URL + "?" + urllib.parse.urlencode({
             "client_id": app_key, "response_type": "code", "code_challenge": challenge, "code_challenge_method": "S256",
-            "token_access_type": "offline", "scope": SCOPES, "redirect_uri": REDIRECT_URI, "state": login["state"]})
+            "token_access_type": "offline", "redirect_uri": REDIRECT_URI, "state": login["state"]})
 
     def _close_listener(self, only=None) -> None:
         with self._lock:
@@ -320,40 +339,71 @@ class DropboxSync:
 
         return Handler
 
+    def _failed(self, message: str) -> tuple[bool, str]:
+        with self.ctx.db.session() as s:
+            _save_state(s, connect_error=message)
+        return False, message
+
     def finish_connect(self, q: dict) -> tuple[bool, str]:
-        """Dropbox's reply to the browser: check it's the sign-in Vyral started, then trade the code for tokens."""
+        """Dropbox's reply to the browser: check it's the sign-in Vyral started, then trade the code for tokens, once.
+        Every step's outcome is logged (never the code or the tokens) and a failure shows Dropbox's own error."""
         login = self._login
         if not login or time.monotonic() > login["until"] or not pysecrets.compare_digest(q.get("state", ""), login["state"]):
-            return False, "This sign-in link is old or wasn't started by Vyral. Press Connect in Vyral's Settings again."
-        self._login = None
+            return self._failed("This sign-in link is old or wasn't started by Vyral. Press Connect in Vyral's Settings to start a new one.")
+        self._login = None  # the code is traded exactly once: a repeat of this page can't trade it again
         self._close_listener()
         if q.get("error"):
-            return False, "Dropbox access wasn't allowed."
+            log.warning("Dropbox sign-in: Dropbox sent back error=%s %s", q.get("error"), q.get("error_description", ""))
+            return self._failed(f"Dropbox sent back: {q.get('error')}: {q.get('error_description', 'access not allowed')}")
+        form = {"code": q.get("code", ""), "grant_type": "authorization_code", "client_id": login["app_key"],
+                "code_verifier": login["verifier"], "redirect_uri": REDIRECT_URI}
+        log.info("Dropbox token exchange: POST %s (form: grant_type=authorization_code, client_id=%s, redirect_uri=%s, code %d chars, "
+                 "code_verifier %d chars)", TOKEN_URL, login["app_key"], REDIRECT_URI, len(form["code"]), len(form["code_verifier"]))
         try:
-            r = (self._http or httpx).post(TOKEN_URL, data={"code": q.get("code", ""), "grant_type": "authorization_code", "client_id": login["app_key"],
-                                                            "code_verifier": login["verifier"], "redirect_uri": REDIRECT_URI}, timeout=30)
-            if r.status_code != 200:
-                return False, f"Dropbox didn't accept the sign-in ({r.json().get('error_description', r.status_code) if r.content else r.status_code})."
+            r = (self._http or httpx).post(TOKEN_URL, data=form, timeout=30)
+        except httpx.HTTPError as e:
+            log.warning("Dropbox token exchange: no answer (%s: %s)", type(e).__name__, e)
+            return self._failed(f"Vyral's request to Dropbox got no answer ({type(e).__name__}: {e}). Press Connect to try again.")
+        log.info("Dropbox token exchange: HTTP %d", r.status_code)
+        if r.status_code != 200:
+            log.warning("Dropbox token exchange refused: HTTP %d %s", r.status_code, r.text[:1000])
+            return self._failed(f"Dropbox refused the sign-in (HTTP {r.status_code}, {_summary(r)}). Press Connect to start a new sign-in.")
+        try:
             j = r.json()
             client = Client(login["app_key"], j["refresh_token"], self._http)
             client._token, client._expires = j["access_token"], time.monotonic() + float(j.get("expires_in", 14400))
-            account = client.account()
-            business = account.get("team") or (account.get("account_type") or {}).get(".tag") == "business" \
-                or any(x.startswith("team") for x in str(j.get("scope", "")).split())
-            if business:  # not kept: Vyral only works with a personal Dropbox
-                client.revoke()
-        except (httpx.HTTPError, DropboxError, KeyError, ValueError) as e:
-            log.warning("Dropbox sign-in failed: %s", type(e).__name__)
-            return False, "Vyral couldn't reach Dropbox to finish signing in. Check the internet connection and try again."
-        if business:
-            return False, "That's a Dropbox Business (team) account. Vyral only connects to a personal Dropbox: sign in with your personal account."
+        except (ValueError, KeyError) as e:
+            log.warning("Dropbox token exchange: unexpected answer (%s; fields: %s)", type(e).__name__, sorted(j) if isinstance(j, dict) else "?")
+            return self._failed(f"Dropbox's answer had no refresh token ({type(e).__name__}). Press Connect to try again.")
+        granted = set(str(j.get("scope", "")).split())
+        log.info("Dropbox granted scopes: %s", " ".join(sorted(granted)) or "(not listed)")
+        team = sorted(x for x in granted if x.startswith("team"))
+        missing = sorted(NEEDED - granted) if granted else []
+        account: dict = {}
+        if not team and not missing:
+            try:
+                account = client.account()
+            except (httpx.HTTPError, DropboxError) as e:
+                log.warning("Dropbox account lookup failed: %s", e)  # connecting still works; the name is shown as unknown
+        business = bool(team or account.get("team") or (account.get("account_type") or {}).get(".tag") == "business")
+        if business or missing:
+            try:
+                client.revoke()  # not kept
+            except (httpx.HTTPError, DropboxError):
+                pass
+            if business:
+                return self._failed("That's a Dropbox Business (team) account or the app has team permissions. Vyral only connects to a "
+                                    "personal Dropbox with the file permissions: sign in with your personal account.")
+            return self._failed(f"Your Dropbox app doesn't give Vyral {', '.join(missing)}. Tick it under Permissions at "
+                                "dropbox.com/developers/apps, press Submit, then press Connect again.")
         self.ctx.secrets.set(SECRET_KEY, {"refresh_token": j["refresh_token"], "app_key": login["app_key"]})
         name = (account.get("name") or {}).get("display_name") or account.get("email") or "your Dropbox"
         with self.ctx.db.session() as s:
             st = state(s)
-            _save_state(s, connected=True, needs_reconnect=False, account=name, account_id=account.get("account_id"), error=None,
-                        since=st.get("since") or datetime.now(timezone.utc).isoformat())
+            _save_state(s, connected=True, needs_reconnect=False, account=name, account_id=account.get("account_id") or j.get("account_id"),
+                        error=None, connect_error=None, since=st.get("since") or datetime.now(timezone.utc).isoformat())
             audit(s, "dropbox.connected", "dropbox", "", {})
+        log.info("Dropbox connected (%s)", name)
         self._client = client
         self.wake()
         return True, f"Vyral will upload finished videos to {name}'s Dropbox."

@@ -77,7 +77,7 @@ export interface ClipOutputT {
 }
 export interface DropboxUploadT { id: number; status: "queued" | "uploading" | "uploaded" | "failed"; path: string | null; error: string | null; progress: number | null; next_try_at: string | null; uploaded_at: string | null }
 export interface DropboxState {
-  connected: boolean; needs_reconnect: boolean; account: string | null; error: string | null; connecting: boolean; app_key_set: boolean; redirect_uri: string;
+  connected: boolean; needs_reconnect: boolean; account: string | null; error: string | null; connect_error: string | null; connecting: boolean; app_key_set: boolean; redirect_uri: string;
   counts: { queued: number; uploading: number; uploaded: number; failed: number };
 }
 export interface LongformMoment { start: number; end: number; peak: number; score: number; why: string[]; text: string; clip_id?: number; tier?: string | null; clip_title?: string | null }

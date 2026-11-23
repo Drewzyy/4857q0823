@@ -70,7 +70,10 @@ export function DropboxSettings() {
             <input className="input" aria-label="Dropbox app key" placeholder="App key" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} />
             <button className="btn primary" disabled={!/^[A-Za-z0-9]{5,40}$/.test(key.trim()) || busy} onClick={connect}>{busy && <span className="spinner" />}Connect</button>
           </div>
-          {link && <p className="small">{data.connecting ? <span className="spinner" /> : null} Finish signing in on Dropbox's page in your browser.
+          {data.connect_error && !data.connecting && <div className="banner err small" role="alert" style={{ flexDirection: "column", gap: 4 }}>
+            <strong>Dropbox wasn't connected:</strong><span>{data.connect_error}</span>
+            <span>Press Connect to start a fresh sign-in (Dropbox gives a new code each time).</span></div>}
+          {link && data.connecting && <p className="small">{data.connecting ? <span className="spinner" /> : null} Finish signing in on Dropbox's page in your browser.
             If it didn't open, <a href={link} target="_blank" rel="noopener noreferrer">open it here <ExternalLink size={11} /></a>.</p>}
           {(c.queued > 0 || c.failed > 0) && <p className="small faint">{c.queued + c.failed} videos are waiting to go up once Dropbox is connected.</p>}
         </>

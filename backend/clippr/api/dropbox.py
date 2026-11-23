@@ -19,7 +19,7 @@ def _view(c, s: Session) -> dict:
     st, cfg = dbx.state(s), load_settings(s).dropbox
     counts = dict(s.execute(select(DropboxUpload.status, func.count()).group_by(DropboxUpload.status)).all())
     return {"connected": bool(st.get("connected")), "needs_reconnect": bool(st.get("needs_reconnect")), "account": st.get("account"),
-            "error": st.get("error"), "connecting": c.dropbox.connecting(), "app_key_set": bool(cfg.app_key), "redirect_uri": dbx.REDIRECT_URI,
+            "error": st.get("error"), "connect_error": st.get("connect_error"), "connecting": c.dropbox.connecting(), "app_key_set": bool(cfg.app_key), "redirect_uri": dbx.REDIRECT_URI,
             "counts": {k: counts.get(k, 0) for k in ("queued", "uploading", "uploaded", "failed")}}
 
 
@@ -34,6 +34,7 @@ def connect(c=Depends(ctx), s: Session = Depends(db)):
     key = load_settings(s).dropbox.app_key
     if not key:
         raise ApiError(422, "no_app_key", "Paste your Dropbox app's key first (the steps are above the box).")
+    dbx._save_state(s, connect_error=None)  # a fresh sign-in with a new code
     try:
         url = c.dropbox.begin_connect(key)
     except dbx.DropboxError as e:

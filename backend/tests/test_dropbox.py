@@ -26,6 +26,8 @@ class FakeDropbox:
         self.token_forms: list[dict] = []
         self.revoked = False
         self.account_type = "basic"
+        self.scope = "account_info.read files.content.read files.content.write files.metadata.read"
+        self.token_status = 200
 
     @staticmethod
     def _meta(path, data):
@@ -40,10 +42,13 @@ class FakeDropbox:
         if route == "/oauth2/token":
             form = {k: v[0] for k, v in urllib.parse.parse_qs(req.content.decode()).items()}
             self.token_forms.append(form)
+            if form["grant_type"] == "authorization_code" and self.token_status != 200:
+                return httpx.Response(self.token_status, json={"error": "invalid_grant", "error_description": "code doesn't exist or has expired"})
             if form["grant_type"] == "refresh_token" and not self.refresh_ok:
                 return httpx.Response(400, json={"error": "invalid_grant"})
             self.access = f"access-{len(self.token_forms) + 1}"
-            return httpx.Response(200, json={"access_token": self.access, "expires_in": 14400, "refresh_token": "refresh-1", "token_type": "bearer"})
+            return httpx.Response(200, json={"access_token": self.access, "expires_in": 14400, "refresh_token": "refresh-1", "token_type": "bearer",
+                                             "scope": self.scope})
         if req.headers.get("authorization") != f"Bearer {self.access}":
             return httpx.Response(401, json={"error_summary": "expired_access_token/"})
         arg = req.headers.get("dropbox-api-arg")
@@ -115,7 +120,7 @@ def _connect(ctx, sync, fake):
         s.merge(Setting(key=SETTINGS_KEY, value={"dropbox": {"app_key": "abc123", "folder": "/Vyral", "auto_upload": True}}))
     url = sync.begin_connect("abc123")
     q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(url).query).items()}
-    assert q["scope"] == "files.content.write files.content.read" and "team" not in q["scope"]
+    assert "scope" not in q  # an explicit list would leave out account_info.read
     assert q["code_challenge_method"] == "S256" and q["token_access_type"] == "offline" and q["redirect_uri"] == dropbox.REDIRECT_URI
     ok, msg = sync.finish_connect({"code": "the-code", "state": q["state"]})
     assert ok, msg
@@ -291,3 +296,34 @@ def test_a_business_account_is_turned_away_and_not_kept(ctx, box):
     assert ctx.secrets.get(dropbox.SECRET_KEY) is None
     with ctx.db.session() as s:
         assert not dropbox.state(s).get("connected")
+
+
+def test_a_refused_sign_in_shows_dropboxs_own_error_and_a_fresh_connect_works(ctx, box, client, caplog):
+    fake, sync = box
+    with ctx.db.session() as s:
+        from clippr.api.system import SETTINGS_KEY
+        from clippr.models import Setting
+        s.merge(Setting(key=SETTINGS_KEY, value={"dropbox": {"app_key": "abc123"}}))
+    fake.token_status = 400
+    url = client.post("/api/dropbox/connect").json()["url"]
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+    ok, msg = sync.finish_connect({"code": "c", "state": state})
+    assert not ok and "HTTP 400" in msg and "invalid_grant" in msg and "expired" in msg
+    assert "invalid_grant" in client.get("/api/dropbox").json()["connect_error"]
+    assert "code doesn't exist" in caplog.text and "refresh" not in caplog.text.lower().replace("refused", "")
+    assert sync.finish_connect({"code": "c", "state": state})[0] is False  # the same code is never traded twice
+    assert len([f for f in fake.token_forms if f["grant_type"] == "authorization_code"]) == 1
+    fake.token_status = 200
+    url = client.post("/api/dropbox/connect").json()["url"]
+    assert client.get("/api/dropbox").json()["connect_error"] is None
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+    assert sync.finish_connect({"code": "c2", "state": state})[0]
+
+
+def test_missing_file_permissions_are_named(ctx, box):
+    fake, sync = box
+    fake.scope = "account_info.read files.content.read"
+    url = sync.begin_connect("abc123")
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+    ok, msg = sync.finish_connect({"code": "c", "state": state})
+    assert not ok and "files.content.write" in msg and ctx.secrets.get(dropbox.SECRET_KEY) is None
