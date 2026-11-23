@@ -282,8 +282,13 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
     quoted = title.strip().startswith(("\u201c", '"'))
     title_fit = 1.0 if (6 <= n_title <= 20 or (quoted and n_title >= 2)) else 0.6 if 3 <= n_title <= 25 else 0.3
     teases = bool(TEASE.search(title)) or quoted
-    add("Headline", (0.75 * title_fit + 0.25 * (1.0 if teases else 0.4) if has_title else 0) * 0.8 + (0.2 if has_captions else 0), 5,
-        (f"Headline on ({n_title} words" + ("; it makes you wonder what happens" if teases else "") + ")" if has_title else "No headline")
+    # With no headline, someone talking from the first seconds does the same job: what's said is the hook, and text
+    # over a talking clip competes with it (Emplifi's Reels data). Only a silent opening with no headline loses points.
+    talks_early = any(w[0] < 3 for w in words)
+    add("Headline", (0.75 * title_fit + 0.25 * (1.0 if teases else 0.4) if has_title else 0.8 if talks_early else 0) * 0.8
+        + (0.2 if has_captions else 0), 5,
+        (f"Headline on ({n_title} words" + ("; it makes you wonder what happens" if teases else "") + ")" if has_title
+         else "No headline; talking from the start does the job" if talks_early else "No headline")
         + (", captions on." if has_captions else ", no captions."),
         "Add a headline that says who and what without the ending, like \"Lacy couldn't believe what Kai did\" (the editor's Text list)."
         if not has_title else "Make the headline a full sentence of 6 to 20 words that says who and what, without giving away the ending.")

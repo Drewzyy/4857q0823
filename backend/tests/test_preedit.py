@@ -45,8 +45,13 @@ def test_long_clips_are_trimmed_around_the_peak_and_open_on_sound():
 
 def test_apply_adds_the_headline_box_once():
     e = ClipEdit(start=10, end=30).model_dump()
-    out = preedit.apply(e, [Word(0.1, 0.4, "hey")], None, "Kai lost it 😭")
-    assert out["preedited"] and out["hide_title"] and out["texts"][0]["box"] and out["texts"][0]["text"] == "Kai lost it 😭"
+    late = [Word(0.1, 0.4, "hey."), *[Word(9 + i * 0.4, 9.3 + i * 0.4, x) for i, x in enumerate("he sold my sword".split())]]
+    out = preedit.apply(e, late, None, "“he sold my sword”", quote=True)
+    assert out["preedited"] and out["hide_title"] and out["texts"][0]["box"] and out["texts"][0]["text"] == "“he sold my sword”"
+    # Not every clip gets a title on the video: a summary, or a line said right at the start, stays in the caption only.
+    assert not any(x.get("headline") for x in preedit.apply(e, late, None, "Kai lost it")["texts"])
+    early = [Word(0.5 + i * 0.4, 0.8 + i * 0.4, x) for i, x in enumerate("he sold my sword".split())]
+    assert not any(x.get("headline") for x in preedit.apply(e, early, None, "“he sold my sword”", quote=True)["texts"])
     assert ClipEdit(**out)  # still a valid edit
     assert preedit.apply(out, [], None, "other") == out  # never twice
 
@@ -75,7 +80,8 @@ def test_one_sound_on_the_biggest_moment_only():
 
 
 def test_quote_headlines_sit_at_the_top_briefly_and_pages_add_their_emoji():
-    e = preedit.apply(ClipEdit(start=0, end=20).model_dump(), [], None, "“You're not growing” 😭", quote=True)
+    said = [Word(0.2, 0.5, "okay."), *[Word(8 + i * 0.4, 8.3 + i * 0.4, x) for i, x in enumerate("you're not growing".split())]]
+    e = preedit.apply(ClipEdit(start=0, end=20).model_dump(), said, None, "“You're not growing” 😭", quote=True)
     t = e["texts"][0]  # never a line across the middle of the picture for the whole clip
     assert t["headline"] and t["box"] and t["y_percent"] == preedit.HEADLINE_Y and t["end"] <= preedit.TITLE_SECONDS
     assert overlay.with_signature(t["text"], "😭❤️") == "“You're not growing” 😭❤️"

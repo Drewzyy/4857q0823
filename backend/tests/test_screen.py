@@ -48,7 +48,7 @@ def test_the_headline_shows_for_the_opening_seconds_only():
     words = [Word(i * 0.5, i * 0.5 + 0.4, "word") for i in range(80)]
     db = np.full(400, -30.0)
     db[300:320] = -5
-    e = preedit.apply({"start": 0.0, "end": 40.0, "texts": []}, words, db, "Kai couldn't believe it 😭", hook=False)
+    e = preedit.apply({"start": 0.0, "end": 40.0, "texts": []}, words, db, "Kai couldn't believe it", hook=False, named=True)
     head = next(x for x in e["texts"] if x.get("headline"))
     assert head["end"] <= preedit.TITLE_SECONDS + 0.01 and head["y_percent"] == preedit.HEADLINE_Y and head["box"]
     assert e["end"] - e["start"] >= 25

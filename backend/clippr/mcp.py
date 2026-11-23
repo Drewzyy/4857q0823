@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import object_session
 
-from . import dropbox, posting, screen
+from . import dropbox, posting, preedit, screen
 from .audit import audit
 from .api.analytics import HOSTS, link_post
 from .api.clips import _live_outputs, apply_edit
@@ -230,9 +230,15 @@ def update_clip(ctx, a):
             video = True
         if "hook_text" in a:
             heads = [t for t in e["texts"] if t.get("headline") or t.get("box")]
-            if not heads:
-                raise ToolError("This clip has no headline to change")
-            heads[0]["text"] = a["hook_text"].strip()[:200]
+            text = a["hook_text"].strip()[:200]
+            if not text:  # empty: take the headline off the video
+                e["texts"] = [t for t in e["texts"] if not (t.get("headline") or t.get("box"))]
+            elif heads:
+                heads[0]["text"] = text
+            else:  # the clip had none (not every clip gets one): add it at the top for the opening seconds
+                e["texts"].insert(0, {"text": text, "start": 0, "end": preedit.TITLE_SECONDS + ((e["hook"][1] - e["hook"][0]) if e.get("hook") else 0),
+                                      "y_percent": preedit.HEADLINE_Y, "size": preedit.HEADLINE_SIZE, "color": "#141414", "font": "poppins",
+                                      "all_caps": False, "outline": 0, "box": True, "headline": True})
             video = True
         if "destination_ids" in a:  # pages left out are taken off this clip (rejected, not deleted)
             keep = set(a["destination_ids"])
@@ -323,7 +329,7 @@ TOOLS: dict[str, tuple[Callable, str, dict, list[str], dict]] = {
     "update_clip": (update_clip, "Change a clip: caption (one page or all), hook_text (the headline, use only words said in the clip), "
                     "hook ([start, end] footage seconds shown first, or null), trim_start/trim_end (footage seconds), destination_ids "
                     "(pages to keep). Video changes re-render without re-transcribing; a changed video needs approving again.",
-                    {**ID, **DEST, "caption": {"type": "string", "maxLength": 2200}, "hook_text": {"type": "string", "maxLength": 200},
+                    {**ID, **DEST, "caption": {"type": "string", "maxLength": 2200}, "hook_text": {"type": "string", "maxLength": 200, "description": "The headline on the video (top, opening seconds). Adds one if the clip has none; empty takes it off."},
                      "hook": {"type": ["array", "null"], "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
                      "trim_start": {"type": "number"}, "trim_end": {"type": "number"},
                      "destination_ids": {"type": "array", "items": {"type": "integer"}}}, ["clip_id"], {}),

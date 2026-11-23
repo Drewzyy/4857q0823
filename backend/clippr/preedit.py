@@ -21,17 +21,20 @@ import re
 
 import numpy as np
 
+from . import titles
 from .grade import arousal
 from .media.facecam import CAM_SHARE
 
-VERSION = 7  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim.
+VERSION = 8  # 2: sound effects, quote headlines, up to 45 s. 3: hook up front. 4: punch-in on the peak. 5: own titles, climax trim.
 # 6: at least 25 s with setup (screen.py), the headline at the top for the opening seconds only, then gone.
-# 7: titles written like a person (titles.py): the line said, lower case, no emoji or hype
+# 7: titles written like a person (titles.py): the line said, lower case, no emoji or hype.
+# 8: a headline only when it adds something (a line said later in the clip); otherwise none
 STEP = 0.1
 LONGEST = 45.0      # trimmed when longer than this (half the second batch of top clips ran 35 to 50 s)
 TARGET = 34.0       # length of the trimmed clip: room for the setup, still short enough to finish
 SHORTEST = 25.0     # never trimmed below this (screen.py: under 25 s there's no room for the setup)
 HEADLINE_Y = 17     # % from the top
+HEADLINE_LEAD = 4.0  # a line said within this many seconds of the start needs no headline: it's heard right away
 TITLE_SECONDS = 4.0  # the headline shows for the opening seconds (after the hook), then gets out of the way
 HEADLINE_SIZE = 76  # pixels on a 1080-wide video: about 3% of the height per line, like the top clips
 SHOCK = re.compile(r"\b(wtf|what the|no way|bro|oh my god|omg|are you serious|insane|crazy)\b", re.I)
@@ -163,10 +166,11 @@ def pick_hook(db: np.ndarray | None, words: list, a: float, b: float) -> tuple[f
 
 
 def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, quote: bool = False, sound: bool = False,
-          choice: str = "", hook: bool = False, min_s: float = 0, max_s: float = 0) -> dict:
+          choice: str = "", hook: bool = False, min_s: float = 0, max_s: float = 0, named: bool = False) -> dict:
     """The pre-edit on a clip's edit (start/end in source seconds; words and db from edit['start']).
     choice: the sound to use on big moments (Settings), "" to pick one by the moment. min_s, max_s: a campaign's
-    length rules (best_window); the teaser counts toward the length, so it's left out when it wouldn't fit."""
+    length rules (best_window); the teaser counts toward the length, so it's left out when it wouldn't fit.
+    named: a campaign wants names on the video, so the headline stays whatever it is."""
     e = dict(edit)
     if e.get("preedit_version", 1 if e.get("preedited") else 0) >= VERSION:
         return e
@@ -174,6 +178,15 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     a, b = best_window(db, words, dur, min_s, max_s)
     e["start"], e["end"] = round(e["start"] + a, 3), round(e["start"] + b, 3)
     texts = [t for t in e.get("texts") or [] if not (t.get("box") or t.get("headline"))]
+    # Not every clip needs a title on the video. When someone is talking, text over the picture competes with them
+    # (Emplifi's Reels data: overlays lowered retention on speech-led videos, helped on music-led ones), and the
+    # captions already show what's said. So the headline goes on only when it adds something: a line said later in
+    # the clip, shown up front as the reason to keep watching. A summary that fits any clip ("kai had a moment") or a
+    # line the clip opens on anyway is left off the picture and kept for the post's caption.
+    said = titles.said_at(words, headline_text) if headline_text and quote else None
+    if not named and not (said is not None and said - a > HEADLINE_LEAD):  # named: a campaign wants a name on the video
+        headline_text = ""
+    e["hide_title"] = True  # the page's own title style stays off too: the headline or nothing
     if headline_text:
         stacked = e.get("layout") == "stacked" and e.get("cam")
         # One headline, at the top (on the seam between face and gameplay when the facecam is on top, as the top
@@ -181,7 +194,6 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
         y = round(CAM_SHARE * 100) if stacked else HEADLINE_Y
         texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(min(b - a, TITLE_SECONDS) + HOOK_MAX, 2), "y_percent": y,
                          "size": HEADLINE_SIZE, "color": "#141414", "font": "poppins", "all_caps": False, "outline": 0, "box": True, "headline": True})
-        e["hide_title"] = True
     if sound and not e.get("sounds"):
         pick = auto_sound(db, a, b, " ".join(w.text for w in words))
         if pick:

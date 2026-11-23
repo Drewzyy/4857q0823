@@ -657,8 +657,11 @@ class Pipeline:
             # Our own title from what's said and what happens, never the Twitch clip's or the source post's words.
             db = self._loudness(source, start, dur)
             title, quote = titles.make_title(words, creator_name, preedit.peak_moment(db, 0, dur), rules["overlay_mentions"])
+            with self.ctx.db.session() as s:
+                lim = screen.learned(s)  # the length you've taught it, inside any campaign's own rules
             framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first,
-                                    rules["min_seconds"], rules["max_seconds"])
+                                    max(rules["min_seconds"] or 0, lim["min_seconds"]),
+                                    min(rules["max_seconds"] or lim["max_seconds"], lim["max_seconds"]), named=bool(rules["overlay_mentions"]))
             captions_note = " ".join(filter(None, [captions_note, campaigns.too_short(rules, framing["end"] - framing["start"])]))
         renders: dict[str, Path] = {}
         qcs: dict[str, dict] = {}
@@ -1010,7 +1013,7 @@ class Pipeline:
             creator = clip.creator.name if clip.creator else ""
         db = self._loudness(source, e["start"], e["end"] - e["start"])
         title, quote = titles.make_title(words, creator, preedit.peak_moment(db, 0, e["end"] - e["start"]), rules["overlay_mentions"])
-        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s)).model_dump()
+        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s, named=bool(rules["overlay_mentions"]))).model_dump()
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             clip.edit, clip.title = new, title

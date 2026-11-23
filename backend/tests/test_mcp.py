@@ -93,7 +93,7 @@ def test_muse_reviews_approves_and_posts_and_marks_posted(env, tmp_path):
     _, queue = _call(mc, tok, "list_clips_for_review")
     assert [x["clip_id"] for x in queue] == [cid]
     _, rv = _call(mc, tok, "review_clip", clip_id=cid)
-    assert rv["transcript"] and rv["hook_text"] and rv["trim"]["end"] > rv["trim"]["start"]
+    assert rv["transcript"] and rv["hook_text"] is None and rv["trim"]["end"] > rv["trim"]["start"]  # it opens on its line: no headline
     assert {r["destination_id"] for r in _call(mc, tok, "list_funnel_routes")[1]} == {tt, yt}
 
     # Edit: caption on one page, trim and headline (re-renders without transcribing again).

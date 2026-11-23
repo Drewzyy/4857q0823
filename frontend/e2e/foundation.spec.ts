@@ -219,14 +219,14 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
   await page.getByLabel(/^Zoom:/).fill("1.5");
   await expect(video).toHaveCSS("transform", /matrix\(1\.5/);
   await page.getByRole("button", { name: "Add text" }).click();
-  await page.getByLabel("Text 2", { exact: true }).fill("WAIT FOR IT");
+  await page.getByLabel("Text 1", { exact: true }).fill("WAIT FOR IT");
   await expect(page.locator(".ed-preview .ov-text", { hasText: "WAIT FOR IT" })).toBeVisible();
   await expect(page.getByText(/Kept 6\.0 s/)).toBeVisible();
 
   await page.getByRole("button", { name: "Undo" }).click();
-  await expect(page.getByLabel("Text 2", { exact: true })).toHaveValue("NEW TEXT");
+  await expect(page.getByLabel("Text 1", { exact: true })).toHaveValue("NEW TEXT");
   await page.getByRole("button", { name: "Redo" }).click();
-  await expect(page.getByLabel("Text 2", { exact: true })).toHaveValue("WAIT FOR IT");
+  await expect(page.getByLabel("Text 1", { exact: true })).toHaveValue("WAIT FOR IT");
 
   await save.click();
   await expect(page).toHaveURL(/\/ready$/);
@@ -249,7 +249,7 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
   await page.goto("/editor");
 248
   await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).click();
-  await expect(page.getByLabel("Text 2", { exact: true })).toHaveValue("WAIT FOR IT");
+  await expect(page.getByLabel("Text 1", { exact: true })).toHaveValue("WAIT FOR IT");
   await expect(page.getByRole("group", { name: "Speed" }).getByRole("button", { name: "1.5x" })).toHaveClass(/on/);
 });
 

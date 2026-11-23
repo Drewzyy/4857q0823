@@ -140,3 +140,13 @@ def shouts(text: str) -> bool:
     """True if the text has an emoji or shouting in it (what a title shouldn't have unless the page adds its own)."""
     letters = [c for c in text if c.isalpha()]
     return bool(re.search("[\U0001F000-\U0001FAFF\u2600-\u27BF]", text)) or (len(letters) > 8 and sum(c.isupper() for c in letters) / len(letters) > 0.5)
+
+
+def said_at(words: list, title: str) -> float | None:
+    """When the line a quote title is made of starts in the clip (seconds, same clock as words), or None."""
+    want = re.sub(r"[^a-z0-9 ]", "", title.lower())
+    for t0, s in sentences(words):
+        line = re.sub(r"[^a-z0-9 ]", "", casual(s).lower())
+        if line and line in want:
+            return t0
+    return None
