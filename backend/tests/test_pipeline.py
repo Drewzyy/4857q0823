@@ -84,7 +84,7 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert outs["youtube"]["width"] == 720 and outs["youtube"]["height"] == 1280
     tdesc = outs["tiktok"]["description"]
     title = outs["tiktok"]["video_title"]  # the line said in the clip, typed like a person: not the post's own words, no emoji
-    assert "no way he actually did that right now" in title and not titles.shouts(title)
+    assert "no way he actually drove the car into the lake" in title and not titles.shouts(title)
     assert tdesc == f"{title}\n\nFollow for more\n\n#gaming #clips #vyralclips", tdesc
     assert "Streamer:" not in tdesc and "Streamed" not in tdesc and "He actually did it" not in tdesc
 
@@ -111,7 +111,7 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert tt_out["video_title"] == title
     assert tt_out["overlay"]["title"]["color"] == "#FFFFFF" and tt_out["overlay"]["captions"]["color"] == "#FFE500"
     assert tt_out["overlay"]["title"]["all_caps"] and tt_out["overlay"]["title"]["duration"] == 5
-    assert clips[0]["captions_text"] == "no way he actually did that right now" and clips[0]["editable"]
+    assert clips[0]["captions_text"] == "no way he actually drove the car into the lake" and clips[0]["editable"]
     assert outs["tiktok"]["destination"]["handle"] == "@streamera.tt"
 
     # Rendered from the original stream: the 20 s moment widened to 25 s with the setup before it, plus the hook up front.
@@ -146,7 +146,7 @@ def test_new_post_becomes_ready_to_upload_clip(env):
     assert c.patch(f"/api/outputs/{tt_out['id']}/video", json={"overlay": {"title": {"color": "red"}}}).status_code == 422
 
     # Fix a misheard word: timing is kept, every page re-renders.
-    r = c.patch(f"/api/clips/{clips[0]['id']}/captions", json={"text": "no way he ACTUALLY did that right now bro"})
+    r = c.patch(f"/api/clips/{clips[0]['id']}/captions", json={"text": "no way he ACTUALLY drove the car into the lake bro"})
     assert r.json()["rendering"] == 2
     drain(ctx)
     with ctx.db.session() as s:
@@ -283,7 +283,7 @@ def test_one_clipping_account_covering_several_streamers(env):
     assert ref["status"] == "ready" and ref["creator"]["name"] == "Streamer B", ref["status_detail"]
     outs = c.get("/api/clips").json()[0]["outputs"]
     assert [o["destination"]["display_name"] for o in outs] == ["B page"]
-    assert "no way he actually did that right now" in outs[0]["description"].split("\n")[0]
+    assert "no way he actually drove the car into the lake" in outs[0]["description"].split("\n")[0]
     assert "Streamer:" not in outs[0]["description"] and "Streamed" not in outs[0]["description"]  # no metadata lines
     # Removing one streamer keeps the other.
     r = c.patch(f"/api/sources/{src['id']}", json={"creator_ids": [b]}).json()

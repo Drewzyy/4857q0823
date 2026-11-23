@@ -134,3 +134,31 @@ def test_chants_and_flat_clips_are_held_back():
     assert any("Flat" in x for x in screen.check(story, 30, lim, flat)["reasons"])
     lively = [{"name": "Energy and emotion", "points": 12, "max": 15}, {"name": "Ends on the payoff", "points": 4, "max": 5}]
     assert screen.check(story, 30, lim, lively)["pass"]
+
+
+def test_the_picture_is_checked_for_nudity(tmp_path):
+    from clippr import safety
+    from clippr.media import nsfw
+    from clippr.media.ffmpeg import run
+    v = tmp_path / "game.mp4"
+    run(["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=6", "-c:v", "libx264", "-preset", "ultrafast", str(v)])
+    got = nsfw.scan(v, 0, 6)
+    assert got["level"] == "pass" and got["max"] is not None and got["max"] < nsfw.REVIEW
+    base = dict(permission=True, words=[], texts=["a title"])
+    out = safety.check(**base, picture={"max": 0.97, "at": 3.0, "hits": 3, "level": "fail"})
+    assert out["status"] == "fail" and out["flags"][0]["category"] == "sexual content and nudity" and out["flags"][0]["at"] == 3.0
+    assert not any(x.startswith("the picture") for x in out["not_checked"])
+    assert safety.check(**base, picture={"max": 0.7, "at": 1.0, "hits": 0, "level": "review"})["status"] == "review"
+    assert safety.check(**base, picture=got)["status"] == "pass"
+
+
+def test_titles_never_swear_or_say_only_a_reaction():
+    from clippr import titles
+    from clippr.media.overlay import Word
+    def w(s):
+        return [Word(i * 0.4, i * 0.4 + 0.3, x) for i, x in enumerate(s.split())]
+    for line in ["what the fuck!", "oh my god no way bro.", "no way he actually did that right now!", "bro this is so fucking good"]:
+        title, quoted = titles.make_title(w(line), "Kai", 1.0)
+        assert not quoted and not titles.PROFANE.search(title), (line, title)
+    title, quoted = titles.make_title(w("he just sold my sword for a sandwich!"), "Kai", 1.0)
+    assert quoted and "he just sold my sword for a sandwich" in title and "!" not in title

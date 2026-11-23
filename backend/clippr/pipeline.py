@@ -22,7 +22,7 @@ from . import campaigns, content, describe, events, files, grade, identify, mome
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
-from .media import deadair, facecam, match, onscreen, overlay, quality, sfx
+from .media import deadair, facecam, match, nsfw, onscreen, overlay, quality, sfx
 from .media.ffmpeg import FFmpegError, probe, run
 from .media.overlay import Word
 from .media.render import Layer, OutputFormat, render, thumbnail
@@ -880,6 +880,17 @@ class Pipeline:
     def check_safety(self, clip_id: int, game: str | None = None) -> dict | None:
         """Run the pre-post safety check (safety.py) on the clip as it now stands and store it. A failed clip is
         quarantined: it stays failed through later edits and re-renders, and is logged with why."""
+        with self.ctx.db.session() as s:  # the picture first (nudity, media/nsfw.py), outside the database: it takes a few seconds
+            clip = s.get(Clip, clip_id)
+            if not clip:
+                return None
+            e = clip.edit or {}
+            base = clip.source_start or 0.0
+            a, b = e.get("start", base), e.get("end", base + (clip.source_duration or 0.0))
+            src, seen = clip.source_path, (clip.safety or {}).get("picture") or {}
+        key = f"{src}|{a:.2f}|{b:.2f}"
+        picture = seen if seen.get("key") == key else \
+            {**nsfw.scan(Path(src), a, max(b - a, 0.5)), "key": key} if src and Path(src).exists() else None
         with self.ctx.db.session() as s:
             clip = s.get(Clip, clip_id)
             if not clip:
@@ -893,8 +904,8 @@ class Pipeline:
             transformed = bool(clip.words) or any(t.get("headline") or t.get("box") for t in e.get("texts") or [])
             result = safety.check(permission=clip.creator.clip_permission if clip.creator else None, words=clip.words or [],
                                   texts=texts, game=game, reupload_untransformed=bool(clip.reference) and not transformed,
-                                  blocklist=load_settings(s).safety.model_dump(), previous=prev)
-            result["game"] = game
+                                  blocklist=load_settings(s).safety.model_dump(), previous=prev, picture=picture)
+            result["game"], result["picture"] = game, picture
             clip.safety = result
             if result["status"] == "fail" and prev.get("status") != "fail":
                 audit(s, "clip.quarantined", "clip", clip_id, {"reasons": [f"{f['category']}: {f['reason']}" for f in result["flags"] if f["level"] == "fail"]})

@@ -37,6 +37,15 @@ SUMMARIES = {
     "hype": ["{n} actually pulled it off", "{n} went off after this", "chat could not believe {n} did this", "{n} was locked in"],
     "plain": ["{n} had a moment", "{n} explains", "{n} on this", "wait for the end", "{n} meant every word"],
 }
+# A title never swears (platforms show it to fewer people and it says nothing) and is never only a reaction: "what
+# the fuck", "oh my god", "no way bro" fit any clip, so they tell a viewer nothing about this one.
+PROFANE = re.compile(r"\b(fuck\w*|f+ck\w*|shit\w*|bitch\w*|ass(hole)?|dick\w*|cunt|bastard|damn|goddamn|piss\w*|motherf\w*|wtf|stfu|"
+                     r"n[i1]gg\w*|f[a4]gg?\w*|retard\w*|whore|slut)\b", re.I)
+REACTION = {"what", "the", "no", "way", "oh", "my", "god", "gosh", "bro", "bruh", "dude", "holy", "yes", "yeah", "let's", "lets", "go", "come",
+            "on", "dawg", "man", "chat", "guys", "omg", "lol", "lmao", "wow", "wait", "stop", "please", "nah", "yo", "huh", "really",
+            "actually", "literally", "is", "this", "that", "are", "you", "serious", "kidding", "me", "it", "a", "so", "i", "can't", "cant",
+            "believe", "just", "happened", "insane", "crazy", "unbelievable", "ridiculous", "he", "she", "they", "him", "her", "did", "do",
+            "done", "doing", "right", "now", "there", "here", "we", "us", "be", "was", "were", "not", "to", "of", "in", "at", "like"}
 FILLER_START = re.compile(r"^(?:(?:bro|bruh|yo|dude|man|like|so|okay|ok|um|uh|and|but|oh|wait|guys|chat|listen|look|yeah|nah)\b[,.!]?\s*)+", re.I)
 
 
@@ -88,7 +97,12 @@ def best_quote(words: list, peak: float | None = None) -> tuple[str, float] | No
         n = len(clean.split())
         if not 3 <= n <= 12 or FILLER_ONLY.match(clean) or DANGLING.match(clean) or LAUGH.fullmatch(clean.lower().strip(" !.")):
             continue
-        score = (3.0 * len(HYPE.findall(clean)) + 2.0 * len(arousal(clean)) + (2.0 if SHOCK.search(clean) else 0)
+        if PROFANE.search(clean):
+            continue
+        said = [w for w in re.findall(r"[a-z']+", clean.lower()) if w not in REACTION]
+        if len(said) < 2:  # only a reaction: nothing about what happened
+            continue
+        score = (2.0 * len(HYPE.findall(clean)) + 2.0 * len(arousal(clean)) + (1.0 if SHOCK.search(clean) else 0) + 1.0 * min(len(said), 4)
                  + (1.0 if clean.endswith(("!", "?")) else 0) + (1.5 if 4 <= n <= 9 else 0)
                  + (1.0 if re.search(r"\b(I|you|he|she|they|we)\b", clean, re.I) else 0)  # someone did something: a story, not a noise
                  + (3.0 if peak is not None and abs(t0 - peak) <= 4 else 0))

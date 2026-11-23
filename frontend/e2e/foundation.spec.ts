@@ -13,7 +13,7 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   await expect(page.getByText("@streamera.clips")).toBeVisible();
 
   await nav(page, "Ready to Upload");
-  const card = page.locator(".card", { hasText: "No way he actually did that right now" }).first();
+  const card = page.locator(".card", { hasText: "no way he actually drove the car into the lake" }).first();
   await expect(card.getByText(/Cut from/)).toBeVisible();
   await expect(card.getByText(/Deletes in 30 days/)).toBeVisible();
 
@@ -26,21 +26,21 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   // TikTok tab: post text, streamer + stream date, original hashtags + page hashtags + #vyralclips.
   await card.getByRole("tab", { name: /Streamer A TikTok/ }).click();
   const caption = card.getByLabel("Caption");
-  await expect(caption).toHaveValue(/^“No way he actually did that right now” \S+\n\n#gaming #vyralclips$/);  // the pre-edit headline (with its emoji) leads; the page tag first; generic #fyp dropped
+  await expect(caption).toHaveValue(/^no way he actually drove the car into the lake\n\n#gaming #vyralclips$/);  // the pre-edit headline (with its emoji) leads; the page tag first; generic #fyp dropped
   await expect(card.getByText(/Streamed Nov [78], 2026/).first()).toBeVisible();
   await card.getByRole("button", { name: "Save to computer" }).click();
-  await expect(page.getByText(/Saved to .*Downloads.Vyral.*Streamer A TikTok - “No way he actually did that right now”\.mp4/)).toBeVisible();
+  await expect(page.getByText(/Saved to .*Downloads.Vyral.*Streamer A TikTok - no way he actually drove the car into the lake\.mp4/)).toBeVisible();
 
   // Edit the caption, it sticks.
   await caption.fill("my own caption #gaming");
   await caption.blur();
   await page.reload();
-  await page.locator(".card", { hasText: "No way he actually did that right now" }).first().getByRole("tab", { name: /Streamer A TikTok/ }).click();
+  await page.locator(".card", { hasText: "no way he actually drove the car into the lake" }).first().getByRole("tab", { name: /Streamer A TikTok/ }).click();
   await expect(page.getByLabel("Caption")).toHaveValue("my own caption #gaming");
 
   // YouTube tab has a separate title and #shorts.
   await page.getByRole("tab", { name: /Streamer A YouTube/ }).click();
-  await expect(page.getByLabel("Title")).toHaveValue(/^“No way he actually did that right now” \S+$/);
+  await expect(page.getByLabel("Title")).toHaveValue(/^no way he actually drove the car into the lake/);
   await expect(page.getByLabel("Description")).toHaveValue("#vyralclips #shorts");
 
   // Mark TikTok uploaded -> it moves to the Uploaded tab, YouTube stays Ready.
@@ -128,7 +128,7 @@ test("the API refuses requests without the window token", async ({ request }) =>
 
 test("edit the title, its style and the caption words in the video editor", async ({ page }) => {
   await page.goto("/ready");
-  const card = page.locator(".card", { hasText: "No way he actually did that right now" }).first();
+  const card = page.locator(".card", { hasText: "no way he actually drove the car into the lake" }).first();
   await card.getByRole("button", { name: "Play preview" }).click();
   const video = card.locator("video");
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1)).toBe(true);
@@ -136,7 +136,7 @@ test("edit the title, its style and the caption words in the video editor", asyn
   await card.getByRole("link", { name: /Edit the title, captions and text style in the Video Editor/ }).click();
   await expect(page).toHaveURL(/\/editor\/\d+$/);
   const panel = page.locator(".card", { has: page.getByRole("heading", { name: "Title and captions" }) });
-  await expect(panel.getByLabel("Title on the video")).toHaveValue(/^“No way he actually did that right now” \S+$/);
+  await expect(panel.getByLabel("Title on the video")).toHaveValue(/^no way he actually drove the car into the lake/);
   // Defaults: white title, yellow captions, all caps, title shown 5 s.
   await expect(panel.getByLabel("Title color", { exact: true })).toHaveValue("#ffffff");
   await expect(panel.getByLabel("Captions color", { exact: true })).toHaveValue("#ffe500");
@@ -149,16 +149,16 @@ test("edit the title, its style and the caption words in the video editor", asyn
   await expect(page.getByText(/Re-rendering\. The new version/)).toBeVisible();
   await page.goto("/ready");
   await expect.poll(async () => {
-    const c = page.locator(".card", { hasText: "No way he actually did that right now" }).first();
+    const c = page.locator(".card", { hasText: "no way he actually drove the car into the lake" }).first();
     const play = c.getByRole("button", { name: "Play preview" });
     if (await play.isVisible()) await play.click();
     return c.locator("video").getAttribute("src", { timeout: 2000 }).catch(() => before);
   }, { timeout: 40_000 }).not.toBe(before);
   // Fix a caption word: applies to every page.
   await page.goto("/editor");
-  await page.getByRole("link", { name: /No way he actually did that right now/ }).first().click();
+  await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).first().click();
   const p2 = page.locator(".card", { has: page.getByRole("heading", { name: "Title and captions" }) });
-  await p2.getByLabel(/Caption words/).fill("no way he ACTUALLY did that right now");
+  await p2.getByLabel(/Caption words/).fill("no way he ACTUALLY drove the car into the lake");
   await p2.getByRole("button", { name: "Save captions" }).click();
   await expect(page.getByText(/Captions updated/)).toBeVisible();
 });
@@ -178,7 +178,7 @@ test("each page has its own default text style", async ({ page }) => {
 
 test("post links feed the analytics page", async ({ page }) => {
   await page.goto("/ready");
-  const card = page.locator(".card", { hasText: "No way he actually did that right now" }).first();
+  const card = page.locator(".card", { hasText: "no way he actually drove the car into the lake" }).first();
   await card.getByRole("tab", { name: /Streamer A YouTube/ }).click();
   await card.getByLabel(/Link to your post/).fill("https://www.tiktok.com/@x/video/1");
   await card.getByRole("button", { name: "Save link" }).click();
@@ -195,9 +195,10 @@ test("post links feed the analytics page", async ({ page }) => {
 });
 
 test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ page }) => {
+  test.setTimeout(90_000);  // two real re-renders plus the picture check on each
   await page.goto("/editor");
 199
-  await page.getByRole("link", { name: /No way he actually did that right now/ }).click();
+  await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).click();
   await expect(page).toHaveURL(/\/editor\/\d+$/);
   const video = page.locator(".ed-preview video");
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1)).toBe(true);
@@ -234,7 +235,7 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
   const lengths = () => page.evaluate(async () => {
     const t = (document.querySelector('meta[name="clippr-token"]') as HTMLMetaElement).content;
     const clips = await (await fetch("/api/clips?status=all", { headers: { "X-Clippr-Token": t } })).json();
-    const outs = clips.find((c: { title: string }) => c.title.includes("No way he")).outputs;
+    const outs = clips.find((c: { title: string }) => c.title.toLowerCase().includes("no way he")).outputs;
     if (outs.some((o: { render_state: string }) => o.render_state !== "ready")) return [];
     return Promise.all(outs.map((o: { id: number; version: string }) => new Promise<number>((res) => {
       const v = document.createElement("video");
@@ -247,7 +248,7 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
   // Reopening the editor shows the saved edit.
   await page.goto("/editor");
 248
-  await page.getByRole("link", { name: /No way he actually did that right now/ }).click();
+  await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).click();
   await expect(page.getByLabel("Text 2", { exact: true })).toHaveValue("WAIT FOR IT");
   await expect(page.getByRole("group", { name: "Speed" }).getByRole("button", { name: "1.5x" })).toHaveClass(/on/);
 });
@@ -280,7 +281,7 @@ test("the sidebar has no Agents or Account Funnel", async ({ page }) => {
 test("video editor: facecam on top with a hand-drawn box", async ({ page }) => {
   await page.goto("/editor");
 280
-  await page.getByRole("link", { name: /No way he actually did that right now/ }).click();
+  await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).click();
   const video = page.locator(".ed-preview video");
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 2)).toBe(true);
   await page.getByRole("button", { name: "Facecam on top" }).click();
@@ -301,7 +302,7 @@ test("video editor: gameplay under the stream, a sticker on top, saved as a pres
   test.skip(!dir, "needs E2E_MEDIA with game.mp4 and sticker.png");
   await page.goto("/editor");
 300
-  await page.getByRole("link", { name: /No way he actually did that right now/ }).click();
+  await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).click();
   const video = page.locator(".ed-preview video").first();
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 2)).toBe(true);
   await page.getByLabel("Add files to library").setInputFiles([`${dir}/game.mp4`, `${dir}/sticker.png`]);
@@ -321,7 +322,7 @@ test("video editor: gameplay under the stream, a sticker on top, saved as a pres
 
 test("every clip shows its grade, with the breakdown in the editor", async ({ page }) => {
   await page.goto("/editor");
-  const row = page.getByRole("link", { name: /No way he actually did that right now/ });
+  const row = page.getByRole("link", { name: /no way he actually drove the car into the lake/i });
   await expect(row.locator(".grade-badge")).toBeVisible();
   await row.click();
   await expect(page.getByRole("heading", { name: "Grade" })).toBeVisible();
@@ -397,7 +398,7 @@ test("ready to upload: filter by grade and put the best first", async ({ page })
 test("video editor: add a sound effect at the playhead and save", async ({ page }) => {
   await page.goto("/editor");
 395
-  await page.getByRole("link", { name: /No way he actually did that right now/ }).first().click();
+  await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).first().click();
   await expect(page.getByRole("heading", { name: "Sound effects" })).toBeVisible();
   await page.getByLabel("Sound to add").selectOption("scratch");
   const before = await page.getByRole("button", { name: /^Remove Record scratch/ }).count();
@@ -421,7 +422,7 @@ test("video editor: add your own sound file and use it", async ({ page }) => {
   writeFileSync(mp3, wav);
   await page.goto("/editor");
 418
-  await page.getByRole("link", { name: /No way he actually did that right now/ }).first().click();
+  await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).first().click();
   await page.getByLabel("Sound files").setInputFiles(mp3);
   await expect(page.getByText("Sound added. It's in the list for every clip.")).toBeVisible();
   await expect(page.getByLabel("Sound to add")).toHaveValue(/^lib:\d+$/);

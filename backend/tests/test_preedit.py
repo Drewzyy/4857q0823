@@ -20,9 +20,9 @@ def _w(text, start=0.0, gap=0.35):
 def test_titles_quote_the_best_line_or_sum_up_the_moment():
     from clippr import titles
     # A striking line near the big moment wins, word for word, typed the way a person would: no caps, no emoji.
-    words = _w("so we were just driving around.") + _w("bro NO WAY HE ACTUALLY DID THAT!", start=6) + _w("anyway let's keep going", start=12)
+    words = _w("so we were just driving around.") + _w("bro NO WAY HE ACTUALLY DROVE INTO THE LAKE!", start=6) + _w("anyway let's keep going", start=12)
     t, quote = titles.make_title(words, "Kai", peak=6.5)
-    assert quote and "no way he actually did that" in t and not titles.shouts(t)
+    assert quote and "no way he actually drove into the lake" in t and not titles.shouts(t)
     # No good line: an understated line that fits the mood, with the streamer's name. Never the source's own title.
     t2, quote2 = titles.make_title(_w("hahaha hahaha lmao") + _w("hahahaha", start=3), "Lacy")
     assert not quote2 and "Lacy" in t2 and t2 in [x.format(n="Lacy") for x in titles.SUMMARIES["laugh"]]

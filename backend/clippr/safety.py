@@ -13,8 +13,10 @@ What it checks, all on this computer:
   below and your blocklist in Settings;
 - the game: GTA and similar games get stricter checks, and games on your blocklist are out;
 - re-uploads: a clip with no transformation (no captions, no headline) of someone else's post goes to review.
-What it can't check here, so a person (or Muse) must look before approving: the picture itself (nudity, gore,
-weapons on screen) and whether music in the clip is copyrighted. Those are listed on every result as not checked,
+- the picture: frames across the clip are checked for nudity and sexual content (media/nsfw.py); clear nudity fails,
+  borderline pictures go to review.
+What it can't check here, so a person (or Muse) must look before approving: gore and weapons on screen, and whether
+music in the clip is copyrighted. Those are listed on every result as not checked,
 and a clip is never auto-posted on the strength of this check alone.
 
 Results: "fail" (quarantined: never reviewed, never posted, stays failed through edits and re-renders),
@@ -27,8 +29,15 @@ from datetime import datetime, timezone
 
 # category: (fails outright, needs review). Whole words or phrases, case-insensitive.
 CATEGORIES: dict[str, tuple[list[str], list[str]]] = {
-    "sexual content and nudity": (["sex tape", "porn", "pornhub", "onlyfans", "nudes", "blowjob", "handjob", "sex act", "having sex",
-                                   "strip club", "stripper", "lap dance", "naked", "nude"], ["sexy", "horny", "booty", "twerk"]),
+    "sexual content and nudity": (["sex tape", "porn", "pornhub", "onlyfans", "only fans", "fansly", "nudes", "blowjob", "blow job", "handjob",
+                                   "hand job", "sex act", "having sex", "had sex", "have sex", "sexting", "strip club", "stripper", "lap dance",
+                                   "naked", "nude", "nsfw", "titties", "tits out", "boobs out", "flash me", "masturbat",
+                                   "jerk off", "jerking off", "orgasm", "cum", "creampie", "deepthroat", "dildo", "vibrator", "fleshlight",
+                                   "hentai", "rule 34", "send nudes", "camgirl", "prostitut", "hooker", "erection", "boner",
+                                   "threesome", "gangbang", "pussy", "dick pic", "rawdog", "raw dog", "smash her", "hit it from"],
+                                  ["sexy", "horny", "booty", "twerk", "thirst trap", "bikini", "lingerie", "panties", "thong", "cleavage",
+                                   "boobs", "tits", "thicc", "e-girl", "spicy", "freaky", "kink", "kinky",
+                                   "fetish", "feet pics", "body count", "hook up", "hookup", "sleep with", "slept with", "moan"]),
     "sexualized minors": (["underage", "minor nude", "jailbait", "child porn"], []),
     "graphic violence and gore": (["gore", "decapitat", "beheading", "dismember", "torture", "execution", "executed him", "blood everywhere"],
                                   ["blood", "stabbed", "shot him", "killed him", "murder"]),
@@ -66,7 +75,7 @@ def _when(words: list[dict], phrase: str) -> float | None:
 
 
 def check(*, permission: bool | None, words: list[dict], texts: list[str], game: str = "", reupload_untransformed: bool = False,
-          blocklist: dict | None = None, previous: dict | None = None) -> dict:
+          blocklist: dict | None = None, previous: dict | None = None, picture: dict | None = None) -> dict:
     """The safety result for one clip. words: the transcript ({start, end, text}, seconds into the clip); texts: the
     headline, titles and captions shown or posted with it."""
     flags: list[dict] = []
@@ -105,10 +114,22 @@ def check(*, permission: bool | None, words: list[dict], texts: list[str], game:
                 flag("high-risk game scene", "fail", f"{game}: “{m.group(0)}”", _when(words, m.group(0)), 0.8)
             else:
                 flag("high-risk game", "review", f"{game} often shows scenes that get accounts flagged; check the picture", confidence=0.4)
+    if picture:  # media/nsfw.py: the frames themselves
+        score = picture.get("max")
+        if picture.get("level") == "fail":
+            flag("sexual content and nudity", "fail", f"Nudity or sexual content in the picture ({score:.0%} likely)", picture.get("at"), score or 0.9)
+        elif picture.get("level") == "review" and score is not None:
+            flag("sexual content and nudity", "review", f"The picture may be revealing or sexual ({score:.0%} likely): look before approving",
+                 picture.get("at"), score)
+        elif picture.get("level") == "review":
+            flag("sexual content and nudity", "review", "The picture couldn't be checked for nudity: look before approving", confidence=0.5)
     if reupload_untransformed:
         flag("unoriginal content", "review", "Someone else's post with no captions or headline added: reads as a straight re-upload", confidence=0.6)
     if previous and previous.get("status") == "fail":  # quarantine sticks: edits and re-renders never release it
         flags += [f for f in previous.get("flags", []) if f["level"] == "fail" and f not in flags]
     status = "fail" if any(f["level"] == "fail" for f in flags) else "review" if flags else "pass"
-    return {"status": status, "flags": flags, "not_checked": NOT_CHECKED,
+    unchecked = [x for x in NOT_CHECKED if not (picture and picture.get("max") is not None and x.startswith("the picture"))]
+    if len(unchecked) < len(NOT_CHECKED):
+        unchecked.insert(0, "gore and weapons on screen (nudity in the picture was checked): look before approving")
+    return {"status": status, "flags": flags, "not_checked": unchecked,
             "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}

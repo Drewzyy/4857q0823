@@ -349,7 +349,7 @@ def test_titles_and_cuts_follow_a_campaigns_length_and_names():
     import numpy as np
     from clippr import preedit, titles
     from clippr.media.overlay import Word
-    words = [Word(6.0 + i * 0.4, 6.3 + i * 0.4, t) for i, t in enumerate("no way he actually did that".split())]
+    words = [Word(6.0 + i * 0.4, 6.3 + i * 0.4, t) for i, t in enumerate("no way he actually drove the car".split())]
     quote, is_quote = titles.make_title(words, "Lacy", 6.5, ["LACY"])
     assert is_quote and quote.startswith("LACY: “no way") and "LACY" not in titles.make_title(words, "Lacy", 6.5)[0]  # named only when asked
     assert titles.make_title(words, "Lacy", 6.5, ["Dani", "Lacy"])[0].startswith("Dani and Lacy: ")
@@ -394,7 +394,7 @@ def test_a_new_clip_is_cut_and_titled_for_its_campaign(env):
     ctx.pipeline.check_source(sid)
     drain(ctx)
     [clip] = c.get("/api/clips").json()
-    assert clip["title"].startswith("STREAMER A: “no way he actually did that")  # its name is on the video, the quote word for word
+    assert clip["title"].startswith("STREAMER A: “no way he actually drove")  # its name is on the video, the quote word for word
     with ctx.db.session() as s:
         e = s.get(Clip, clip["id"]).edit
     assert e["texts"][0]["text"] == clip["title"] and 0 < clip_seconds(e) <= 14, e  # cut to the campaign's longest (the teaser counts)
