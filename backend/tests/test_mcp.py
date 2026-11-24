@@ -84,7 +84,7 @@ def test_muse_reviews_approves_and_posts_and_marks_posted(env, tmp_path):
     assert init["result"]["serverInfo"]["name"] == "vyral" and "tools" in init["result"]["capabilities"]
     names = {t["name"] for t in _rpc(mc, "tools/list", token=tok).json()["result"]["tools"]}
     assert names == {"list_ready_clips", "get_clip", "list_sources", "list_destinations", "list_funnel_routes", "list_clips_for_review",
-                     "review_clip", "update_clip", "approve_clip", "reject_clip", "give_feedback", "report_metrics", "get_posting_package", "mark_posted",
+                     "review_clip", "update_clip", "approve_clip", "reject_clip", "give_feedback", "report_metrics", "set_streamer", "get_posting_package", "mark_posted",
                      "get_safety_check", "list_quarantined_clips", "list_campaigns"}
 
     err, ready = _call(mc, tok, "list_ready_clips")

@@ -13,18 +13,24 @@ from pathlib import Path
 
 from .ffmpeg import FFmpegError, run
 
-SAMPLES = 8
+SAMPLES = 14  # captions pause when nobody talks: more frames so short silences don't hide them
 WIDTH = 640
 
 
 def _lines(gray) -> list[tuple[int, int, int, int]]:
-    """Text-line boxes (x, y, w, h) in the middle-to-bottom band of one frame, centered ones only."""
+    """Text-line boxes (x, y, w, h) in the band from a fifth of the way down to the bottom of one frame, centered ones only."""
     import cv2
     h, w = gray.shape
-    top = int(h * 0.42)
+    top = int(h * 0.22)  # TikTok-style captions often sit just above the middle, not only low down
     band = gray[top:int(h * 0.95)]
     grad = cv2.morphologyEx(band, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
     _, bw = cv2.threshold(grad, 110, 255, cv2.THRESH_BINARY)  # caption text has hard, high-contrast edges (an outline)
+    # Long straight edges (the picture's own stripes, borders, UI panels) aren't letters. Left in, they run through a
+    # caption and merge it into one shape too tall to be text, so busy footage hid its captions (the double captions).
+    import numpy as np
+    vert = cv2.morphologyEx(bw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(3, int(h * 0.14)))))
+    hori = cv2.morphologyEx(bw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, w // 5), 1)))
+    bw = cv2.subtract(bw, cv2.dilate(cv2.bitwise_or(vert, hori), np.ones((3, 3), np.uint8)))
     joined = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (max(9, w // 40), 3)))
     parts = []
     for c in cv2.findContours(joined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
@@ -76,14 +82,20 @@ def has_captions(src: Path, start: float, dur: float) -> bool:
             mid = y + bh / 2
             at = [next((b for b in bx if abs(b[1] + b[3] / 2 - mid) < 0.04 * h), None) for _, bx in frames]
             hits = [(g, b) for (g, _), b in zip(frames, at) if b]
-            if len(hits) < len(frames) * 0.5:
+            if len(hits) < len(frames) * 0.35:
                 continue
             # ...and whose words change from frame to frame: captions. The same words throughout is a title or a logo.
             # Compared on the text's own hard edges only, so moving footage behind a fixed title doesn't count as change.
             y0, y1, x0, x1 = max(0, int(mid - 0.035 * h)), int(mid + 0.035 * h), int(frames[0][0].shape[1] * 0.12), int(frames[0][0].shape[1] * 0.88)
-            masks = [cv2.morphologyEx(g[y0:y1, x0:x1], cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8)) > 110 for g, _ in hits]
+            masks = []
+            for g, b in hits:  # each frame's own text line only: the picture around it would make any two frames look alike
+                m = cv2.morphologyEx(g[y0:y1, x0:x1], cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8)) > 110
+                keep = np.zeros_like(m)
+                keep[:, max(0, b[0] - x0 - 4):max(0, b[0] + b[2] - x0 + 4)] = True
+                masks.append(m & keep)
             overlap = [float((a & b).sum()) / max(1.0, float((a | b).sum())) for a, b in zip(masks, masks[1:])]
-            # Measured on real clips: a fixed title overlaps itself 0.6 to 0.95 from frame to frame, captions 0.1 to 0.45.
-            if overlap and float(np.median(overlap)) < 0.45:
+            # Each frame's own text line only: a fixed title overlaps itself almost fully (0.9 to 1) from frame to frame,
+            # changing captions about half (the same capital letters on the same baseline) or less.
+            if overlap and float(np.median(overlap)) < 0.75:
                 return True
     return False

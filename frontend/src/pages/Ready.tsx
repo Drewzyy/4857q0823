@@ -150,7 +150,7 @@ const ClipCard = memo(function ClipCard({ clip, tab, onChange, onRemove, toast }
           {clip.content && <span className="chip small" title={`Detected: ${clip.content.why.join("; ")} (${Math.round(clip.content.confidence * 100)}% sure)`}>
             {KINDS.find(([k]) => k === clip.content!.kind)?.[1]}</span>}
           <h2 className="ellipsis" style={{ flex: 1, minWidth: 0 }}>{clip.title}</h2>
-          {clip.creator && <span className="chip"><span className="dot" style={{ background: clip.creator.color }} />{clip.creator.name}</span>}
+          <StreamerPicker clip={clip} onChange={onChange} toast={toast} />
           {clip.editable && <Link className="btn sm" to={`/editor/${clip.id}`}><Clapperboard size={13} />Edit video</Link>}
           <button className="btn ghost icon" aria-label="Delete clip" onClick={() => onRemove(clip)}><Trash2 size={14} /></button>
         </div>
@@ -375,5 +375,26 @@ function ReviewBar({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; 
       {o.review !== "rejected" && <button className="btn sm ghost" disabled={busy}
         onClick={() => { const reason = window.prompt("Why? (kept with the clip)", "Not good enough"); if (reason !== null) void go(() => api.review(o.id, { decision: "reject", reason }), "Rejected"); }}>Reject</button>}
     </div>
+  );
+}
+
+/** Who the clip is of. Vyral picked the wrong streamer? Pick the right one: the clip's pages, captions and title follow. */
+function StreamerPicker({ clip, onChange, toast }: { clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+  const { data } = useQuery({ queryKey: ["creators"], queryFn: api.creators, staleTime: 60_000 });
+  const [busy, setBusy] = useState(false);
+  if (!data?.length) return clip.creator ? <span className="chip"><span className="dot" style={{ background: clip.creator.color }} />{clip.creator.name}</span> : null;
+  return (
+    <select className="select" style={{ width: "auto" }} aria-label="Streamer in this clip" disabled={busy} value={clip.creator?.id ?? ""}
+      title="Wrong streamer? Pick the right one: the clip moves to their pages, with their @ and hashtags"
+      onChange={async (e) => {
+        const id = Number(e.target.value);
+        if (!id || !window.confirm("Move this clip to " + (data.find((c) => c.id === id)?.name ?? "that streamer") + "? It's re-cut for their pages.")) return;
+        setBusy(true);
+        try { const r = await api.setStreamer(clip.id, id); toast("ok", `Moved to ${r.streamer}`); onChange(); }
+        catch (err) { toast("err", err instanceof Error ? err.message : String(err)); } finally { setBusy(false); }
+      }}>
+      {!clip.creator && <option value="">Which streamer?</option>}
+      {data.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </select>
   );
 }

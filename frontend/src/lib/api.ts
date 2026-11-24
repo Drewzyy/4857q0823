@@ -197,6 +197,7 @@ export const api = {
   updateStreamer: (id: number, b: Partial<{ name: string; links: string[]; destination_ids: number[]; watching: boolean; kind: ClipKind; rules: CaptionRules }>) => request<StreamerT>("PATCH", `/streamers/${id}`, b),
   removeStreamer: (id: number) => request<void>("DELETE", `/streamers/${id}`),
   creators: () => request<Creator[]>("GET", "/creators"),
+  setStreamer: (clipId: number, creatorId: number) => request<{ streamer: string; pages_added: number; pages_removed: number }>("POST", `/clips/${clipId}/streamer`, { creator_id: creatorId }),
   setCreatorFacecam: (id: number, cam: number[] | null) => request<Creator>("PUT", `/creators/${id}/facecam`, { cam }),
   createFolder: (name: string) => request<Folder>("POST", "/folders", { name }),
   deleteFolder: (id: number) => request<void>("DELETE", `/folders/${id}`),

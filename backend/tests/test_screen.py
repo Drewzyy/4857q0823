@@ -1,6 +1,8 @@
 """The clip screener, learning from review notes, clearing all clips, and finding posts made on your pages."""
 from datetime import datetime, timedelta, timezone
 
+from pathlib import Path
+
 import numpy as np
 
 from clippr import preedit, screen
@@ -298,3 +300,22 @@ def test_muse_reports_instagram_numbers(ctx, tmp_path):
     assert mcp.report_metrics(ctx, {"clip_id": cid, "views": 1200, "likes": 80})["recorded"] == {"views": 1200, "likes": 80}
     with ctx.db.session() as s:
         assert s.query(MetricSnapshot).one().source == "muse"
+
+
+def test_captions_already_in_the_footage_are_found(tmp_path):
+    from clippr.media import onscreen
+    from clippr.media.ffmpeg import run
+    font = next((Path(__file__).parent.parent / "clippr" / "media" / "fonts").glob("*.ttf"))
+    ff = str(font).replace("\\", "/").replace(":", "\\:")
+    words = ["NO WAY HE", "ACTUALLY DID", "THAT RIGHT", "NOW BRO", "LOOK AT", "THE CAR GO", "INTO THE", "LAKE OMG"]
+    caps = ",".join(f"drawtext=fontfile='{ff}':text='{w}':fontsize=54:fontcolor=yellow:borderw=5:bordercolor=black:"
+                    f"x=(w-tw)/2:y=h*0.36:enable='between(t,{i * 2},{i * 2 + 2})'" for i, w in enumerate(words))
+    base = ["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=10:duration=16"]
+    with_caps, titled, plain = tmp_path / "c.mp4", tmp_path / "t.mp4", tmp_path / "p.mp4"
+    run([*base, "-vf", caps, "-c:v", "libx264", "-preset", "ultrafast", str(with_caps)])
+    run([*base, "-vf", f"drawtext=fontfile='{ff}':text='SAME TITLE ALL CLIP':fontsize=54:fontcolor=white:borderw=5:x=(w-tw)/2:y=h*0.7",
+         "-c:v", "libx264", "-preset", "ultrafast", str(titled)])
+    run([*base, "-c:v", "libx264", "-preset", "ultrafast", str(plain)])
+    assert onscreen.has_captions(with_caps, 0, 16)  # just above the middle, like TikTok reposts: found
+    assert not onscreen.has_captions(titled, 0, 16)  # a fixed line is a title, not captions
+    assert not onscreen.has_captions(plain, 0, 16)

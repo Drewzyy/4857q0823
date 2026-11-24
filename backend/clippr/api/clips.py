@@ -510,3 +510,16 @@ def sound_file(name: str, c=Depends(ctx)):
     if name not in sfx.SOUNDS:
         raise ApiError(404, "not_found", "No sound by that name")
     return FileResponse(sfx.path(name, c.pipeline._dir("sfx")), media_type="audio/wav")
+
+
+class StreamerIn(BaseModel):
+    creator_id: int
+
+
+@router.post("/clips/{cid}/streamer")
+def set_streamer(cid: int, body: StreamerIn, c=Depends(ctx), s: Session = Depends(db)):
+    """Vyral picked the wrong streamer for this clip: move it to the right one (its pages, captions and title follow)."""
+    get_or_404(s, Clip, cid, "Clip")
+    get_or_404(s, Creator, body.creator_id, "Streamer")
+    s.commit()
+    return c.pipeline.reassign(cid, body.creator_id)

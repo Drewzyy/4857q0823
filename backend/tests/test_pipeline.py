@@ -983,3 +983,22 @@ def test_clips_of_a_live_stream_are_made_right_away_from_the_viewer_clip(env):
     ctx.pipeline.check_source(sid)
     drain(ctx)
     assert {r["status"] for r in c.get("/api/references").json()} == {"ready", "duplicate"}
+
+
+def test_a_clip_of_the_wrong_streamer_is_moved_to_the_right_one(env):
+    ctx, c, fake = env
+    _, sid, tt, yt = setup_accounts(c)
+    fake.posts = [RemotePost("old1", "https://www.tiktok.com/@a.clips/video/old1", "old")]
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("new1", "https://www.tiktok.com/@a.clips/video/new1", "he did it"), *fake.posts]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    [clip] = c.get("/api/clips").json()
+    b = c.post("/api/creators", json={"name": "Jason", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/jasontheween"]}).json()
+    page = c.post("/api/destinations", json={"platform": "instagram", "display_name": "Jason page", "creator_ids": [b["id"]]}).json()
+    r = c.post(f"/api/clips/{clip['id']}/streamer", json={"creator_id": b["id"]}).json()
+    assert r == {"streamer": "Jason", "pages_added": 1, "pages_removed": 2}
+    drain(ctx)
+    [clip] = c.get("/api/clips").json()
+    live = [o for o in clip["outputs"] if o["status"] == "ready"]
+    assert [o["destination"]["id"] for o in live] == [page["id"]] and live[0]["description"].startswith("@jasontheween #jasontheween")

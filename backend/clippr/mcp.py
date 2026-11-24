@@ -323,6 +323,17 @@ def report_metrics(ctx, a):
         return {"output_id": o.id, "recorded": nums}
 
 
+def set_streamer(ctx, a):
+    """The clip is of another streamer than Vyral thought (the "wrong person"): move it to the right one."""
+    with ctx.db.session() as s:
+        c = _get(s, a["clip_id"])
+        cr = s.get(Creator, a["creator_id"])
+        if not cr:
+            raise ToolError("No such streamer: list_sources shows them")
+        cid = c.id
+    return ctx.pipeline.reassign(cid, cr.id)
+
+
 ID = {"clip_id": {"type": "integer"}}
 DEST = {"destination_id": {"type": "integer", "description": "Which page; needed when the clip goes to more than one"}}
 RO = {"readOnlyHint": True}
@@ -359,6 +370,9 @@ TOOLS: dict[str, tuple[Callable, str, dict, list[str], dict]] = {
                        "as the post shows them now. Report them a few times over the first days: the best performers go on to your other pages.",
                        {**ID, **DEST, **{k: {"type": "integer", "minimum": 0} for k in ("views", "likes", "comments", "shares")}},
                        ["clip_id", "views"], {}),
+    "set_streamer": (set_streamer, "The clip is of a different streamer than Vyral picked (wrong person): move it to the right one by their "
+                     "id (list_sources). Its pages, @, hashtags and title are redone for them.",
+                     {**ID, "creator_id": {"type": "integer"}}, ["clip_id", "creator_id"], {}),
     "give_feedback": (give_feedback, "Tell Vyral what you think of a clip without rejecting it (\"good but too long\", \"needs more setup\"). "
                       "It adjusts how the next clips are cut and screened; returns what changed.",
                       {**ID, "note": {"type": "string", "minLength": 1, "maxLength": 500}}, ["clip_id", "note"], {}),

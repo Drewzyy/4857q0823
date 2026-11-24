@@ -1039,6 +1039,9 @@ class Pipeline:
             e = dict(clip.edit or ClipEdit(start=base, end=base + (clip.source_duration or 0.0)).model_dump())
             if redo:
                 e.update(start=base, end=base + (clip.source_duration or 0.0), preedited=False, preedit_version=0, sounds=[], hook=None, punch=None)
+            if redo:  # look again for captions already in the picture (the window may have moved; the check got better)
+                burned = onscreen.has_captions(Path(clip.source_path), base, clip.source_duration or 0.0)
+                e.update(captions=not burned, source_has_captions=burned)
             fixes = load_settings(s).captions.fixes
             if fixes and clip.words:  # names the speech model got wrong, fixed in clips made before the fix was added
                 clip.words = [w.to_dict() for w in overlay.fix_words([Word.from_dict(w) for w in clip.words], fixes)]
@@ -1125,6 +1128,36 @@ class Pipeline:
         s.add(o)
         s.flush()
         return o
+
+    def reassign(self, cid: int, creator_id: int) -> dict:
+        """The clip is of another streamer than Vyral thought: it's moved to them. Pages that don't take that streamer
+        lose their not-yet-posted video (withdrawn, never deleted); pages that do get one; then it's cut and titled
+        again for them (their @ and hashtags, their name), and checked again (their clip permission)."""
+        with self.ctx.db.session() as s:
+            clip, cr = s.get(Clip, cid), s.get(Creator, creator_id)
+            if not clip or not cr:
+                raise ValueError("No such clip or streamer")
+            clip.creator_id = creator_id
+            if clip.reference:
+                clip.reference.creator_id = creator_id
+            s.flush()
+            s.expire(clip, ["creator"])
+            own = cr.content_kind or "regular"
+            found = clip.content or {}
+            pages = for_kind(pages_for(s, {creator_id}), found["page_kind"] if found.get("confidence", 0) >= 0.6 else own, own)
+            want = {d.id for d in pages}
+            withdrawn = 0
+            for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)).unique():
+                if o.status == "ready" and o.destination_id not in want:
+                    o.status, o.review_note = "withdrawn", f"Moved to {cr.name}, whose clips don't go to this page"
+                    withdrawn += 1
+            has = {o.destination_id for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid, ClipOutput.status != "withdrawn"))}
+            added = [self._add_output(s, clip, d) for d in pages if d.id not in has]
+            audit(s, "clip.reassigned", "clip", cid, {"to": cr.name, "withdrawn": withdrawn, "added": len(added)})
+            proc = load_settings(s).processing
+        self.preedit_clip(cid, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first, redo=True)
+        self.check_safety(cid)
+        return {"streamer": cr.name, "pages_added": len(added), "pages_removed": withdrawn}
 
     def promote_best(self) -> dict:
         """Pages fed by other pages get the clips that did best there. For each fed page, the posts on its source
