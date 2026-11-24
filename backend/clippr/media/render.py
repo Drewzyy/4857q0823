@@ -49,7 +49,7 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
            video_height: float = 0.0, cam: list[float] | None = None, bottom: Path | None = None,
            gaps: list[tuple[float, float]] | None = None, layers: list[Layer] = (), use_hardware: bool = True,
            sounds: list[tuple[Path, float, float]] = (), hook: tuple[float, float] | None = None,
-           bleeps: list[tuple[float, float]] = (),
+           bleeps: list[tuple[float, float]] = (), face: list[float] | None = None,
            punch: list[tuple[float, float]] = ()) -> Path:
     """overlay_dir: folder prepared by overlay.prepare() holding overlay.ass + fonts (text burned in).
     video_height: how much of the frame's height the sharp video fills (0.45 = 45%). A wide stream is trimmed at
@@ -94,7 +94,11 @@ def render(src: Path, out: Path, fmt: OutputFormat, *, start: float | None = Non
         src_v = "[cutv]"
     timing = f"setpts=PTS/{speed:.4f},fps={fps:.3f}"
     stacked = H > W and (cam or bottom)  # vertical outputs only
-    if stacked:  # facecam on top and content under it, or content on top and gameplay under it; no blurred background
+    if face:  # only the facecam (x, y, w, h shares of the stream), filling the frame: when the rest can't be shown
+        fx, fy, fw, fh = face
+        vf = (f"{pre}{src_v}{timing},crop=iw*{fw:.4f}:ih*{fh:.4f}:iw*{fx:.4f}:ih*{fy:.4f},"
+              f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H},setsar=1[base]")
+    elif stacked:  # facecam on top and content under it, or content on top and gameplay under it; no blurred background
         from .facecam import CAM_SHARE
         hb = int(H * (CAM_SHARE if cam else SPLIT_SHARE)) // 2 * 2
         ht = H - hb

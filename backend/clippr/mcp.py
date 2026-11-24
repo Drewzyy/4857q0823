@@ -34,7 +34,7 @@ from .api.analytics import HOSTS, link_post
 from .api.clips import _live_outputs, apply_edit
 from .api.deps import ApiError
 from .api.system import load_settings
-from .models import Campaign, CampaignClip, Clip, ClipOutput, Creator, DestinationAccount, SourceAccount
+from .models import Campaign, CampaignClip, Clip, ClipOutput, Creator, DestinationAccount, MetricSnapshot, SourceAccount
 from .routing import destination_creator_ids, page_kinds, source_creator_ids
 from .schemas import ClipEdit
 
@@ -308,6 +308,21 @@ def mark_posted(ctx, a):
     raise ToolError(f"Not recorded as posted: {chk['reason']}. Post the video, then send the link to the live post.")
 
 
+def report_metrics(ctx, a):
+    """Numbers for a post Vyral can't read itself (Instagram, Facebook, X): views, likes, comments, shares as the post
+    shows them now. They feed Analytics and which clips go on to your other pages (promote_best)."""
+    with ctx.db.session() as s:
+        o = _pick_output(s, _get(s, a["clip_id"]), a.get("destination_id"))
+        if not o.post_url:
+            raise ToolError("Record the post first with mark_posted")
+        nums = {k: int(a[k]) for k in ("views", "likes", "comments", "shares") if a.get(k) is not None}
+        if not nums:
+            raise ToolError("Send at least views")
+        s.add(MetricSnapshot(output_id=o.id, source="muse", **nums))
+        audit(s, "metrics.reported", "output", o.id, {"by": ACTOR, **nums})
+        return {"output_id": o.id, "recorded": nums}
+
+
 ID = {"clip_id": {"type": "integer"}}
 DEST = {"destination_id": {"type": "integer", "description": "Which page; needed when the clip goes to more than one"}}
 RO = {"readOnlyHint": True}
@@ -340,6 +355,10 @@ TOOLS: dict[str, tuple[Callable, str, dict, list[str], dict]] = {
     "reject_clip": (reject_clip, "Reject a clip (one page, or all of them) with a reason. Say it plainly (too short, too long, boring, "
                     "no context, just screaming): Vyral learns from it and cuts and screens the next clips to match.",
                     {**ID, **DEST, "reason": {"type": "string", "minLength": 1, "maxLength": 500}}, ["clip_id", "reason"], {}),
+    "report_metrics": (report_metrics, "For a post Vyral can't read itself (Instagram, Facebook, X): its views, likes, comments and shares "
+                       "as the post shows them now. Report them a few times over the first days: the best performers go on to your other pages.",
+                       {**ID, **DEST, **{k: {"type": "integer", "minimum": 0} for k in ("views", "likes", "comments", "shares")}},
+                       ["clip_id", "views"], {}),
     "give_feedback": (give_feedback, "Tell Vyral what you think of a clip without rejecting it (\"good but too long\", \"needs more setup\"). "
                       "It adjusts how the next clips are cut and screened; returns what changed.",
                       {**ID, "note": {"type": "string", "minLength": 1, "maxLength": 500}}, ["clip_id", "note"], {}),

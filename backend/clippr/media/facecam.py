@@ -146,3 +146,27 @@ def subject_pan(frames: list, size: tuple[int, int] | None, crop_share: float) -
     if max(biggest) - min(biggest) > 0.5:  # people on both sides: no single framing keeps them all
         return None
     return round(min(1.0, max(0.0, (cx - crop_share / 2) / (1 - crop_share))), 3)
+
+
+def two_people(frames: list, size: tuple[int, int] | None, stream_aspect: float, panel_aspect: float,
+               crop_share: float) -> tuple[list[float], float] | None:
+    """Two people talking side by side (a podcast, two streamers on one camera, an IRL chat): (the box around the
+    left person for the top panel, pan_x pointing the bottom at the right person), or None. crop_share: how much of
+    the stream's width the bottom panel shows. Both faces have to be
+    there in at least 40% of the frames, a similar size, and well apart, so each gets their own view."""
+    if not frames or not size:
+        return None
+    w, h = size
+    lefts, rights = [], []
+    for faces in frames:
+        people = sorted(((x + fw / 2) / w, (y + fh / 2) / h, fw / w) for x, y, fw, fh in faces if 0.05 <= fw / w <= 0.35)
+        if len(people) >= 2 and people[-1][0] - people[0][0] >= 0.3 and 0.5 <= people[0][2] / people[-1][2] <= 2:
+            lefts.append(people[0])
+            rights.append(people[-1])
+    if len(lefts) < max(2, len(frames) * 0.4):
+        return None
+    avg = lambda pts: tuple(sum(p[i] for p in pts) / len(pts) for i in range(3))  # noqa: E731
+    left, right = avg(lefts), avg(rights)
+    box = cam_box((left[0], left[1], left[2] * 0.7), stream_aspect, panel_aspect)  # the face a little closer than a facecam
+    pan = (right[0] - crop_share / 2) / (1 - crop_share) if crop_share < 0.98 else 0.5  # the bottom crop centered on them
+    return box, round(min(max(pan, 0.0), 1.0), 3)

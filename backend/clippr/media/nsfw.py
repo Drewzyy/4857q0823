@@ -60,11 +60,18 @@ def _frames(path: Path, start: float, dur: float):
             yield t - start, frame
 
 
-def scan(path: Path, start: float, dur: float) -> dict:
-    """{"max": highest score, "at": seconds into the clip, "hits": frames over FAIL, "level": fail | review | pass}."""
+def scan(path: Path, start: float, dur: float, region: list[float] | None = None) -> dict:
+    """{"max": highest score, "at": seconds into the clip, "hits": frames over FAIL, "level": fail | review | pass}.
+    region: only this part of the picture (x, y, w, h as shares), e.g. the facecam when that's all that's shown."""
     worst, at, hits = 0.0, None, 0
     try:
         for t, frame in _frames(path, start, dur):
+            if region:
+                fh, fw = frame.shape[:2]
+                x, y, w, h = region
+                frame = frame[int(y * fh):int((y + h) * fh), int(x * fw):int((x + w) * fw)]
+                if frame.size == 0:
+                    continue
             h, w = frame.shape[:2]
             side = min(h, w)
             middle = frame[(h - side) // 2:(h + side) // 2, (w - side) // 2:(w + side) // 2]

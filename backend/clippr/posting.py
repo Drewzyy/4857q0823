@@ -51,7 +51,26 @@ def held_back(clip: Clip, min_virality: int) -> str | None:
     if score < max(min_virality, taught):
         return f"Virality score {score} is under the minimum of {max(min_virality, taught)}" + \
             (" (Settings)" if min_virality >= taught else " (raised by your reviews)")
+    cap = load_settings(s).posting.per_streamer_day if s else 0
+    if cap and clip.creator_id and clip.created_at:
+        rank = _rank_today(s, clip, max(min_virality, taught))
+        if rank > cap:
+            return f"Today's {cap} best clips of {clip.creator.name} go out; this one is number {rank} (Settings > Muse & posting)"
     return None
+
+
+def _rank_today(s: Session, clip: Clip, least: int) -> int:
+    """Where this clip ranks by score among the streamer's clips made the same day that otherwise could go out."""
+    day = clip.created_at.astimezone(timezone.utc).date()
+    start = datetime.combine(day, datetime.min.time(), timezone.utc)
+    rivals = s.scalars(select(Clip).where(Clip.creator_id == clip.creator_id, Clip.status == "ready", Clip.created_at >= start,
+                                          Clip.created_at < start + timedelta(days=1))).unique()
+    def ok(c: Clip) -> bool:
+        g = c.grade or {}
+        return (g.get("score") or 0) >= least and (g.get("screen") or {"pass": True}).get("pass", True) \
+            and (c.safety or {}).get("status") in ("pass", "review")
+    mine = ((clip.grade or {}).get("score") or 0, -clip.id)
+    return 1 + sum(1 for c in rivals if c.id != clip.id and ok(c) and ((c.grade or {}).get("score") or 0, -c.id) > mine)
 
 
 def reviewed_posts(s: Session, dest_id: int) -> int:

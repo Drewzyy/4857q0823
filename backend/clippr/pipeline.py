@@ -505,6 +505,11 @@ class Pipeline:
             cam = facecam.detect(source, start, dur, stream, fmt.width / (fmt.height * facecam.CAM_SHARE), sampled)
             if cam:
                 return {"layout": "stacked", "cam": cam}
+            # Two people talking side by side: one on top, the other underneath, so both reactions are on screen.
+            pair = facecam.two_people(*sampled, stream, fmt.width / (fmt.height * facecam.CAM_SHARE),
+                                      min(1.0, fmt.width / (fmt.height * (1 - facecam.CAM_SHARE)) / stream))
+            if pair:
+                return {"layout": "stacked", "cam": pair[0], "pan_x": pair[1]}
             # Zoomed in to fill the frame, only a slice of a wide stream fits: keep the person in that slice.
             crop_share = min(1.0, (fmt.width / (fmt.height * VIDEO_HEIGHT)) / stream)
             pan = facecam.subject_pan(*sampled, crop_share)
@@ -740,7 +745,7 @@ class Pipeline:
         """`words` are timed from `start`; an editor `edit` may move the cut, zoom/pan, change speed, cut dead air,
         lay the clip out over a facecam or gameplay, and add texts and library layers."""
         fmt = OutputFormat.from_settings(fmt_raw)
-        cam = bottom = None
+        cam = bottom = face = None
         rel: list[tuple[float, float]] = []
         layers: list[Layer] = []
         sounds: list = []
@@ -757,7 +762,9 @@ class Pipeline:
                 title_text = ""  # the clip's own headline replaces the page title
             captions_on = edit.get("captions", True)  # off: the footage already has its own (swearing is still bleeped)
             files = self._library_files([edit.get("bottom_media")] + [ly["media_id"] for ly in edit.get("layers") or []])
-            if edit.get("layout") == "stacked" and edit.get("cam"):
+            if edit.get("layout") == "face" and edit.get("cam"):
+                face = edit["cam"]
+            elif edit.get("layout") == "stacked" and edit.get("cam"):
                 cam = edit["cam"]
             elif edit.get("layout") == "split" and edit.get("bottom_media") in files:
                 bottom = files[edit["bottom_media"]][0]
@@ -808,7 +815,7 @@ class Pipeline:
             use_hardware = load_settings(s).processing.hardware_encoding
         render(source, out, fmt, start=start, duration=dur, overlay_dir=ov_dir if use_text else None, zoom=zoom, pan=pan,
                speed=speed, video_height=video_height, cam=cam, bottom=bottom, gaps=rel, layers=layers, use_hardware=use_hardware,
-               sounds=sounds, hook=hook, punch=punch, bleeps=bleeps)
+               sounds=sounds, hook=hook, punch=punch, bleeps=bleeps, face=face)
         cover = 1.0
         if edit and edit.get("thumb_at") is not None:
             t = min(max(edit["thumb_at"] - start, 0.0), dur)
@@ -897,14 +904,35 @@ class Pipeline:
             base = clip.source_start or 0.0
             a, b = e.get("start", base), e.get("end", base + (clip.source_duration or 0.0))
             src, seen = clip.source_path, (clip.safety or {}).get("picture") or {}
-        key = f"{src}|{a:.2f}|{b:.2f}"
+            cam = e.get("cam") or (list(clip.creator.facecam) if clip.creator and clip.creator.facecam else None)
+            face_only = e.get("layout") == "face" and bool(e.get("cam"))
+        key = f"{src}|{a:.2f}|{b:.2f}|{'face:' + str(e.get('cam')) if face_only else 'all'}"
+        ok = bool(src and Path(src).exists())
         picture = seen if seen.get("key") == key else \
-            {**nsfw.scan(Path(src), a, max(b - a, 0.5)), "key": key} if src and Path(src).exists() else None
+            {**nsfw.scan(Path(src), a, max(b - a, 0.5), e["cam"] if face_only else None), "key": key} if ok else None
+        if picture and picture.get("level") == "fail" and not face_only and cam and ok:
+            # Nudity in the gameplay: show only the streamer's face (their reaction is what matters) if that's clean.
+            alone = nsfw.scan(Path(src), a, max(b - a, 0.5), cam)
+            if alone.get("level") == "pass":
+                with self.ctx.db.session() as s:
+                    clip = s.get(Clip, clip_id)
+                    clip.edit = {**(clip.edit or {}), "layout": "face", "cam": cam}
+                    outs = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip_id)) if o.status == "ready"]
+                    for o in outs:
+                        o.render_state, o.render_error = "rendering", None
+                    s.flush()
+                    if outs:
+                        self.ctx.jobs.enqueue("clip.rerender", {"output_ids": [o.id for o in outs]}, max_attempts=1, session=s)
+                    audit(s, "clip.face_only", "clip", clip_id, {"gameplay_score": picture.get("max")})
+                picture = {**alone, "key": f"{src}|{a:.2f}|{b:.2f}|face:{cam}",
+                           "note": f"The gameplay showed nudity ({picture['max']:.0%} likely), so only the streamer's face is shown"}
         with self.ctx.db.session() as s:
             clip = s.get(Clip, clip_id)
             if not clip:
                 return None
             prev = clip.safety or {}
+            if picture and picture.get("note"):  # the picture that failed is no longer shown: that quarantine is lifted
+                prev = {**prev, "flags": [f for f in prev.get("flags", []) if not f["reason"].startswith("Nudity or sexual content in the picture")]}
             game = game if game is not None else prev.get("game", "")
             outs = s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip_id)).all()
             e = clip.edit or {}
@@ -1077,21 +1105,65 @@ class Pipeline:
                 own = (clip.creator.content_kind if clip.creator else "") or "regular"
                 found = clip.content or {}
                 dests = for_kind(dests, found["page_kind"] if found.get("confidence", 0) >= 0.6 else own, own)
-                ref = clip.reference
                 for d in dests:
-                    st = dict(d.settings or {})
-                    title, desc = describe.build(d.platform, clip.title, ref.title if ref else "", st, rules=campaigns.caption_rules(s, clip),
-                                                 streamer=streamer_handle(clip.creator))
-                    o = ClipOutput(clip_id=clip.id, destination_id=d.id, platform=d.platform, title=title, description=desc,
-                                   video_title=clip.title, overlay=lenient(OverlaySettings, st.get("overlay")).model_dump(),
-                                   format=dict(st.get("format") or {}), render_state="rendering")
-                    s.add(o)
-                    s.flush()
-                    restored.append(o.id)
+                    restored.append(self._add_output(s, clip, d).id)
             if restored:
                 self.ctx.jobs.enqueue("clip.rerender", {"output_ids": restored}, max_attempts=1, session=s)
                 log.warning("restoring %d page videos lost in an earlier update", len(restored))
         return {"restored": len(restored)}
+
+    @staticmethod
+    def _add_output(s, clip: Clip, d: DestinationAccount, **fields) -> ClipOutput:
+        """A new page video for a clip, to be rendered (clip.rerender) with the page's format and the clip's edit."""
+        st = dict(d.settings or {})
+        ref = clip.reference
+        title, desc = describe.build(d.platform, clip.title, ref.title if ref else "", st, game=(clip.safety or {}).get("game", ""),
+                                     rules=campaigns.caption_rules(s, clip), streamer=streamer_handle(clip.creator))
+        o = ClipOutput(clip_id=clip.id, destination_id=d.id, platform=d.platform, title=title, description=desc,
+                       video_title=clip.title, overlay=lenient(OverlaySettings, st.get("overlay")).model_dump(),
+                       format=dict(st.get("format") or {}), render_state="rendering", **fields)
+        s.add(o)
+        s.flush()
+        return o
+
+    def promote_best(self) -> dict:
+        """Pages fed by other pages get the clips that did best there. For each fed page, the posts on its source
+        pages from the last 14 days that have been up at least 6 hours are ranked by views an hour; the top share
+        (the page's top_percent) that this page doesn't have yet get a video for it, already approved (they were
+        approved and posted once, and did well). Needs at least 3 such posts on a source page to judge. Instagram
+        numbers come from Muse (report_metrics) or typed in on Analytics; TikTok and YouTube are read by themselves."""
+        import math
+        made = []
+        with self.ctx.db.session() as s:
+            fed = [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()
+                   if (d.settings or {}).get("feeds_from")]
+            for d in fed:
+                st = dict(d.settings or {})
+                has = {o.clip_id for o in s.scalars(select(ClipOutput).where(ClipOutput.destination_id == d.id))}
+                for src in st["feeds_from"]:
+                    posts = []
+                    for o in s.scalars(select(ClipOutput).where(ClipOutput.destination_id == src, ClipOutput.status == "uploaded",
+                                                                ClipOutput.uploaded_at >= now() - timedelta(days=14))).unique():
+                        hours = (now() - o.uploaded_at).total_seconds() / 3600
+                        snap = s.scalar(select(MetricSnapshot).where(MetricSnapshot.output_id == o.id, MetricSnapshot.views.is_not(None))
+                                        .order_by(MetricSnapshot.ts.desc()).limit(1))
+                        if hours >= 6 and snap:
+                            posts.append((snap.views / hours, o.clip_id))
+                    if len(posts) < 3:
+                        continue
+                    posts.sort(reverse=True)
+                    for _, cid in posts[:max(1, math.ceil(len(posts) * st.get("top_percent", 25) / 100))]:
+                        clip = s.get(Clip, cid)
+                        if cid in has or not clip or clip.status != "ready" or not clip.source_path or not Path(clip.source_path).exists():
+                            continue
+                        o = self._add_output(s, clip, d, review="approved", reviewed_by="promoted",
+                                             review_note="Did well on another of your pages")
+                        made.append(o.id)
+                        has.add(cid)
+                        audit(s, "clip.promoted", "clip", cid, {"from": src, "to": d.id})
+            if made:
+                self.ctx.jobs.enqueue("clip.rerender", {"output_ids": made}, max_attempts=1, session=s)
+        return {"promoted": len(made)}
 
     def _render_stuck(self, output_ids: list[int]) -> None:
         with self.ctx.db.session() as s:
@@ -1382,6 +1454,8 @@ def register(ctx: Any) -> Pipeline:
     q.register("metrics.refresh", lambda jc, pl: p.refresh_metrics())
     q.register("posts.detect", lambda jc, pl: p.detect_posts())
     q.every("posts.detect", 30 * 60)
+    q.register("pages.promote", lambda jc, pl: p.promote_best())
+    q.every("pages.promote", 2 * 3600)
     q.register("posts.verify", lambda jc, pl: p.verify_posts())
     q.every("posts.verify", 60 * 60)
     q.every("metrics.refresh", 3 * 3600)

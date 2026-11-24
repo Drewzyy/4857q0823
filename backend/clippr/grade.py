@@ -231,8 +231,15 @@ def grade(*, db: np.ndarray, words: list[tuple[float, float, str]], length: floa
     rate = len(words) / max(length, 1)
     silent = float((db < base - 15).mean()) if len(db) else 1.0
     talk = min(1.0, rate / 2.5) if rate <= 4.5 else max(0.0, 1 - (rate - 4.5) / 3)
-    pacing = 0.6 * talk + 0.4 * (1 - min(1.0, silent / 0.25))
-    add("Pacing", pacing, 10, f"{rate:.1f} words a second, {silent * 100:.0f}% quiet.",
+    # Who they're talking to (your ranking): to someone else beats to chat beats to themselves. Read from the words:
+    # questions and "you" back and forth mean a conversation; "chat" means they're talking to chat.
+    text = " ".join(w for _, _, w in words).lower()
+    asks, you = text.count("?"), len(re.findall(r"\byou('re|'ll|'ve|'d)?\b|\byour\b", text))
+    to_chat = len(re.findall(r"\bchat\b", text))
+    convo = min(1.0, asks * 0.25 + you / 10) if you + asks >= to_chat else min(0.6, 0.2 + to_chat * 0.1)
+    pacing = 0.5 * talk + 0.3 * (1 - min(1.0, silent / 0.25)) + 0.2 * convo
+    who = "a conversation" if convo >= 0.6 and you + asks >= to_chat else "talking to chat" if to_chat else "talking to themselves"
+    add("Pacing", pacing, 10, f"{rate:.1f} words a second, {silent * 100:.0f}% quiet, {who}.",
         "There are quiet stretches. Turn on Dead air > Cut out, or cut the slow part.")
 
     # Gaming clip tools find under ~20 s lacks setup for the payoff, over ~45 s loses people before the reaction.

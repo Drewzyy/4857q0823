@@ -46,7 +46,7 @@ def page_kinds(dest: DestinationAccount) -> list[str]:
 def pages_for(s: Session, creator_ids: set[int], kind: str | None = None) -> list[DestinationAccount]:
     """Enabled pages that take clips of any of these streamers; with kind, only pages taking that kind of clip."""
     return [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()
-            if takes(d, creator_ids) and (kind is None or kind in page_kinds(d))]
+            if takes(d, creator_ids) and (kind is None or kind in page_kinds(d)) and not (d.settings or {}).get("feeds_from")]  # fed pages get only the best
 
 
 def for_kind(pages: list, kind: str, fallback: str) -> list:

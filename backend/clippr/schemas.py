@@ -94,6 +94,10 @@ class DestinationSettings(Strict):
     # allows only after 5 reviewed posts on this page went out fine.
     auto_post: bool = False
     daily_cap: int = Field(3, ge=1, le=20)
+    # Fed by other pages: this page gets only the clips that did best there (pipeline.promote_best), not every new
+    # clip. Like your TikToks taking the best of your Instagram, and YouTube the best of the TikToks.
+    feeds_from: list[int] = Field(default_factory=list, max_length=20)
+    top_percent: int = Field(25, ge=5, le=100)  # the best this share of those pages' posts (by views an hour)
     default_caption: str = Field("", max_length=2200)
     hashtags: list[str] = Field(default_factory=list, max_length=30)
     format: ExportFormat = Field(default_factory=ExportFormat)
@@ -191,6 +195,7 @@ class PostingSettings(Strict):
             raise ValueError("only this computer (127.0.0.1) or a Tailscale address (100.64.x.x to 100.127.x.x) is allowed")
         return str(ip)
     min_virality: int = Field(50, ge=0, le=100)  # clips scoring lower don't go to review
+    per_streamer_day: int = Field(5, ge=0, le=50)  # the best this many clips of each streamer a day go out; 0 = no limit
     spacing_minutes: int = Field(90, ge=0, le=1440)  # at least this long between two posts on one page (too many at once flop)
 
 
@@ -287,7 +292,7 @@ class ClipEdit(Strict):
     speed: float = Field(1.0, ge=0.5, le=2.0)
     # "stacked": content on top, the streamer's facecam (cam: x, y, w, h as shares of the source) underneath.
     # "split": content on top, a library video (bottom_media, e.g. gameplay) looping underneath.
-    layout: Literal["normal", "stacked", "split"] = "normal"
+    layout: Literal["normal", "stacked", "split", "face"] = "normal"  # face: only the facecam (cam), filling the frame
     cam: list[float] | None = Field(None, min_length=4, max_length=4)
     bottom_media: int | None = None
     cut_dead_air: bool = False

@@ -135,7 +135,7 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
     setBusy(true); setError(null);
     const tags = hashtags.split(/[\s,]+/).filter(Boolean).map((t) => (t.startsWith("#") ? t : `#${t}`));
     try { await api.updateDestination(dest.id, { creator_ids: creatorIds, settings: { default_caption: s.default_caption, hashtags: tags, format: s.format, overlay: s.overlay,
-      content_kinds: s.content_kinds, auto_post: s.auto_post, daily_cap: s.daily_cap } }); onSaved(); }
+      content_kinds: s.content_kinds, auto_post: s.auto_post, daily_cap: s.daily_cap, feeds_from: s.feeds_from ?? [], top_percent: s.top_percent ?? 25 } }); onSaved(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -148,6 +148,7 @@ function SettingsModal({ dest, creators, onClose, onSaved }: { dest: Destination
       <div className="field"><span className="label-text">Streamers whose clips go here</span>
         <CreatorPicker label="Streamers for this page" creators={creators} value={creatorIds} onChange={setCreatorIds} empty="None yet" hint="Clips of every streamer picked here go to this page. You can also set this from each streamer under Source Accounts." /></div>
       <PostingFields s={s} setS={setS} />
+      <FedFrom dest={dest} s={s} setS={setS} />
       <h3>Caption added to every clip</h3>
       <div className="field"><label htmlFor="ds-cap">Extra caption text</label>
         <textarea id="ds-cap" className="textarea" rows={2} maxLength={2200} value={s.default_caption} onChange={(e) => setS({ ...s, default_caption: e.target.value })} placeholder="Follow for daily clips" /></div>
@@ -200,5 +201,25 @@ function PostingFields({ s, setS }: { s: DestinationSettings; setS: (v: Destinat
       </div>
       <span className="hint">Off by default. It can be turned on only after 5 reviewed posts on this page were posted. Settings has a kill switch that stops all of it.</span>
     </>
+  );
+}
+
+/** A page fed by other pages gets only the clips that did best there, instead of every new clip. */
+function FedFrom({ dest, s, setS }: { dest: Destination; s: DestinationSettings; setS: (v: DestinationSettings) => void }) {
+  const { data } = useQuery({ queryKey: ["destinations"], queryFn: api.destinations });
+  const from = s.feeds_from ?? [];
+  const others = (data ?? []).filter((d) => d.id !== dest.id);
+  if (!others.length) return null;
+  return (
+    <div className="field"><span className="label-text">Only the best of other pages</span>
+      <div className="row wrap">{others.map((d) => (
+        <label key={d.id} className="check"><input type="checkbox" checked={from.includes(d.id)}
+          onChange={(e) => setS({ ...s, feeds_from: e.target.checked ? [...from, d.id] : from.filter((x) => x !== d.id) })} />
+          {PLATFORM_LABEL[d.platform] ?? d.platform} · {d.display_name}</label>))}</div>
+      {from.length > 0 && <div className="row small">Their top
+        <input className="input" type="number" min={5} max={100} style={{ width: 70 }} value={s.top_percent ?? 25}
+          onChange={(e) => setS({ ...s, top_percent: Number(e.target.value) })} />% by views an hour come here (posts up at least 6 hours, last 2 weeks).</div>}
+      <span className="hint">Ticked: this page stops getting every new clip and gets only the clips that did best on those pages, already approved.
+        TikTok and YouTube numbers are read by themselves; Instagram's come from Muse (report_metrics) or what you type on Analytics.</span></div>
   );
 }

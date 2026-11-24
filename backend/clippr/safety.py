@@ -116,6 +116,8 @@ def check(*, permission: bool | None, words: list[dict], texts: list[str], game:
                 flag("high-risk game", "review", f"{game} often shows scenes that get accounts flagged; check the picture", confidence=0.4)
     if picture:  # media/nsfw.py: the frames themselves
         score = picture.get("max")
+        if picture.get("note"):  # switched to the streamer's face only: a person should still look
+            flag("sexual content and nudity", "review", picture["note"] + ": check it before approving", picture.get("at"), 0.6)
         if picture.get("level") == "fail":
             flag("sexual content and nudity", "fail", f"Nudity or sexual content in the picture ({score:.0%} likely)", picture.get("at"), score or 0.9)
         elif picture.get("level") == "review" and score is not None:

@@ -198,3 +198,103 @@ def test_swearing_is_bleeped_and_starred_out(tmp_path):
     out = render(src, tmp_path / "o.mp4", OutputFormat(180, 320, 30), duration=4, bleeps=[(1.0, 1.4), (2.5, 2.8)], use_hardware=False)
     info = probe(out)
     assert info.has_audio and abs(info.duration - 4) < 0.3
+
+
+def test_two_people_talking_each_get_a_view_and_face_only_fills_the_frame(tmp_path):
+    from clippr.media import facecam
+    from clippr.media.ffmpeg import probe, run
+    from clippr.media.render import OutputFormat, render
+    size = (960, 540)
+    frames = [[(150, 150, 110, 110), (700, 160, 100, 100)] for _ in range(10)] + [[(150, 150, 110, 110)]] * 2
+    box, pan = facecam.two_people(frames, size, 16 / 9, 1080 / (1920 * 0.4), 0.527)
+    assert box[0] < 0.3 and pan > 0.8  # the left person on top, the bottom pointed at the right person
+    assert facecam.two_people([[(150, 150, 110, 110)]] * 10, size, 16 / 9, 1.4, 0.527) is None  # one person: no split
+    src = tmp_path / "s.mp4"
+    run(["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=2", "-c:v", "libx264", "-preset", "ultrafast", str(src)])
+    out = render(src, tmp_path / "f.mp4", OutputFormat(1080, 1920, 30), duration=2, face=[0.7, 0.6, 0.25, 0.35], use_hardware=False)
+    info = probe(out)
+    assert (info.width, info.height) == (1080, 1920)
+
+
+def test_only_the_best_few_clips_of_a_streamer_go_out_each_day(ctx):
+    from clippr import posting
+    from clippr.api.system import SETTINGS_KEY
+    from clippr.models import Creator, Setting
+    with ctx.db.session() as s:
+        s.merge(Setting(key=SETTINGS_KEY, value={"posting": {"per_streamer_day": 2}}))
+        cr = Creator(name="Kai", clip_permission=True)
+        s.add(cr)
+        s.flush()
+        clips = []
+        for score in (60, 90, 75):
+            c = Clip(creator_id=cr.id, expires_at=datetime.now(timezone.utc) + timedelta(days=9),
+                     grade={"score": score, "screen": {"pass": True}}, safety={"status": "pass"})
+            s.add(c)
+            s.flush()
+            clips.append(c)
+        assert posting.held_back(clips[1], 50) is None and posting.held_back(clips[2], 50) is None
+        assert "2 best clips of Kai" in posting.held_back(clips[0], 50)
+
+
+def test_fed_pages_get_the_best_of_other_pages(ctx, tmp_path, monkeypatch):
+    from clippr.models import MetricSnapshot
+    ids = _clip(ctx, tmp_path, n=4)
+    with ctx.db.session() as s:
+        ig = s.query(DestinationAccount).one()
+        tt = DestinationAccount(platform="tiktok", external_id="games", handle="@vyralgames", display_name="vyral games",
+                                settings={"feeds_from": [ig.id], "top_percent": 25})
+        s.add(tt)
+        s.flush()
+        for n, o in enumerate(s.query(ClipOutput).order_by(ClipOutput.id)):
+            src = tmp_path / f"src{n}.mp4"
+            src.write_bytes(b"x")
+            s.get(Clip, o.clip_id).source_path = str(src)
+            o.status, o.post_url = "uploaded", f"https://www.instagram.com/reel/{n}/"
+            o.uploaded_at = datetime.now(timezone.utc) - timedelta(hours=10)
+            s.add(MetricSnapshot(output_id=o.id, views=[100, 5000, 300, 200][n], source="muse"))
+        tt_id = tt.id
+    assert ctx.pipeline.promote_best() == {"promoted": 1}
+    with ctx.db.session() as s:
+        [o] = s.query(ClipOutput).filter(ClipOutput.destination_id == tt_id).all()
+        assert o.clip_id == ids[1] and o.review == "approved" and o.render_state == "rendering"
+    assert ctx.pipeline.promote_best() == {"promoted": 0}  # never twice
+
+
+def test_gameplay_with_nudity_switches_to_the_streamers_face(ctx, tmp_path, monkeypatch):
+    from clippr.media import nsfw
+    from clippr.models import Creator
+    src = tmp_path / "src.mp4"
+    src.write_bytes(b"x")
+    with ctx.db.session() as s:
+        cr = Creator(name="Kai", clip_permission=True, facecam=[0.7, 0.6, 0.25, 0.35])
+        s.add(cr)
+        s.flush()
+        c = Clip(creator_id=cr.id, expires_at=datetime.now(timezone.utc) + timedelta(days=9), source_path=str(src),
+                 source_start=0, source_duration=40, edit={"start": 0, "end": 40, "layout": "normal"})
+        s.add(c)
+        s.flush()
+        cid = c.id
+    monkeypatch.setattr(nsfw, "scan", lambda path, a, d, region=None: {"max": 0.1, "at": None, "hits": 0, "level": "pass"} if region
+                        else {"max": 0.97, "at": 12.0, "hits": 4, "level": "fail"})
+    out = ctx.pipeline.check_safety(cid)
+    assert out["status"] == "review" and any("only the streamer's face" in f["reason"] for f in out["flags"])
+    with ctx.db.session() as s:
+        assert s.get(Clip, cid).edit["layout"] == "face"
+
+
+def test_muse_reports_instagram_numbers(ctx, tmp_path):
+    from clippr import mcp
+    from clippr.models import MetricSnapshot
+    [cid] = _clip(ctx, tmp_path, n=1)
+    with ctx.db.session() as s:
+        s.query(Clip).one().edit = {"start": 0, "end": 40}
+    try:
+        mcp.report_metrics(ctx, {"clip_id": cid, "views": 1200})
+        raise AssertionError("needs the post first")
+    except mcp.ToolError as e:
+        assert "mark_posted" in str(e)
+    with ctx.db.session() as s:
+        s.query(ClipOutput).one().post_url = "https://www.instagram.com/reel/abc/"
+    assert mcp.report_metrics(ctx, {"clip_id": cid, "views": 1200, "likes": 80})["recorded"] == {"views": 1200, "likes": 80}
+    with ctx.db.session() as s:
+        assert s.query(MetricSnapshot).one().source == "muse"

@@ -151,6 +151,16 @@ function EditorBody({ data }: { data: EditorData }) {
             k.drawImage(v, (vw - cw2) * cur.pan_x, (vh - ch2) * cur.pan_y, cw2, ch2, 0, camMode ? hb : 0, W, ht);
           }
         }
+        if (cur.layout === "face" && cur.cam && vw && v.readyState >= 2) {  // the facecam alone, filling the frame
+          const k = stk.current?.getContext("2d");
+          if (k) {
+            const W = k.canvas.width, H = k.canvas.height, [x, y, w, h] = cur.cam, bw = w * vw, bh = h * vh, fa = W / H;
+            const sw = Math.min(bw, bh * fa), sh = Math.min(bh, bw / fa);
+            k.drawImage(v, x * vw + (bw - sw) / 2, y * vh + (bh - sh) / 2, sw, sh, 0, 0, W, H);
+          }
+          const p = pick.current?.getContext("2d");
+          if (p) p.drawImage(v, 0, 0, p.canvas.width, p.canvas.height);
+        }
         if (camMode && vw && v.readyState >= 2) {
           const k = stk.current?.getContext("2d");
           if (k && cur.cam) {
@@ -276,7 +286,7 @@ function EditorBody({ data }: { data: EditorData }) {
         <div className="stack" style={{ alignItems: "center" }}>
           <div className="ed-preview" style={{ width: PREVIEW_W }} onClick={toggle} aria-label="Video preview">
             <canvas ref={bg} width={108} height={192} className="ed-bg" />
-            {(stacked || split) && <canvas ref={stk} width={PREVIEW_W * 2} height={Math.round(PREVIEW_W * 2 * 16 / 9)} className="ed-bg" />}
+            {(stacked || split || e.layout === "face") && <canvas ref={stk} width={PREVIEW_W * 2} height={Math.round(PREVIEW_W * 2 * 16 / 9)} className="ed-bg" />}
             <div className="ed-fg" style={{ height: `${boxHeight * 100}%`, visibility: stacked || split ? "hidden" : undefined }}>
               <video ref={video} src={api.sourceUrl(data.id)} preload="auto" playsInline
                 onLoadedMetadata={(ev) => { const v = ev.currentTarget; if (v.videoWidth) setAspect(v.videoWidth / v.videoHeight); v.currentTime = e.start; v.playbackRate = e.speed; }}
@@ -357,18 +367,21 @@ function EditorBody({ data }: { data: EditorData }) {
                 <RotateCcw size={12} />Reset to default</button></div>
             <div className="field"><span className="label-text">Framing</span>
               <div className="seg" role="group" aria-label="Framing" style={{ alignSelf: "flex-start" }}>
-                <button className={!stacked && !split && zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: zoomedIn ? e.video_height : data.default_video_height })}>Zoomed in</button>
-                <button className={!stacked && !split && !zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: 0 })}>Fit to frame</button>
+                <button className={!stacked && !split && e.layout !== "face" && zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: zoomedIn ? e.video_height : data.default_video_height })}>Zoomed in</button>
+                <button className={!stacked && !split && e.layout !== "face" && !zoomedIn ? "on" : ""} onClick={() => patch({ layout: "normal", video_height: 0 })}>Fit to frame</button>
                 <button className={stacked ? "on" : ""} onClick={() => patch({ layout: "stacked", cam: e.cam ?? savedCam ?? [0.72, 0.62, 0.26, 0.34] })}>Facecam on top</button>
+                <button className={e.layout === "face" ? "on" : ""} onClick={() => patch({ layout: "face", cam: e.cam ?? savedCam ?? [0.72, 0.62, 0.26, 0.34] })}
+                  title="Only the streamer's camera, filling the frame: for when the gameplay can't be shown">Face only</button>
                 <button className={split ? "on" : ""} disabled={!e.bottom_media && !firstGameplay}
                   title={firstGameplay ? "" : "Add a gameplay video to your library first (Presets and overlays)"}
                   onClick={() => patch({ layout: "split", bottom_media: e.bottom_media ?? firstGameplay?.id ?? null })}>Gameplay on bottom</button>
               </div>
-              <span className="hint">{split ? `The stream fills the top half and ${library.find((m) => m.id === e.bottom_media)?.name ?? "your gameplay"} loops underneath, muted. Pick other gameplay under Presets and overlays.`
+              <span className="hint">{e.layout === "face" ? "Only the streamer's camera, filling the frame. Drag a box around their camera below if it's not right. Used by itself when the gameplay can't be shown."
+                : split ? `The stream fills the top half and ${library.find((m) => m.id === e.bottom_media)?.name ?? "your gameplay"} loops underneath, muted. Pick other gameplay under Presets and overlays.`
                 : stacked ? "The facecam is scaled up across the top and the content fills the rest. If the top isn't the streamer's camera, drag a box around it below. Left / right picks which part of the content stays in view."
                 : zoomedIn ? "The stream is scaled up and its sides trimmed so the speaker is bigger on a phone. Left / right picks what stays in view."
                 : "The whole stream across the width of the frame, with blurred footage above and below."}</span></div>
-            {zoomedIn && !stacked && !split && (
+            {zoomedIn && !stacked && !split && e.layout !== "face" && (
               <div className="field"><label htmlFor="ed-size">Video size: {Math.round(boxHeight * 100)}% of the frame's height</label>
                 <input id="ed-size" type="range" min={Math.min(1, fullWidth + 0.01)} max={1} step={0.01} value={boxHeight}
                   onChange={(ev) => patch({ video_height: Number(ev.target.value) }, "size")} /></div>
@@ -394,7 +407,7 @@ function EditorBody({ data }: { data: EditorData }) {
             )}
           </div>
 
-          {stacked && (
+          {(stacked || e.layout === "face") && (
             <div className="card stack">
               <div className="row"><h2>Facecam</h2><span className="spacer" /></div>
               <p className="small faint" style={{ margin: 0 }}>Drag a box around the streamer's camera. The bottom of the clip shows what's inside it.</p>
