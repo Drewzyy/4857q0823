@@ -411,3 +411,35 @@ def test_clips_with_more_views_count_for_more_and_the_style_picks_your_sound():
     assert e.get("sounds") and e["sounds"][0]["name"] == "boom" and e.get("punch")
     p0 = style.profile_of([{"url": f"u{i}", "features": short} for i in range(3)])
     assert not preedit.apply({"start": 0.0, "end": 80.0, "texts": []}, words, db, "", sound=True, style=p0).get("punch")
+
+
+def test_hashtags_songs_and_the_cut_are_learned_and_posts_wait_for_daytime(ctx, tmp_path, monkeypatch):
+    from clippr import describe, posting, style
+    from clippr.fetch import RemotePost
+    from clippr.media.overlay import Word
+    from clippr.schemas import PostingSettings
+    made = _made_clip(tmp_path)
+    monkeypatch.setattr(ctx.fetcher, "download_post", lambda url, dest: made, raising=False)
+    monkeypatch.setattr(ctx.fetcher, "post_details", lambda url: RemotePost(
+        "1", url, "togi did it again #togi #kickstreaming #fyp", views=40000, music="Shake It - Some Artist"), raising=False)
+    for i in range(3):
+        got = style.learn(ctx, f"https://www.tiktok.com/@me/video/{i}")
+    assert got["hashtags"] == ["#fyp", "#kickstreaming", "#togi"] and got["song"] == "Shake It - Some Artist"
+    p = got["profile"]
+    assert p["hashtags"] == ["#kickstreaming", "#togi"] and p["songs"] == ["Shake It - Some Artist"]
+    assert p["peak_share"] is not None and p["tail"] is not None
+    _, cap = describe.build("tiktok", "t", "", {"learned_tags": p["hashtags"]}, streamer="togi")
+    assert cap == "@togi #togi #fyp #funny #kickstreaming"
+    # Cut like yours: the moment at the same place, the same tail after it.
+    words = [Word(i * 0.5, i * 0.5 + 0.4, "word.") for i in range(300)]
+    db = np.full(1500, -30.0)
+    db[1000:1015] = -2  # the moment at 100 s of 150
+    mine = {**p, "length": 40.0, "length_low": 35.0, "length_high": 45.0, "tail": 6.0, "peak_share": 0.85}
+    a, b = preedit.best_window(db, words, 150.0, style=mine)
+    assert 100 < b <= 107 and 35 <= b - a <= 45
+    cfg = PostingSettings(post_from=12, post_until=22)
+    late = datetime(2026, 11, 25, 23, 40).astimezone()  # 11:40 pm here
+    nxt = posting.in_window(late.astimezone(timezone.utc), cfg).astimezone()
+    assert nxt.hour == 12 and nxt.date() > late.date()
+    noon = datetime(2026, 11, 25, 15, 0).astimezone()
+    assert posting.in_window(noon, cfg) == noon

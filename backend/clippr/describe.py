@@ -104,7 +104,9 @@ def build(platform: str, title: str, tags_from: str, settings: dict, game: str =
     source post's). It never repeats the title or the headline on the video, and has no emoji. YouTube shows
     the title separately. streamer: the streamer's handle (their stream channel name), for @ and #."""
     who = handle(streamer)
-    tags = _tags([f"#{who}" if who else "", game_tag(game).lower(), *DEFAULT_TAGS], settings.get("hashtags") or [],
+    # learned_tags: the hashtags your own clips use most (style.py), right after #fyp #funny.
+    tags = _tags([f"#{who}" if who else "", game_tag(game).lower(), *DEFAULT_TAGS, *(settings.get("learned_tags") or [])],
+                 settings.get("hashtags") or [],
                  original_hashtags(tags_from), platform)
     parts = [settings.get("default_caption", "").strip(), " ".join(([f"@{who}"] if who and platform != "youtube" else []) + tags)]
     desc = "\n\n".join(p for p in parts if p)

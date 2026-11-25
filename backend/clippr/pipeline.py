@@ -744,7 +744,7 @@ class Pipeline:
             rules = campaigns.caption_rules(s, clip)  # the streamer's caption rules
             for did, platform, st, fmt_raw, ov, path, qc in planned:
                 info = infos[path]
-                ptitle, desc = describe.build(platform, title, post_title, st, game, rules, streamer_handle(clip.creator))
+                ptitle, desc = describe.build(platform, title, post_title, with_tags(s, st), game, rules, streamer_handle(clip.creator))
                 s.add(ClipOutput(clip_id=clip.id, destination_id=did, platform=platform, title=ptitle, description=desc,
                                  video_title=title, overlay=ov, format=fmt_raw,
                                  file_path=str(path), width=info.width, height=info.height, fps=info.fps, size_bytes=path.stat().st_size,
@@ -1117,7 +1117,7 @@ class Pipeline:
                 clip.captions_note = f"{clip.captions_note} {note}".strip()
             outs = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)) if o.status == "ready"]
             for o in outs:
-                o.title, o.description = describe.build(o.platform, title, tags_from, dict(o.destination.settings or {}) if o.destination else {},
+                o.title, o.description = describe.build(o.platform, title, tags_from, with_tags(s, dict(o.destination.settings or {}) if o.destination else {}),
                                                        game=(clip.safety or {}).get("game", ""), rules=campaigns.caption_rules(s, clip),
                                                        streamer=streamer_handle(clip.creator))
                 o.video_title = title
@@ -1172,7 +1172,7 @@ class Pipeline:
         """A new page video for a clip, to be rendered (clip.rerender) with the page's format and the clip's edit."""
         st = dict(d.settings or {})
         ref = clip.reference
-        title, desc = describe.build(d.platform, clip.title, ref.title if ref else "", st, game=(clip.safety or {}).get("game", ""),
+        title, desc = describe.build(d.platform, clip.title, ref.title if ref else "", with_tags(s, st), game=(clip.safety or {}).get("game", ""),
                                      rules=campaigns.caption_rules(s, clip), streamer=streamer_handle(clip.creator))
         o = ClipOutput(clip_id=clip.id, destination_id=d.id, platform=d.platform, title=title, description=desc,
                        video_title=clip.title, overlay=lenient(OverlaySettings, st.get("overlay")).model_dump(),
@@ -1487,6 +1487,12 @@ class Pipeline:
         return {"clips_expired": expired, "streams_forgotten": vods, "events_forgotten": events.cleanup(self.ctx)}
 
 
+def with_tags(s, page_settings: dict) -> dict:
+    """A page's settings plus the hashtags your own clips use most (style.py), for its captions."""
+    mine = style.current(s)
+    return {**page_settings, "learned_tags": mine.get("hashtags") or []} if mine else page_settings
+
+
 def lengths(s, rules: dict) -> tuple[float, float, dict | None]:
     """(shortest, longest, your style): a campaign's length rules first; inside them, your style's usual range once
     enough of your clips are measured (style.py), else what your reviews taught (screen.py)."""
@@ -1563,6 +1569,8 @@ def register(ctx: Any) -> Pipeline:
     q.register("posts.detect", lambda jc, pl: p.detect_posts())
     q.every("posts.detect", 30 * 60)
     q.register("style.learn", lambda jc, pl: style.learn(ctx, pl["url"]))
+    q.register("style.refresh", lambda jc, pl: style.refresh(ctx))
+    q.every("style.refresh", 12 * 3600)  # your clips' views keep growing: re-read them so the hits keep counting more
     q.register("style.apply", lambda jc, pl: p.restyle_waiting())
     q.register("pages.promote", lambda jc, pl: p.promote_best())
     q.every("pages.promote", 2 * 3600)
@@ -1572,7 +1580,7 @@ def register(ctx: Any) -> Pipeline:
     q.every("monitor.tick", 60)
     q.every("storage.cleanup", 6 * 3600)
     q.heavy = {"clip.build", "clip.rerender", "longform.make"}
-    q.needs_network = {"clip.build", "longform.make", "intake.link", "source.check", "monitor.tick", "metrics.fetch", "metrics.refresh", "notify.discord", "posts.detect", "posts.verify", "style.learn"}
+    q.needs_network = {"clip.build", "longform.make", "intake.link", "source.check", "monitor.tick", "metrics.fetch", "metrics.refresh", "notify.discord", "posts.detect", "posts.verify", "style.learn", "style.refresh"}
     # How long a job may go without any progress (a step finished, data downloaded) before it's given up on.
     # Long searches are fine as long as they keep moving.
     q.time_limits = {"longform.make": 20 * 60, "clip.build": 20 * 60, "clip.rerender": 20 * 60, "intake.link": 10 * 60, "source.check": 10 * 60}

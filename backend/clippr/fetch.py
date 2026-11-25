@@ -34,6 +34,7 @@ class RemotePost:
     shares: int | None = None
     thumbnail: str | None = None
     channels: tuple[str, ...] = ()  # who posted it: handle, name, channel (any yt-dlp knows)
+    music: str | None = None  # the song on it, as the platform names it (TikTok: "track - artist")
 
 
 @dataclass
@@ -166,6 +167,7 @@ def _post(e: dict, fallback_url: str = "") -> RemotePost:
         comments=e.get("comment_count"), shares=e.get("repost_count"),
         thumbnail=e.get("thumbnail") or ((e.get("thumbnails") or [{}])[-1].get("url")),
         channels=tuple(str(e[k]) for k in ("uploader_id", "uploader", "channel", "channel_id") if e.get(k)),
+        music=" - ".join(str(e[k]) for k in ("track", "artist") if e.get(k)) or None,
     )
 
 

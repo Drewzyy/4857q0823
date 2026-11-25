@@ -491,7 +491,10 @@ function StyleCard() {
           <li>Layout: mostly {LAYOUT_NAMES[p.layout] ?? p.layout}</li>
           <li>Captions: {pct(p.captions_rate)} · sound effects: {pct(p.sfx_rate)}{p.sound ? ` (mostly ${p.sound.replace("_", " ")})` : ""}
             · zoom-ins: {pct(p.zoom_rate ?? 0)} · cuts: about {p.cuts_per_min} a minute</li>
-          <li className="faint">Clips with more views count for more.</li>
+          {p.peak_share != null && p.tail != null && <li>Cut from the stream: the big moment about {Math.round(p.peak_share * 100)}% of the way in, then {Math.round(p.tail)} s after it</li>}
+          {!!p.hashtags?.length && <li>Hashtags you use (added to captions): {p.hashtags.join(" ")}</li>}
+          {!!p.songs?.length && <li>Songs on your TikToks (Muse adds the first when posting): {p.songs.join(", ")}</li>}
+          <li className="faint">Clips with more views count for more; their views are read again every 12 hours.</li>
         </ul>)}
       <div className="row wrap">
         {p && <button className="btn primary sm" onClick={() => run(api.applyStyle, "Re-cutting waiting clips to your style")}>Apply to waiting clips</button>}

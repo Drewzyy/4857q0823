@@ -80,6 +80,17 @@ def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0
             starts = [w.start for i, w in enumerate(words) if peak - 45 <= w.start <= peak - 20
                       and (i == 0 or w.start - words[i - 1].end > 0.35 or words[i - 1].text.rstrip().endswith((".", "!", "?")))]
             start = (min(starts) - 0.1) if starts else peak - 45
+        if style and style.get("tail") is not None and style.get("peak_share") is not None:
+            # Cut from the stream the way yours are: as much setup before the moment and as much after it as your
+            # clips have (where the big moment sits in them), at your usual length.
+            whole = peak_moment(db, 0, dur) or peak
+            after = min(style["tail"], max(3.0, target * (1 - style["peak_share"])))
+            end = round(min(dur, whole + after), 2)
+            start = round(max(0.0, end - target), 2)
+            starts = [w.start for i, w in enumerate(words) if start - 3 <= w.start <= start + 3
+                      and (i == 0 or w.start - words[i - 1].end > 0.35 or words[i - 1].text.rstrip().endswith((".", "!", "?")))]
+            if starts:  # open on a new sentence
+                start = max(0.0, min(starts, key=lambda a: abs(a - start)) - 0.1)
     if end - start < shortest:
         start = max(0.0, end - shortest)
     # Open on sound: the first word, or the first moment that isn't near silence.

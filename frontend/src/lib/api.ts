@@ -55,7 +55,7 @@ export interface AppSettings {
   intake: { clipboard: boolean };
   safety: { banned_words: string[]; banned_scenes: string[]; banned_games: string[] };
   dropbox: { auto_upload: boolean; folder: string; app_key: string };
-  posting: { auto_post_kill_switch: boolean; mcp_enabled: boolean; mcp_host: string; mcp_port: number; min_virality: number; spacing_minutes: number; per_streamer_day: number };
+  posting: { auto_post_kill_switch: boolean; mcp_enabled: boolean; mcp_host: string; mcp_port: number; min_virality: number; spacing_minutes: number; per_streamer_day: number; post_from: number; post_until: number };
 }
 export interface Bridge { mcp: { running: boolean; port: number | null; error: string | null; enabled: boolean; url: string; token: string } }
 export interface RefPost {
@@ -85,7 +85,8 @@ export interface StyleView {
   needed: number;
   examples: { url: string; at: string; features: StyleFeatures | null; error: string | null; views?: number | null }[];
   profile: { examples: number; length: number; length_low: number; length_high: number; hook_rate: number; hook_seconds: number; cuts_per_min: number;
-    layout: string; layouts: Record<string, number>; captions_rate: number; headline_rate: number; headline_seconds: number; sfx_rate: number; sound?: string | null; zoom_rate?: number } | null;
+    layout: string; layouts: Record<string, number>; captions_rate: number; headline_rate: number; headline_seconds: number; sfx_rate: number; sound?: string | null; zoom_rate?: number;
+    peak_share?: number | null; tail?: number | null; hashtags?: string[]; songs?: string[] } | null;
 }
 export interface Learned {
   min_seconds: number; max_seconds: number; min_words: number; setup_words: number; min_score: number;

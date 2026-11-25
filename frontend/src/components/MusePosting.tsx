@@ -79,6 +79,14 @@ export function MusePosting() {
         <div className="field"><label htmlFor="per-day">Best clips per streamer per day: {s.posting.per_streamer_day || "no limit"}</label>
           <input id="per-day" type="range" min={0} max={20} value={s.posting.per_streamer_day} onChange={(e) => P({ per_streamer_day: Number(e.target.value) })} />
           <span className="hint">Each day only a streamer's highest-scoring clips go to review and Muse; the rest stay in Ready to Upload with why.</span></div>
+        <div className="field"><label>Posting hours (this computer's clock): {s.posting.post_from}:00 to {s.posting.post_until}:00</label>
+          <div className="row">
+            <input aria-label="Post from (hour)" className="input" type="number" min={0} max={23} style={{ width: 80 }} value={s.posting.post_from}
+              onChange={(e) => P({ post_from: Number(e.target.value) })} />
+            <span className="small">to</span>
+            <input aria-label="Post until (hour)" className="input" type="number" min={1} max={24} style={{ width: 80 }} value={s.posting.post_until}
+              onChange={(e) => P({ post_until: Number(e.target.value) })} /></div>
+          <span className="hint">Muse is told not to post outside these hours: noon to 10 pm by default, never in the middle of the night.</span></div>
         <div className="field"><label htmlFor="spacing">Space posts on a page at least {s.posting.spacing_minutes} minutes apart</label>
           <input id="spacing" type="range" min={0} max={360} step={15} value={s.posting.spacing_minutes} onChange={(e) => P({ spacing_minutes: Number(e.target.value) })} />
           <span className="hint">Muse gets a "post after" time with each approved clip, so a batch doesn't go up at once.</span></div>

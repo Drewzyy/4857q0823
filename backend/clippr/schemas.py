@@ -196,7 +196,10 @@ class PostingSettings(Strict):
         return str(ip)
     min_virality: int = Field(50, ge=0, le=100)  # clips scoring lower don't go to review
     per_streamer_day: int = Field(5, ge=0, le=50)  # the best this many clips of each streamer a day go out; 0 = no limit
-    spacing_minutes: int = Field(90, ge=0, le=1440)  # at least this long between two posts on one page (too many at once flop)
+    spacing_minutes: int = Field(90, ge=0, le=1440)
+    # Posting hours on this computer's clock: noon to 10 pm by default (midnight posts flop).
+    post_from: int = Field(12, ge=0, le=23)
+    post_until: int = Field(22, ge=1, le=24)  # at least this long between two posts on one page (too many at once flop)
 
 
 class DropboxSettings(Strict):

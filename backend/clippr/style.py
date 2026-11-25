@@ -12,7 +12,9 @@ and measured, on this computer:
 - the headline: whether there's a line of text at the top at the start, and how long it stays;
 - sound effects: sudden short loud hits over the talking (rough: a scream can look like one), and which of Vyral's
   sounds it is when one matches;
-- zoom-ins: the picture suddenly scaling up within a shot.
+- zoom-ins: the picture suddenly scaling up within a shot;
+- how it was cut from the stream: where the big moment sits (how much setup before it, how long after it);
+- from the post itself: its views, its hashtags and the song added to it (TikTok names it).
 Clips with more views count for more (their views are read from the post when it's learned). Transitions and
 sounds that aren't in Vyral's library aren't recognized.
 
@@ -229,6 +231,20 @@ def _zooms(path: Path) -> int:
     return found
 
 
+def _peak(path: Path, dur: float) -> float | None:
+    """When the big moment is (the loudest stretch, after any hook up front): how the clip was cut around it."""
+    from .grade import loudness
+    try:
+        db = loudness(path, 0, dur)
+    except FFmpegError:
+        return None
+    if len(db) < 50:
+        return None
+    level = np.convolve(db - np.median(db), np.ones(10) / 10, mode="same")
+    skip = int(min(8.0, dur * 0.2) / 0.1)  # the opening may be the climax shown first: the real one comes later
+    return float(skip + int(np.argmax(level[skip:]))) * 0.1
+
+
 def analyze(path: Path) -> dict:
     """What one clip's edit looks like, measured."""
     dur = probe(path).duration or 0.0
@@ -236,7 +252,10 @@ def analyze(path: Path) -> dict:
     try:
         cuts = _cuts(path)
         hits = _sfx(path, dur)
+        peak = _peak(path, dur)
         return {"length": round(dur, 1), "hook": _hook(path, dur), "cuts_per_min": round(len(cuts) / max(dur / 60, 0.25), 1),
+                "peak_share": round(peak / dur, 2) if peak is not None and dur else None,
+                "tail": round(dur - peak, 1) if peak is not None else None,
                 "layout": _layout(path, dur, tmp), "captions": bool(onscreen.has_captions(path, 0, dur)),
                 "headline": _headline(path, dur, tmp), "sfx": len(hits), "sound": _which_sound(path, hits, tmp),
                 "zooms": _zooms(path)}
@@ -299,13 +318,26 @@ def profile_of(examples: list[dict]) -> dict | None:
         if f.get("sound"):
             sounds[f["sound"]] = sounds.get(f["sound"], 0) + w
     lengths = [(f["length"], w) for f, w in ws]
+    peaks = [(f["peak_share"], w) for f, w in ws if f.get("peak_share") is not None]
+    tails = [(f["tail"], w) for f, w in ws if f.get("tail") is not None]
+    tagw: dict[str, float] = {}
+    songw: dict[str, float] = {}
+    for e in ex:
+        for tag in e.get("hashtags") or []:
+            if tag not in ("#fyp", "#foryou", "#foryoupage", "#viral"):  # Vyral adds #fyp itself
+                tagw[tag] = tagw.get(tag, 0) + _weight(e)
+        if e.get("song"):
+            songw[e["song"]] = songw.get(e["song"], 0) + _weight(e)
     return {"examples": len(ex), "weight": round(total, 1), "length": _wmedian(lengths), "length_low": _wquant(lengths, 0.2),
             "length_high": _wquant(lengths, 0.8), "hook_rate": rate(lambda f: f["hook"]),
             "hook_seconds": _wmedian(hooks) if hooks else 0.0, "cuts_per_min": _wmedian([(f["cuts_per_min"], w) for f, w in ws]),
             "layout": max(layouts, key=layouts.get), "layouts": layouts, "captions_rate": rate(lambda f: f["captions"]),
             "headline_rate": rate(lambda f: f["headline"]), "headline_seconds": _wmedian(heads) if heads else 0.0,
             "sfx_rate": rate(lambda f: f["sfx"]), "sound": max(sounds, key=sounds.get) if sounds else None,
-            "zoom_rate": rate(lambda f: f.get("zooms"))}
+            "zoom_rate": rate(lambda f: f.get("zooms")),
+            "peak_share": _wmedian(peaks) if peaks else None, "tail": _wmedian(tails) if tails else None,
+            "hashtags": [k for k, v in sorted(tagw.items(), key=lambda kv: -kv[1]) if v >= 0.3 * total][:4],
+            "songs": [k for k, _ in sorted(songw.items(), key=lambda kv: -kv[1])][:3]}
 
 
 def current(s: Session) -> dict | None:
@@ -318,11 +350,12 @@ def view(s: Session) -> dict:
     return {"examples": row.get("examples", [])[::-1], "profile": row.get("profile"), "needed": MIN_EXAMPLES}
 
 
-def add(s: Session, url: str, features: dict | None, error: str | None = None, views: int | None = None) -> dict | None:
+def add(s: Session, url: str, features: dict | None, error: str | None = None, views: int | None = None,
+        hashtags: list[str] = (), song: str | None = None) -> dict | None:
     row = _row(s)
     ex = [e for e in row.get("examples", []) if e["url"] != url]
     ex.append({"url": url, "at": datetime.now(timezone.utc).isoformat(timespec="minutes"), "features": features, "error": error,
-               "views": views})
+               "views": views, "hashtags": list(hashtags), "song": song})
     row["examples"] = ex[-KEEP:]
     row["profile"] = profile_of(row["examples"])
     _save(s, row)
@@ -351,10 +384,38 @@ def learn(ctx, url: str) -> dict:
         feats, err = None, str(e)[:200]
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    try:  # how many people watched it: the clips that did better count more in your style
-        views = ctx.fetcher.post_details(url).views
+    views, tags, song = None, [], None
+    try:  # the post itself: how many watched it (the better ones count more), its hashtags and its song
+        post = ctx.fetcher.post_details(url)
+        views, tags, song = post.views, sorted({x.lower() for x in re.findall(r"#\w+", post.title or "")}), post.music
+        if song and re.match(r"(original sound|som original|sonido original|son original)", song, re.I):
+            song = None  # the clip's own audio, not a song added to it
     except Exception:
-        views = None
+        pass
     with ctx.db.session() as s:
-        profile = add(s, url, feats, err, views)
-    return {"features": feats, "error": err, "profile": profile, "views": views}
+        profile = add(s, url, feats, err, views, tags, song)
+    return {"features": feats, "error": err, "profile": profile, "views": views, "hashtags": tags, "song": song}
+
+
+def refresh(ctx, most: int = 40) -> dict:
+    """Read the views of the measured clips again (they keep growing for days), the ones checked longest ago first,
+    so the clips that are doing well keep counting for more."""
+    with ctx.db.session() as s:
+        ex = sorted((e for e in _row(s).get("examples", []) if e.get("features")), key=lambda e: e.get("checked") or e["at"])[:most]
+    fresh = {}
+    for e in ex:
+        try:
+            fresh[e["url"]] = ctx.fetcher.post_details(e["url"]).views
+        except Exception:
+            fresh[e["url"]] = None
+    with ctx.db.session() as s:
+        row = _row(s)
+        stamp = datetime.now(timezone.utc).isoformat(timespec="minutes")
+        for e in row.get("examples", []):
+            if e["url"] in fresh:
+                e["checked"] = stamp
+                if fresh[e["url"]] is not None:
+                    e["views"] = fresh[e["url"]]
+        row["profile"] = profile_of(row["examples"])
+        _save(s, row)
+    return {"checked": len(fresh)}
