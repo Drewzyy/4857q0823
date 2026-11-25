@@ -14,7 +14,7 @@ export interface Folder { id: number; name: string; sources?: number }
 
 export interface Source {
   id: number; platform: Platform; username: string; display_name: string; profile_url: string; avatar_url: string | null;
-  monitoring: "active" | "paused"; notes: string; creator: Creator | null; creators: Creator[]; folder: Folder | null;
+  monitoring: "active" | "paused"; notes: string; creator: Creator | null; creators: Creator[]; folder: Folder | null; clip_uploads?: boolean;
   last_synced_at: string | null; next_check_at: string | null;
   last_error: string | null; watching_supported: boolean; baseline_done: boolean; created_at: string;
   page_count: number; videos_discovered: number | null; videos_analyzed: number | null;
@@ -210,7 +210,7 @@ export const api = {
   deleteFolder: (id: number) => request<void>("DELETE", `/folders/${id}`),
   sources: (f: { q?: string; creator_id?: number | null; folder_id?: number | null; monitoring?: string; platform?: string } = {}) =>
     request<Source[]>("GET", "/sources" + qs(f)),
-  updateSource: (id: number, b: Partial<{ creator_id: number | null; creator_ids: number[]; folder_id: number | null; monitoring: string; notes: string }>) =>
+  updateSource: (id: number, b: Partial<{ creator_id: number | null; creator_ids: number[]; folder_id: number | null; monitoring: string; notes: string; clip_uploads: boolean }>) =>
     request<Source>("PATCH", `/sources/${id}`, b),
   deleteSource: (id: number) => request<void>("DELETE", `/sources/${id}`),
   destinations: () => request<Destination[]>("GET", "/destinations"),

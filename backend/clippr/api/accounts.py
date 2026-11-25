@@ -201,6 +201,7 @@ class SourcePatch(BaseModel):
     creator_ids: list[int] | None = Field(None, max_length=50)
     folder_id: int | None = None
     monitoring: Literal["active", "paused"] | None = None
+    clip_uploads: bool | None = None  # YouTube: make clips from new full videos and past streams
     display_name: str | None = Field(None, max_length=200)
     notes: str | None = Field(None, max_length=2000)
 

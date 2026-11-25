@@ -39,7 +39,7 @@ export default function Sources() {
       {streamers.error && <ErrorNote error={streamers.error} />}
       {streamers.isLoading ? <Loading /> : (streamers.data ?? []).length === 0 ? (
         <div className="card"><Empty icon={<Users size={28} />} title="No streamers yet">
-          <p className="small">Add a streamer with their Twitch or Kick link, then tick the pages to post their clips to.</p>
+          <p className="small">Add a streamer with their Twitch, Kick or YouTube link, then tick the pages to post their clips to.</p>
           <button className="btn primary" onClick={() => setAdding(true)}><Plus size={14} />Add streamer</button></Empty></div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: "visible" }}>
@@ -62,7 +62,7 @@ export default function Sources() {
                       onChange={(ids) => update(s.id, { destination_ids: ids })} hint="Clips from this streamer go to every page ticked here." /></td>
                   <td className="small">{s.posts} · {s.clips}</td>
                   <td className="small muted" title={s.channels.map((c) => c.next_check ? `Next check ${relTime(c.next_check)}` : "").join(" ")}>
-                    {s.channels.length ? relTime(last) : <span className="faint" title={watchable ? "Turn on Watch to pick up their new clips" : "Only a Twitch or Kick channel link can be watched (twitch.tv/name or kick.com/name). YouTube and single-broadcast links are searched for moments instead. Edit the streamer to add one."}>{watchable ? "Not watched" : "Add a Twitch or Kick channel to watch"}</span>}
+                    {s.channels.length ? relTime(last) : <span className="faint" title={watchable ? "Turn on Watch to pick up their new clips" : "Only a channel link can be watched (twitch.tv/name, kick.com/name or youtube.com/@name). Single-broadcast links are searched for moments instead. Edit the streamer to add one."}>{watchable ? "Not watched" : "Add a channel to watch"}</span>}
                     {error && <span title={error}> <AlertTriangle size={12} color="var(--warn)" /></span>}</td>
                   <td title="Off: stops watching and takes their unposted clips out of Ready to Upload (and away from Muse). On again: they come back.">
                     {watchable && <Toggle label={`Watch ${s.name}`} checked={s.watching} onChange={(v) => update(s.id, { watching: v })} />}</td>
@@ -130,7 +130,7 @@ function StreamerModal({ streamer, pages, onClose, onDone }: { streamer: Streame
           <input id="st-name" className="input" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} placeholder="Valkyrae" /></div>
         <div className="field"><label htmlFor="st-links">Stream link</label>
           <textarea id="st-links" className="input" rows={2} value={links} onChange={(e) => setLinks(e.target.value)} placeholder="https://www.twitch.tv/valkyrae" />
-          <span className="hint">Their Twitch or Kick channel (Vyral watches its most-watched new clips), or YouTube (searched for moments). One per line if they stream in more than one place.</span></div>
+          <span className="hint">Their Twitch or Kick channel (Vyral watches its most-watched new clips) and their YouTube channel (youtube.com/@name: every new video and past stream is made into clips, and new Shorts too). One per line.</span></div>
         <div className="field"><label htmlFor="st-kind">Kind of clips</label>
           <select id="st-kind" className="select" style={{ width: 200 }} value={kind} onChange={(e) => setKind(e.target.value as ClipKind)}>
             <option value="regular">Regular</option><option value="gaming">Gaming</option><option value="podcast">Podcast</option></select>
@@ -175,6 +175,9 @@ function OtherAccounts({ list, onChange, fail }: { list: Source[]; onChange: () 
           <span className="spacer" /><span className="faint">{relTime(s.last_synced_at)}</span>
           <Toggle label={`Watch @${s.username}`} checked={s.monitoring === "active"}
             onChange={async (v) => { try { await api.updateSource(s.id, { monitoring: v ? "active" : "paused" }); onChange(); } catch (e) { fail(e); } }} />
+          {s.platform === "youtube" && <label className="row small" title="Every new full video and past stream on this channel is made into clips (Long-form)">
+            <Toggle label={`Make clips from @${s.username}'s new videos`} checked={s.clip_uploads ?? true}
+              onChange={async (v) => { try { await api.updateSource(s.id, { clip_uploads: v }); onChange(); } catch (e) { fail(e); } }} />New videos</label>}
           <button className="btn ghost icon" aria-label={`Remove @${s.username}`}
             onClick={async () => { try { await api.deleteSource(s.id); onChange(); } catch (e) { fail(e); } }}><Trash2 size={13} /></button>
         </div>

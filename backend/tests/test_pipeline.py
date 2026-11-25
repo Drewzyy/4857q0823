@@ -1002,3 +1002,34 @@ def test_a_clip_of_the_wrong_streamer_is_moved_to_the_right_one(env):
     [clip] = c.get("/api/clips").json()
     live = [o for o in clip["outputs"] if o["status"] == "ready"]
     assert [o["destination"]["id"] for o in live] == [page["id"]] and live[0]["description"].startswith("@jasontheween #jasontheween")
+
+
+def test_a_youtube_channels_new_videos_are_made_into_clips(env):
+    from clippr.models import LongformVideo
+    ctx, c, fake = env
+    cr = c.post("/api/creators", json={"name": "Kai", "clip_permission": True}).json()
+    src = c.post("/api/sources", json={"input": "https://www.youtube.com/@kaicenat", "platform": "youtube", "creator_ids": [cr["id"]]}).json()
+    assert src["clip_uploads"] is True
+    old = RemotePost("old", "https://www.youtube.com/watch?v=old", "an old stream", duration=7200)
+    fake.uploads = [old]
+    ctx.pipeline.check_source(src["id"])  # the first look only records what's there
+    with ctx.db.session() as s:
+        assert s.query(LongformVideo).count() == 0
+    new = RemotePost("new", "https://www.youtube.com/watch?v=new", "kai's new stream", duration=5400)
+    short = RemotePost("tiny", "https://www.youtube.com/watch?v=tiny", "a trailer", duration=40)
+    fake.uploads = [new, short, old]
+    assert ctx.pipeline.check_source(src["id"])["uploads"] == 1
+    with ctx.db.session() as s:
+        [v] = s.query(LongformVideo).all()
+        assert v.url.endswith("v=new") and v.creator_id == cr["id"] and v.clips_wanted == 6
+    assert ctx.pipeline.check_source(src["id"])["uploads"] == 0  # never twice
+    c.patch(f"/api/sources/{src['id']}", json={"clip_uploads": False})
+    fake.uploads = [RemotePost("next", "https://www.youtube.com/watch?v=next", "another", duration=3000), new, short, old]
+    assert ctx.pipeline.check_source(src["id"])["uploads"] == 0  # switched off for this channel
+
+
+def test_a_streamers_youtube_channel_is_watched_for_new_videos(env):
+    ctx, c, fake = env
+    st = c.post("/api/streamers", json={"name": "Kai", "links": ["https://www.twitch.tv/kaicenat", "https://www.youtube.com/@kaicenat"],
+                                        "permission": True}).json()
+    assert sorted(ch["platform"] for ch in st["channels"]) == ["twitch", "youtube"]

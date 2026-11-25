@@ -32,7 +32,7 @@ def source(s: SourceAccount, page_count: int = 0, creators_by_id: dict | None = 
     return {
         "creators": all_creators,
         "id": s.id, "platform": s.platform, "username": s.username, "display_name": s.display_name,
-        "profile_url": s.profile_url, "avatar_url": s.avatar_url, "monitoring": s.monitoring, "notes": s.notes,
+        "profile_url": s.profile_url, "avatar_url": s.avatar_url, "monitoring": s.monitoring, "notes": s.notes, "clip_uploads": s.clip_uploads,
         "creator": creator(s.creator), "folder": folder(s.folder),
         "last_synced_at": _dt(s.last_synced_at), "next_check_at": _dt(s.next_check_at), "last_error": s.last_error,
         "watching_supported": s.platform in MONITORABLE, "baseline_done": s.baseline_done,

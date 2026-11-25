@@ -87,16 +87,26 @@ class Pipeline:
             platform, username, profile = src.platform, src.username, src.profile_url
             mon = load_settings(s).monitoring
             interval = mon.interval_minutes
+        uploads = self.check_uploads(source_id) if platform == "youtube" else 0
         try:
             posts = self.ctx.fetcher.recent_posts(platform, username, profile, POSTS_PER_CHECK)
         except FetchError as e:
-            with self.ctx.db.session() as s:
-                src = s.get(SourceAccount, source_id)
-                src.error_count += 1
-                src.last_error = f"Couldn't check this account: {e}"
-                # Back off: 2x, 4x, 8x... the normal interval, up to 6 hours.
-                src.next_check_at = now() + timedelta(minutes=min(interval * 2 ** src.error_count, 360))
-            return {"error": str(e)}
+            if uploads is not None and re.search(r"does not have a shorts tab|no shorts|does not have any videos", str(e), re.I):
+                posts = []  # a channel with full videos and no Shorts: nothing else to check
+            else:
+                return self._source_failed(source_id, e, interval)
+        return self._take_posts(source_id, platform, username, posts, mon, uploads)
+
+    def _source_failed(self, source_id: int, e: Exception, interval: int) -> dict:
+        with self.ctx.db.session() as s:
+            src = s.get(SourceAccount, source_id)
+            src.error_count += 1
+            src.last_error = f"Couldn't check this account: {e}"
+            # Back off: 2x, 4x, 8x... the normal interval, up to 6 hours.
+            src.next_check_at = now() + timedelta(minutes=min(interval * 2 ** src.error_count, 360))
+        return {"error": str(e)}
+
+    def _take_posts(self, source_id: int, platform: str, username: str, posts: list, mon, uploads: int | None) -> dict:
         new_refs: list[int] = []
         with self.ctx.db.session() as s:
             src = s.get(SourceAccount, source_id)
@@ -125,7 +135,46 @@ class Pipeline:
             events.emit(self.ctx, "production", f"@{username} posted a new video", body=title[:500], priority="low", link=url,
                         dedupe_key=f"post:{rid}", discord=notify.new_post_message(username, platform, title, url, thumb))
             self.ctx.jobs.enqueue("clip.build", {"reference_id": rid}, idempotency_key=f"build:{rid}", max_attempts=3)
-        return {"posts_seen": len(posts), "new": len(new_refs), "baseline": first}
+        return {"posts_seen": len(posts), "new": len(new_refs), "baseline": first, "uploads": uploads or 0}
+
+    def check_uploads(self, source_id: int) -> int | None:
+        """A YouTube channel's new full videos and finished livestreams, each made into clips like a long video you
+        drop in (Long-form: the best moments found, cut and made into clips for the channel's streamer's pages).
+        The first look only records what's there, so adding a channel doesn't clip its whole history. Videos under
+        90 s are skipped (Shorts are checked as posts). None if this channel isn't set to do this."""
+        with self.ctx.db.session() as s:
+            src = s.get(SourceAccount, source_id)
+            if not src or not src.clip_uploads:
+                return None
+            profile, added = src.profile_url, src.created_at
+        try:
+            ups = self.ctx.fetcher.recent_uploads(profile, 10)
+        except FetchError as e:
+            log.info("couldn't read %s's videos: %s", profile, e)
+            return 0
+        made = 0
+        with self.ctx.db.session() as s:
+            src = s.get(SourceAccount, source_id)
+            first = src.seen_uploads is None
+            seen = list(src.seen_uploads or [])
+            only = source_creator_ids(src)
+            for u in reversed(ups):  # oldest first
+                if u.id in seen:
+                    continue
+                seen.append(u.id)
+                if (first and not (u.posted_at and u.posted_at > added)) or (u.duration and u.duration < 90):
+                    continue
+                v = LongformVideo(url=u.url, title=u.title[:300], creator_id=only[0] if len(only) == 1 else None, clips_wanted=6,
+                                  status="new", status_detail=f"New on @{src.username}: waiting for its turn")
+                s.add(v)
+                s.flush()
+                self.ctx.jobs.enqueue("longform.make", {"longform_id": v.id}, max_attempts=2, session=s)
+                made += 1
+            src.seen_uploads = seen[-300:]
+        if made:
+            events.emit(self.ctx, "production", f"{made} new video{'s' if made > 1 else ''} from {profile.rstrip('/').rsplit('/', 1)[-1]}: making clips",
+                        priority="low", dedupe_key=f"uploads:{source_id}:{seen[-1]}")
+        return made
 
     def _new_ref(self, s, src: SourceAccount | None, p: RemotePost, status: str, platform: str | None = None) -> ReferenceVideo:
         # Single-streamer accounts are attributed now; multi-streamer accounts once the moment is found.

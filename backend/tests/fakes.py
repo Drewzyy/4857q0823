@@ -21,12 +21,17 @@ class FakeFetcher:
         self.live: set[str] = set()  # stream urls that are still being broadcast
         self.origins: dict[str, tuple[str, float]] = {}
         self.heatmap: list[dict] | None = None  # Twitch clip url -> (its stream, offset)
+        self.uploads: list[RemotePost] = []  # a YouTube channel's full videos and past streams
 
     def recent_posts(self, platform, username, profile_url, limit):
         self.calls.append(("posts", username))
         if self.fail_listing:
             raise FetchError("HTTP Error 403: Forbidden")
         return self.posts[:limit]
+
+    def recent_uploads(self, profile_url, limit):
+        self.calls.append(("uploads", profile_url))
+        return self.uploads[:limit]
 
     def post_details(self, url):
         return RemotePost(id=url.rsplit("/", 1)[-1], url=url, title="pasted clip #fyp")

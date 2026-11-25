@@ -25,7 +25,9 @@ from .accounts import _clean_channels
 from .deps import ApiError, db, get_or_404
 
 router = APIRouter()
-WATCHED = ("twitch", "kick")  # channels whose own clips are watched
+# Channels watched: Twitch and Kick for their viewers' clips; YouTube for new videos and past streams (made into
+# clips through Long-form) and Shorts.
+WATCHED = ("twitch", "kick", "youtube")
 
 
 def _iso(d: datetime | None) -> str | None:
@@ -33,7 +35,7 @@ def _iso(d: datetime | None) -> str | None:
 
 
 def _watched(s: Session, cid: int) -> list[SourceAccount]:
-    """The Twitch and Kick channels watched for this streamer, including ones shared with another streamer
+    """The Twitch, Kick and YouTube channels watched for this streamer, including ones shared with another streamer
     (a group and its members, or two names for the same person)."""
     return [x for x in s.scalars(select(SourceAccount).where(SourceAccount.platform.in_(WATCHED))).unique()
             if cid in source_creator_ids(x)]
@@ -113,7 +115,7 @@ def _set_pages(s: Session, cid: int, wanted: list[int]) -> None:
 
 
 def _sync_channels(s: Session, c: Creator, watching: bool = True) -> None:
-    """A watched channel for each Twitch or Kick channel link; channels whose link was removed stop being watched."""
+    """A watched channel for each Twitch, Kick or YouTube channel link; channels whose link was removed stop being watched."""
     wanted = set()
     for link in c.vod_channels or []:
         if is_single_video(link):
@@ -123,7 +125,7 @@ def _sync_channels(s: Session, c: Creator, watching: bool = True) -> None:
         except SourceInputError:
             continue
         if parsed.platform not in WATCHED:
-            continue  # YouTube channels: their streams are searched; there are no viewer clips to watch
+            continue
         wanted.add((parsed.platform, parsed.username))
         src = s.scalar(select(SourceAccount).where(SourceAccount.platform == parsed.platform, SourceAccount.username == parsed.username))
         if not src:

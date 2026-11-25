@@ -78,6 +78,9 @@ class SourceAccount(Base):
     error_count: Mapped[int] = mapped_column(Integer, default=0)
     # First check only records what already exists, so adding an account doesn't clip its whole history.
     baseline_done: Mapped[bool] = mapped_column(Boolean, default=False)
+    # YouTube channels: new full videos and past streams go to Long-form to be made into clips (pipeline.check_uploads).
+    clip_uploads: Mapped[bool] = mapped_column(Boolean, default=True)
+    seen_uploads: Mapped[list[Any] | None] = mapped_column(nullable=True)  # ids already seen (the latest 300)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     __table_args__ = (UniqueConstraint("platform", "username"),)
 

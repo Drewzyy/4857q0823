@@ -49,6 +49,7 @@ class RemoteVod:
 
 class Fetcher(Protocol):
     def recent_posts(self, platform: str, username: str, profile_url: str, limit: int) -> list[RemotePost]: ...
+    def recent_uploads(self, profile_url: str, limit: int) -> list[RemotePost]: ...
     def post_details(self, url: str) -> RemotePost: ...
     def download_audio(self, url: str, dest_dir: Path) -> Path: ...
     def recent_vods(self, channel_url: str, limit: int) -> list[RemoteVod]: ...
@@ -227,6 +228,21 @@ class YtDlpFetcher:
             raise FetchError(f"Watching {platform} accounts isn't supported")
         info = self._extract(url, extract_flat="in_playlist", playlistend=limit)
         return [_post(e) for e in (info.get("entries") or [])[:limit] if e and e.get("id")]
+
+    def recent_uploads(self, profile_url: str, limit: int) -> list[RemotePost]:
+        """A YouTube channel's latest full videos and finished livestreams (not Shorts; not one that's live or
+        scheduled right now: it's taken once it's over)."""
+        out, seen = [], set()
+        for tab in ("/videos", "/streams"):
+            try:
+                info = self._extract(profile_url.rstrip("/") + tab, extract_flat="in_playlist", playlistend=limit)
+            except FetchError:
+                continue  # a channel without streams has no Live tab
+            for e in (info.get("entries") or [])[:limit]:
+                if e and e.get("id") and e["id"] not in seen and e.get("live_status") not in ("is_live", "is_upcoming", "post_live"):
+                    seen.add(e["id"])
+                    out.append(_post(e, f"https://www.youtube.com/watch?v={e['id']}"))
+        return out
 
     def post_details(self, url: str) -> RemotePost:
         return _post(self._extract(url, noplaylist=True), url)
