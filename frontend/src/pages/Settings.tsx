@@ -477,7 +477,7 @@ function StyleCard() {
     <div className="card stack" style={{ maxWidth: 820, marginTop: 16 }}>
       <h2>Your style</h2>
       <p className="small muted">Every clip you post in the Discord inbox (or add here) is downloaded and measured: its length, whether it opens on the climax and
-        for how long, how often it cuts, its layout, captions, the headline and how long it stays, and sound effects. Once {data.needed} are in, new clips are cut
+        for how long, how often it cuts, its layout, captions, the headline and how long it stays, sound effects (and which one), and zoom-ins. Clips with more views count for more. Once {data.needed} are in, new clips are cut
         the same way. It copies what can be measured, not taste.</p>
       <div className="row">
         <input className="input" aria-label="Link to one of your clips" placeholder="https://www.tiktok.com/@you/video/..." value={url} onChange={(e) => setUrl(e.target.value)} />
@@ -489,7 +489,9 @@ function StyleCard() {
           <li>Hook (the climax first): {pct(p.hook_rate)} of your clips{p.hook_seconds ? `, about ${p.hook_seconds} s` : ""}</li>
           <li>Headline at the top: {pct(p.headline_rate)}{p.headline_seconds ? `, for about ${Math.round(p.headline_seconds)} s` : ""}</li>
           <li>Layout: mostly {LAYOUT_NAMES[p.layout] ?? p.layout}</li>
-          <li>Captions: {pct(p.captions_rate)} · sound effects: {pct(p.sfx_rate)} · cuts: about {p.cuts_per_min} a minute</li>
+          <li>Captions: {pct(p.captions_rate)} · sound effects: {pct(p.sfx_rate)}{p.sound ? ` (mostly ${p.sound.replace("_", " ")})` : ""}
+            · zoom-ins: {pct(p.zoom_rate ?? 0)} · cuts: about {p.cuts_per_min} a minute</li>
+          <li className="faint">Clips with more views count for more.</li>
         </ul>)}
       <div className="row wrap">
         {p && <button className="btn primary sm" onClick={() => run(api.applyStyle, "Re-cutting waiting clips to your style")}>Apply to waiting clips</button>}
@@ -498,7 +500,7 @@ function StyleCard() {
       {data.examples.length > 0 && <details><summary className="small">{data.examples.length} clips</summary>
         <ul className="small faint" style={{ margin: "6px 0 0", paddingLeft: 18 }}>{data.examples.slice(0, 50).map((e) => (
           <li key={e.url}><a href={e.url} target="_blank" rel="noopener noreferrer">{e.url.replace(/^https:\/\/(www\.)?/, "").slice(0, 60)}</a>{" "}
-            {e.features ? `${Math.round(e.features.length)} s, ${e.features.hook ? `${e.features.hook} s hook` : "no hook"}, ${LAYOUT_NAMES[e.features.layout] ?? e.features.layout}${e.features.headline ? ", headline" : ""}${e.features.sfx ? ", sound effects" : ""}`
+            {e.features ? `${Math.round(e.features.length)} s, ${e.features.hook ? `${e.features.hook} s hook` : "no hook"}, ${LAYOUT_NAMES[e.features.layout] ?? e.features.layout}${e.features.headline ? ", headline" : ""}${e.features.sfx ? `, sound effects${e.features.sound ? ` (${e.features.sound})` : ""}` : ""}${e.features.zooms ? ", zoom-ins" : ""}${e.views ? `, ${e.views.toLocaleString()} views` : ""}`
               : `couldn't be measured: ${e.error ?? "waiting"}`}</li>))}</ul></details>}
     </div>
   );

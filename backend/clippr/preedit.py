@@ -188,6 +188,7 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     if style:
         hook = hook and style["hook_rate"] >= 0.5  # most of your clips open on the climax: so does this one
         sound = sound and style["sfx_rate"] >= 0.5
+        choice = choice or style.get("sound") or ""  # the sound effect your clips use
         title_for = style["headline_seconds"] or TITLE_SECONDS
         if style["captions_rate"] < 0.3:
             e["captions"] = False  # yours don't have captions
@@ -221,7 +222,8 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
             e["sounds"] = [{"name": name, "at": round(edit["start"] + when, 3), "volume": 0.6}]
     e["texts"] = texts[:20]
     peak = peak_moment(db, a, b)
-    if peak is not None and not e.get("punch"):  # a subtle push in on the moment itself, never the whole clip
+    zoom = not style or style.get("zoom_rate", 1) >= 0.3  # your clips punch in on the moment (or Vyral's default)
+    if peak is not None and zoom and not e.get("punch"):  # a subtle push in on the moment itself, never the whole clip
         e["punch"] = [round(edit["start"] + peak - 0.15, 3), round(edit["start"] + min(b, peak + 1.4), 3)]
     if hook and not e.get("hook"):
         sec = style["hook_seconds"] if style and style["hook_seconds"] else 0

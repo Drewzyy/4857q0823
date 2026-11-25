@@ -323,15 +323,13 @@ def test_captions_already_in_the_footage_are_found(tmp_path):
 
 def _made_clip(tmp_path):
     """A vertical clip edited like yours: the climax first (3 s that come back at 17 s), facecam panel on top and the
-    game under it, a headline at the top for the first 4 s, captions that change, two sound hits."""
+    game under it, a headline at the top for the first 4 s, captions that change, Vyral's boom twice, a punch-in at 25 s."""
+    from clippr.media import sfx
     from clippr.media.ffmpeg import run
     from media_fixtures import SR, speechlike, write_wav
     talk = speechlike(36, 7)
-    audio = np.concatenate([talk[int(14 * SR):int(17 * SR)], talk])
-    for at in (20, 28):  # sound effects: short loud hits
-        n = int(0.25 * SR)
-        audio[int(at * SR):int(at * SR) + n] += 0.9 * np.sin(np.arange(n) * 2 * np.pi * 900 / SR).astype(np.float32)
-    wav = write_wav(tmp_path / "a.wav", np.clip(audio, -1, 1))
+    wav = write_wav(tmp_path / "a.wav", np.concatenate([talk[int(14 * SR):int(17 * SR)], talk]))
+    boom = sfx.path("boom", tmp_path / "sfx")
     font = str(next((Path(__file__).parent.parent / "clippr" / "media" / "fonts").glob("*.ttf"))).replace(":", "\\:")
     caps = ",".join(f"drawtext=fontfile='{font}':text='{w}':fontsize=70:fontcolor=white:borderw=6:x=(w-tw)/2:y=h*0.72:"
                     f"enable='between(t,{i * 3},{i * 3 + 3})'" for i, w in enumerate(["NO WAY", "HE DID", "THAT TO", "THE CAR", "AND THEN",
@@ -339,7 +337,10 @@ def _made_clip(tmp_path):
     head = f"drawtext=fontfile='{font}':text='HE THOUGHT IT WAS FINE':fontsize=64:fontcolor=black:box=1:boxcolor=white:boxborderw=20:x=(w-tw)/2:y=h*0.1:enable='lt(t,4)'"
     out = tmp_path / "made.mp4"
     run(["-f", "lavfi", "-i", "color=c=0x404060:size=1080x768:rate=15:duration=39", "-f", "lavfi", "-i", "testsrc2=size=1080x1152:rate=15:duration=39",
-         "-i", str(wav), "-filter_complex", f"[0:v][1:v]vstack,{head},{caps}[v]", "-map", "[v]", "-map", "2:a",
+         "-i", str(wav), "-i", str(boom), "-filter_complex",
+         "[1:v]split[g][gz];[gz]crop=iw/1.3:ih/1.3,scale=1080:1152[z];[g][z]overlay=enable='gte(t,25)'[game];"
+         f"[0:v][game]vstack,{head},{caps}[v];[3:a]asplit[b1][b2];[b1]adelay=20000|20000[s1];[b2]adelay=28000|28000[s2];"
+         "[2:a][s1][s2]amix=inputs=3:duration=first:normalize=0[a]", "-map", "[v]", "-map", "[a]",
          "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(out)])
     return out
 
@@ -348,7 +349,7 @@ def test_your_clips_are_measured_and_new_clips_follow_your_style(ctx, tmp_path):
     from clippr import style
     got = style.analyze(_made_clip(tmp_path))
     assert 38 <= got["length"] <= 40 and got["hook"] >= 2 and got["layout"] == "stacked" and got["captions"]
-    assert 3 <= got["headline"] <= 6 and got["sfx"] >= 1, got
+    assert 3 <= got["headline"] <= 6 and got["sfx"] >= 1 and got["sound"] == "boom" and got["zooms"] >= 1, got
     with ctx.db.session() as s:
         for i in range(2):
             assert style.add(s, f"https://www.tiktok.com/@me/video/{i}", got) is None  # not enough yet
@@ -365,7 +366,8 @@ def test_a_plain_clip_measures_as_plain(tmp_path):
     run(["-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=15:duration=30", "-i", str(wav), "-c:v", "libx264", "-preset", "ultrafast",
          "-c:a", "aac", "-shortest", str(out)])
     got = style.analyze(out)
-    assert got["hook"] == 0 and got["headline"] == 0 and not got["captions"] and got["sfx"] == 0 and got["layout"] in ("full", "stacked"), got
+    assert got["hook"] == 0 and got["headline"] == 0 and not got["captions"] and got["sfx"] == 0 and got["sound"] is None, got
+    assert got["zooms"] == 0 and got["layout"] in ("full", "stacked"), got
 
 
 def test_a_learned_style_changes_how_clips_are_cut():
@@ -391,3 +393,21 @@ def test_clips_sent_to_the_inbox_are_learned_from(ctx, tmp_path, monkeypatch):
     assert style.learn(ctx, "https://www.tiktok.com/@me/video/1") == {"skipped": "already learned"}
     monkeypatch.setattr(ctx.fetcher, "download_post", lambda url, dest: (_ for _ in ()).throw(RuntimeError("private")), raising=False)
     assert style.learn(ctx, "https://www.tiktok.com/@me/video/2")["error"] == "private"
+
+
+def test_clips_with_more_views_count_for_more_and_the_style_picks_your_sound():
+    from clippr import style
+    from clippr.media.overlay import Word
+    short = {"length": 30, "hook": 0, "cuts_per_min": 1, "layout": "full", "captions": True, "headline": 0, "sfx": 0, "sound": None, "zooms": 0}
+    long = {**short, "length": 60, "hook": 3.0, "sfx": 2, "sound": "boom", "zooms": 2}
+    ex = [{"url": f"u{i}", "features": short, "views": 50} for i in range(3)] + [{"url": "big", "features": long, "views": 2_000_000},
+                                                                                {"url": "big2", "features": long, "views": 900_000}]
+    p = style.profile_of(ex)
+    assert p["length"] == 60 and p["hook_rate"] > 0.5 and p["sound"] == "boom" and p["zoom_rate"] > 0.5  # the hits win
+    words = [Word(i * 0.5, i * 0.5 + 0.4, "word") for i in range(160)]
+    db = np.full(800, -30.0)
+    db[600:615] = -2
+    e = preedit.apply({"start": 0.0, "end": 80.0, "texts": []}, words, db, "", sound=True, hook=False, style=p)
+    assert e.get("sounds") and e["sounds"][0]["name"] == "boom" and e.get("punch")
+    p0 = style.profile_of([{"url": f"u{i}", "features": short} for i in range(3)])
+    assert not preedit.apply({"start": 0.0, "end": 80.0, "texts": []}, words, db, "", sound=True, style=p0).get("punch")

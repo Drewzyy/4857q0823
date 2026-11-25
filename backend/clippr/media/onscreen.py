@@ -29,7 +29,7 @@ def _lines(gray, band_from: float = 0.22, band_to: float = 0.95) -> list[tuple[i
     # Long straight edges (the picture's own stripes, borders, UI panels) aren't letters. Left in, they run through a
     # caption and merge it into one shape too tall to be text, so busy footage hid its captions (the double captions).
     import numpy as np
-    vert = cv2.morphologyEx(bw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(3, int(h * 0.14)))))
+    vert = cv2.morphologyEx(bw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(3, int(w * 0.09)))))
     hori = cv2.morphologyEx(bw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, w // 5), 1)))
     bw = cv2.subtract(bw, cv2.dilate(cv2.bitwise_or(vert, hori), np.ones((3, 3), np.uint8)))
     joined = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (max(9, w // 40), 3)))
