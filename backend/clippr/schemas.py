@@ -313,6 +313,7 @@ class ClipEdit(Strict):
     source_has_captions: bool = False  # the footage already shows captions (so Vyral's are off by default)
     preedited: bool = False  # Vyral's viral pre-edit has been applied (see preedit.py)
     preedit_version: int = Field(0, ge=0)  # which version of it; clips get a newer version once
+    trial: dict[str, Any] | None = None  # the choices this clip was cut with (tuner.py), to learn which get more views
 
 
 class PresetData(Strict):

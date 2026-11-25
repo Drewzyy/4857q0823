@@ -443,3 +443,33 @@ def test_hashtags_songs_and_the_cut_are_learned_and_posts_wait_for_daytime(ctx, 
     assert nxt.hour == 12 and nxt.date() > late.date()
     noon = datetime(2026, 11, 25, 15, 0).astimezone()
     assert posting.in_window(noon, cfg) == noon
+
+
+def test_vyral_keeps_what_gets_more_views_on_your_pages(ctx, tmp_path):
+    import random
+    from clippr import tuner
+    from clippr.media.overlay import Word
+    from clippr.models import MetricSnapshot
+    # Every clip records what it got; one in four tries something else.
+    words = [Word(i * 0.5, i * 0.5 + 0.4, "word") for i in range(160)]
+    db = np.full(800, -30.0)
+    db[600:615] = -2
+    e = preedit.apply({"start": 0.0, "end": 80.0, "texts": []}, words, db, "", sound=True, hook=True, force={"zoom": False, "length": -10})
+    assert e["trial"]["zoom"] is False and e["trial"]["length"] == -10 and not e.get("punch")
+    with ctx.db.session() as s:
+        picks = [tuner.pick(s, random.Random(i)) for i in range(400)]
+    assert 0.18 < sum(1 for p in picks if p.get("exploring")) / 400 < 0.32
+    # 16 posts on one page: the 10 s shorter ones get about twice the views an hour.
+    ids = _clip(ctx, tmp_path, n=16)
+    with ctx.db.session() as s:
+        for n, o in enumerate(s.query(ClipOutput).order_by(ClipOutput.id)):
+            shorter = n % 2 == 0
+            s.get(Clip, o.clip_id).edit = {"trial": {"hook": True, "headline": False, "sfx": True, "zoom": True, "length": -10 if shorter else 0}}
+            o.status, o.uploaded_at = "uploaded", datetime.now(timezone.utc) - timedelta(hours=24)
+            s.add(MetricSnapshot(output_id=o.id, views=(4800 if shorter else 2400) + n * 10, source="auto"))
+    assert ids
+    with ctx.db.session() as s:
+        got = tuner.learn(s)
+    assert got["best"] == {"length": -10} and got["results"]["length"]["-10"]["posts"] == 8
+    with ctx.db.session() as s:
+        assert all(p.get("length") == -10 or p.get("exploring") == "length" for p in (tuner.pick(s, random.Random(i)) for i in range(50)))

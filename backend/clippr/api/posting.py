@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import mcp, posting, screen, style
+from .. import mcp, posting, screen, style, tuner
 from .deps import ApiError, ctx, db
 from .system import load_settings
 
@@ -95,3 +95,16 @@ def apply_style(c=Depends(ctx)):
     """Cut every waiting clip you didn't edit again to your style."""
     c.jobs.enqueue("style.apply", {}, max_attempts=1)
     return {"queued": True}
+
+
+@router.get("/tuned")
+def get_tuned(s: Session = Depends(db)):
+    """What Vyral has found gets more views on your pages, and what it's still testing (tuner.py)."""
+    return {**tuner.state(s), "names": tuner.NAMES, "min_posts": tuner.MIN_POSTS}
+
+
+@router.post("/tuned/reset")
+def reset_tuned(s: Session = Depends(db)):
+    tuner.reset(s)
+    s.flush()
+    return {**tuner.state(s), "names": tuner.NAMES, "min_posts": tuner.MIN_POSTS}

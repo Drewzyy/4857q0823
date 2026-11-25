@@ -19,7 +19,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import object_session
 from sqlalchemy import delete, func, select
 
-from . import campaigns, content, describe, events, files, grade, identify, moments, notify, preedit, safety, screen, style, titles
+from . import campaigns, content, describe, events, files, grade, identify, moments, notify, preedit, safety, screen, style, titles, tuner
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
@@ -717,8 +717,9 @@ class Pipeline:
             title, quote = titles.make_title(words, creator_name, preedit.peak_moment(db, 0, dur), rules["overlay_mentions"])
             with self.ctx.db.session() as s:
                 min_s, max_s, mine = lengths(s, rules)
+                force = tuner.pick(s)  # the best choices so far, or one being tried (self-improving: tuner.py)
             framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first,
-                                    min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine)
+                                    min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force)
             captions_note = " ".join(filter(None, [captions_note, campaigns.too_short(rules, framing["end"] - framing["start"])]))
         renders: dict[str, Path] = {}
         qcs: dict[str, dict] = {}
@@ -1101,6 +1102,7 @@ class Pipeline:
                 clip.words = [w.to_dict() for w in overlay.fix_words([Word.from_dict(w) for w in clip.words], fixes)]
             rules = campaigns.clip_rules_of(s, clip)
             min_s, max_s, mine = lengths(s, rules)
+            force = tuner.pick(s)
             words = [Word(w["start"] - (e["start"] - base), w["end"] - (e["start"] - base), w["text"]) for w in clip.words or []]
             source = Path(clip.source_path)
             ref = clip.reference
@@ -1108,7 +1110,7 @@ class Pipeline:
             creator = clip.creator.name if clip.creator else ""
         db = self._loudness(source, e["start"], e["end"] - e["start"])
         title, quote = titles.make_title(words, creator, preedit.peak_moment(db, 0, e["end"] - e["start"]), rules["overlay_mentions"])
-        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine)).model_dump()
+        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force)).model_dump()
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             clip.edit, clip.title = new, title
@@ -1180,6 +1182,11 @@ class Pipeline:
         s.add(o)
         s.flush()
         return o
+
+    def tune(self) -> dict:
+        with self.ctx.db.session() as s:
+            out = tuner.learn(s)
+        return {"posts": out["posts"], "best": out["best"]}
 
     def restyle_waiting(self) -> dict:
         """Cut every waiting clip you didn't edit again to your learned style (Settings > Your style > Apply)."""
@@ -1570,6 +1577,8 @@ def register(ctx: Any) -> Pipeline:
     q.every("posts.detect", 30 * 60)
     q.register("style.learn", lambda jc, pl: style.learn(ctx, pl["url"]))
     q.register("style.refresh", lambda jc, pl: style.refresh(ctx))
+    q.register("tuner.learn", lambda jc, pl: p.tune())
+    q.every("tuner.learn", 6 * 3600)  # which choices get more views on your pages: the winners become the default
     q.every("style.refresh", 12 * 3600)  # your clips' views keep growing: re-read them so the hits keep counting more
     q.register("style.apply", lambda jc, pl: p.restyle_waiting())
     q.register("pages.promote", lambda jc, pl: p.promote_best())

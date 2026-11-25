@@ -21,7 +21,7 @@ export default function SettingsPage() {
         ))}
       </div>
       {tab === "general" && <General />}
-      {tab === "muse" && <><MusePosting /><StyleCard /><LearnedCard /></>}
+      {tab === "muse" && <><MusePosting /><StyleCard /><TunedCard /><LearnedCard /></>}
       {tab === "dropbox" && <DropboxSettings />}
       {tab === "notifications" && <><Notifications /><PhoneInbox /></>}
       {tab === "security" && <Security />}
@@ -505,6 +505,30 @@ function StyleCard() {
           <li key={e.url}><a href={e.url} target="_blank" rel="noopener noreferrer">{e.url.replace(/^https:\/\/(www\.)?/, "").slice(0, 60)}</a>{" "}
             {e.features ? `${Math.round(e.features.length)} s, ${e.features.hook ? `${e.features.hook} s hook` : "no hook"}, ${LAYOUT_NAMES[e.features.layout] ?? e.features.layout}${e.features.headline ? ", headline" : ""}${e.features.sfx ? `, sound effects${e.features.sound ? ` (${e.features.sound})` : ""}` : ""}${e.features.zooms ? ", zoom-ins" : ""}${e.views ? `, ${e.views.toLocaleString()} views` : ""}`
               : `couldn't be measured: ${e.error ?? "waiting"}`}</li>))}</ul></details>}
+    </div>
+  );
+}
+
+/** What Vyral is testing on its own clips, and what it found gets more views on your pages. */
+function TunedCard() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["tuned"], queryFn: api.tuned, refetchInterval: 60_000 });
+  if (!data) return null;
+  const label = (v: string) => v === "true" ? "on" : v === "false" ? "off" : Number(v) > 0 ? `+${v} s` : Number(v) < 0 ? `${v} s` : "usual";
+  return (
+    <div className="card stack" style={{ maxWidth: 820, marginTop: 16 }}>
+      <h2>What Vyral is testing</h2>
+      <p className="small muted">About one clip in four tries a different choice (a hook or not, a headline or not, a sound effect, a zoom-in, 10 s shorter or longer).
+        Every 6 hours, posts up 12 hours or more are compared by views an hour against what's normal for their page. Once an option has {data.min_posts}+ posts
+        and clearly wins, it becomes the default; testing carries on.</p>
+      <table className="table small"><thead><tr><th>Choice</th><th>Options (posts, views an hour vs the page's normal)</th><th>Now</th></tr></thead><tbody>
+        {Object.entries(data.names).map(([k, name]) => (
+          <tr key={k}><td>{name}</td>
+            <td>{Object.entries(data.results?.[k] ?? {}).map(([o, r]) => `${label(o)}: ${r.posts}${r.lift != null ? ` (${r.lift >= 0 ? "+" : ""}${Math.round((10 ** r.lift - 1) * 100)}%)` : ""}`).join(" · ") || "no posts yet"}</td>
+            <td>{k in data.best ? <strong>{label(String(data.best[k]))}</strong> : <span className="faint">testing</span>}</td></tr>))}
+      </tbody></table>
+      <div className="row small faint">{data.updated ? `Last compared ${relTime(data.updated)} on ${data.posts ?? 0} posts.` : "Nothing compared yet: it needs posts with views."}
+        <span className="spacer" /><button className="btn ghost sm" onClick={async () => { qc.setQueryData(["tuned"], await api.resetTuned()); }}>Reset</button></div>
     </div>
   );
 }

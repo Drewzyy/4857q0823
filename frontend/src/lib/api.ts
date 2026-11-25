@@ -80,6 +80,10 @@ export interface PostedRow {
   output_id: number; clip_id: number; clip_title: string; platform: string; page: string; post_url: string | null; url: string;
   status: "verified" | "unverified" | "failed"; reason?: string; by?: string; at: string; posted_by?: string | null;
 }
+export interface Tuned {
+  best: Record<string, boolean | number>; posts?: number; updated: string | null; min_posts: number; names: Record<string, string>;
+  results: Record<string, Record<string, { posts: number; lift: number | null }>>;
+}
 export interface StyleFeatures { length: number; hook: number; cuts_per_min: number; layout: string; captions: boolean; headline: number; sfx: number; sound?: string | null; zooms?: number }
 export interface StyleView {
   needed: number;
@@ -297,6 +301,8 @@ export const api = {
   clearAllClips: (confirm: string) => request<{ deleted: number }>("POST", "/clips/clear-all", { confirm }),
   learned: () => request<Learned>("GET", "/learned"),
   style: () => request<StyleView>("GET", "/style"),
+  tuned: () => request<Tuned>("GET", "/tuned"),
+  resetTuned: () => request<Tuned>("POST", "/tuned/reset"),
   learnStyle: (url: string) => request<{ queued: boolean }>("POST", "/style/learn", { url }),
   forgetStyle: (url?: string) => request<StyleView>("POST", "/style/forget", url ? { url } : undefined),
   applyStyle: () => request<{ queued: boolean }>("POST", "/style/apply"),
