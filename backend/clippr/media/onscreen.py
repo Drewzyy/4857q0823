@@ -17,12 +17,13 @@ SAMPLES = 14  # captions pause when nobody talks: more frames so short silences 
 WIDTH = 640
 
 
-def _lines(gray) -> list[tuple[int, int, int, int]]:
-    """Text-line boxes (x, y, w, h) in the band from a fifth of the way down to the bottom of one frame, centered ones only."""
+def _lines(gray, band_from: float = 0.22, band_to: float = 0.95) -> list[tuple[int, int, int, int]]:
+    """Text-line boxes (x, y, w, h) in a band of one frame (by default from a fifth of the way down, where TikTok-style
+    captions sit, to the bottom), centered ones only."""
     import cv2
     h, w = gray.shape
-    top = int(h * 0.22)  # TikTok-style captions often sit just above the middle, not only low down
-    band = gray[top:int(h * 0.95)]
+    top = int(h * band_from)
+    band = gray[top:int(h * band_to)]
     grad = cv2.morphologyEx(band, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
     _, bw = cv2.threshold(grad, 110, 255, cv2.THRESH_BINARY)  # caption text has hard, high-contrast edges (an outline)
     # Long straight edges (the picture's own stripes, borders, UI panels) aren't letters. Left in, they run through a

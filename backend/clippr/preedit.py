@@ -43,13 +43,15 @@ HEADLINE_SIZE = 76  # pixels on a 1080-wide video: about 3% of the height per li
 SHOCK = re.compile(r"\b(wtf|what the|no way|bro|oh my god|omg|are you serious|insane|crazy)\b", re.I)
 
 
-def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0, max_s: float = 0) -> tuple[float, float]:
+def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0, max_s: float = 0,
+                style: dict | None = None) -> tuple[float, float]:
     """(start, end) in seconds from the clip's start: the whole clip, or for a long one the TARGET-second stretch
     ending just after its loudest moment, opening on a new sentence. Always starts on sound. min_s and max_s are a
     campaign's length rules (0 = none): the window is kept inside them, and is only shorter than min_s when the
-    clip itself is."""
+    clip itself is. style: your learned style (style.py): its usual length range and length replace the defaults."""
     hi = max_s or float("inf")
-    shortest, longest, target = (min(max(x, min_s), hi) for x in (SHORTEST, LONGEST, TARGET))
+    defaults = (style["length_low"], style["length_high"], style["length"]) if style else (SHORTEST, LONGEST, TARGET)
+    shortest, longest, target = (min(max(x, min_s), hi) for x in defaults)
     start, end = 0.0, dur
     if db is not None and len(db) > int(shortest / STEP) and dur > longest:
         level = np.convolve(db - np.median(db), np.ones(10) / 10, mode="same")
@@ -128,7 +130,7 @@ def auto_sound(db: np.ndarray | None, a: float, b: float, speech: str) -> tuple[
 HOOK_MIN, HOOK_MAX = 2.0, 4.0  # the climax up front for 2 to 4 seconds, then the story from its start
 
 
-def pick_hook(db: np.ndarray | None, words: list, a: float, b: float) -> tuple[float, float] | None:
+def pick_hook(db: np.ndarray | None, words: list, a: float, b: float, lengths: tuple = (2.5, 3.0, 4.0)) -> tuple[float, float] | None:
     """The best few seconds of [a, b) (seconds from the clip's start) to show first, or None when the clip already
     opens on its best part or nothing stands out. Scored on the reaction (loudness against the clip's own level,
     how sharp the spike is) and on what's said (reaction words, fast talking). Snapped to whole words."""
@@ -149,7 +151,7 @@ def pick_hook(db: np.ndarray | None, words: list, a: float, b: float) -> tuple[f
     opening = score(a, a + 5)
     best, at = -1e9, None
     for t in np.arange(a + 6, b - HOOK_MIN, 0.5):  # never the opening itself: that's already first
-        for length in (2.5, 3.0, 4.0):
+        for length in lengths:
             if t + length <= b:
                 v = score(t, t + length)
                 if v > best:
@@ -169,16 +171,26 @@ def pick_hook(db: np.ndarray | None, words: list, a: float, b: float) -> tuple[f
 
 
 def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, quote: bool = False, sound: bool = False,
-          choice: str = "", hook: bool = False, min_s: float = 0, max_s: float = 0, named: bool = False) -> dict:
+          choice: str = "", hook: bool = False, min_s: float = 0, max_s: float = 0, named: bool = False,
+          style: dict | None = None) -> dict:
     """The pre-edit on a clip's edit (start/end in source seconds; words and db from edit['start']).
     choice: the sound to use on big moments (Settings), "" to pick one by the moment. min_s, max_s: a campaign's
     length rules (best_window); the teaser counts toward the length, so it's left out when it wouldn't fit.
-    named: a campaign wants names on the video, so the headline stays whatever it is."""
+    named: a campaign wants names on the video, so the headline stays whatever it is.
+    style: your learned style (style.py), once enough of your clips are measured: your length, whether your clips
+    have a hook (and how long), a headline (and for how long), sound effects and captions, instead of the defaults."""
     e = dict(edit)
     if e.get("preedit_version", 1 if e.get("preedited") else 0) >= VERSION:
         return e
     dur = e["end"] - e["start"]
-    a, b = best_window(db, words, dur, min_s, max_s)
+    a, b = best_window(db, words, dur, min_s, max_s, style)
+    title_for = TITLE_SECONDS
+    if style:
+        hook = hook and style["hook_rate"] >= 0.5  # most of your clips open on the climax: so does this one
+        sound = sound and style["sfx_rate"] >= 0.5
+        title_for = style["headline_seconds"] or TITLE_SECONDS
+        if style["captions_rate"] < 0.3:
+            e["captions"] = False  # yours don't have captions
     e["start"], e["end"] = round(e["start"] + a, 3), round(e["start"] + b, 3)
     texts = [t for t in e.get("texts") or [] if not (t.get("box") or t.get("headline"))]
     # Not every clip needs a title on the video. When someone is talking, text over the picture competes with them
@@ -187,7 +199,10 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     # the clip, shown up front as the reason to keep watching. A summary that fits any clip ("kai had a moment") or a
     # line the clip opens on anyway is left off the picture and kept for the post's caption.
     said = titles.said_at(words, headline_text) if headline_text and quote else None
-    if not named and not (said is not None and said - a > HEADLINE_LEAD):  # named: a campaign wants a name on the video
+    usual = style["headline_rate"] if style else None  # how often your clips have one
+    if named or (usual is not None and usual >= 0.6):
+        pass  # a campaign wants a name on the video, or nearly all of yours have a headline
+    elif (usual is not None and usual < 0.3) or not (said is not None and said - a > HEADLINE_LEAD):
         headline_text = ""
     e["hide_title"] = True  # the page's own title style stays off too: the headline or nothing
     if headline_text:
@@ -195,7 +210,7 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
         # One headline, at the top (on the seam between face and gameplay when the facecam is on top, as the top
         # gaming clips do), for the opening seconds only: a line across the picture for the whole clip covers it.
         y = round(CAM_SHARE * 100) if stacked else HEADLINE_Y
-        texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(min(b - a, TITLE_SECONDS) + HOOK_MAX, 2), "y_percent": y,
+        texts.insert(0, {"text": headline_text[:200], "start": 0, "end": round(min(b - a, title_for) + HOOK_MAX, 2), "y_percent": y,
                          "size": HEADLINE_SIZE, "color": "#141414", "font": "poppins", "all_caps": True, "outline": 0, "box": True, "headline": True})
     if sound and not e.get("sounds"):
         pick = auto_sound(db, a, b, " ".join(w.text for w in words))
@@ -209,11 +224,12 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     if peak is not None and not e.get("punch"):  # a subtle push in on the moment itself, never the whole clip
         e["punch"] = [round(edit["start"] + peak - 0.15, 3), round(edit["start"] + min(b, peak + 1.4), 3)]
     if hook and not e.get("hook"):
-        h = pick_hook(db, words, a, b)
+        sec = style["hook_seconds"] if style and style["hook_seconds"] else 0
+        h = pick_hook(db, words, a, b, (sec - 0.5, sec, sec + 0.5) if sec else (2.5, 3.0, 4.0))
         if h and (not max_s or b - a + h[1] - h[0] <= max_s):
             e["hook"] = [round(edit["start"] + h[0], 3), round(edit["start"] + h[1], 3)]
     for x in e["texts"]:
         if x.get("headline"):  # the hook plays first, so the headline stays through it and a few seconds more
-            x["end"] = round(min(b - a, TITLE_SECONDS) + ((e["hook"][1] - e["hook"][0]) if e.get("hook") else 0), 2)
+            x["end"] = round(min(b - a, title_for) + ((e["hook"][1] - e["hook"][0]) if e.get("hook") else 0), 2)
     e["preedited"], e["preedit_version"] = True, VERSION
     return e

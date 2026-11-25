@@ -19,7 +19,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import object_session
 from sqlalchemy import delete, func, select
 
-from . import campaigns, content, describe, events, files, grade, identify, moments, notify, preedit, safety, screen, titles
+from . import campaigns, content, describe, events, files, grade, identify, moments, notify, preedit, safety, screen, style, titles
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
@@ -495,20 +495,23 @@ class Pipeline:
         with self.ctx.db.session() as s:
             c = s.get(Creator, creator_id) if creator_id else None
             saved = list(c.facecam) if c and c.facecam else None
+        with self.ctx.db.session() as s:
+            mine = style.current(s)
+        usual = mine["layout"] if mine and mine["layouts"][mine["layout"]] >= 0.6 * mine["examples"] else None  # most of yours look like this
         if saved:
-            return {"layout": "stacked", "cam": saved}
+            return {"layout": "face" if usual == "face" else "stacked", "cam": saved}
         try:
             info = probe(source)
             stream = info.width / info.height if info.width and info.height else 16 / 9
             fmt = OutputFormat()
             sampled = sampled or facecam.sample(source, start, dur)
             cam = facecam.detect(source, start, dur, stream, fmt.width / (fmt.height * facecam.CAM_SHARE), sampled)
-            if cam:
-                return {"layout": "stacked", "cam": cam}
+            if cam and usual != "full":
+                return {"layout": "face" if usual == "face" else "stacked", "cam": cam}
             # Two people talking side by side: one on top, the other underneath, so both reactions are on screen.
             pair = facecam.two_people(*sampled, stream, fmt.width / (fmt.height * facecam.CAM_SHARE),
                                       min(1.0, fmt.width / (fmt.height * (1 - facecam.CAM_SHARE)) / stream))
-            if pair:
+            if pair and usual != "full":
                 return {"layout": "stacked", "cam": pair[0], "pan_x": pair[1]}
             # Zoomed in to fill the frame, only a slice of a wide stream fits: keep the person in that slice.
             crop_share = min(1.0, (fmt.width / (fmt.height * VIDEO_HEIGHT)) / stream)
@@ -664,10 +667,9 @@ class Pipeline:
             db = self._loudness(source, start, dur)
             title, quote = titles.make_title(words, creator_name, preedit.peak_moment(db, 0, dur), rules["overlay_mentions"])
             with self.ctx.db.session() as s:
-                lim = screen.learned(s)  # the length you've taught it, inside any campaign's own rules
+                min_s, max_s, mine = lengths(s, rules)
             framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first,
-                                    max(rules["min_seconds"] or 0, lim["min_seconds"]),
-                                    min(rules["max_seconds"] or lim["max_seconds"], lim["max_seconds"]), named=bool(rules["overlay_mentions"]))
+                                    min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine)
             captions_note = " ".join(filter(None, [captions_note, campaigns.too_short(rules, framing["end"] - framing["start"])]))
         renders: dict[str, Path] = {}
         qcs: dict[str, dict] = {}
@@ -886,7 +888,10 @@ class Pipeline:
                              views=facts["views"], likes=facts["likes"], shares=facts["shares"], posted_at=facts["posted_at"],
                              stream_clip=facts["stream_clip"]).to_dict()
         with self.ctx.db.session() as s:
-            result["screen"] = screen.check(words, length, screen.learned(s), result.get("parts") or [])  # watchable on its own? (held back if not)
+            limits = screen.learned(s)
+            if style.current(s):  # your own clips' usual length sets the shortest allowed, if it's shorter
+                limits = {**limits, "min_seconds": min(limits["min_seconds"], style.current(s)["length_low"])}
+            result["screen"] = screen.check(words, length, limits, result.get("parts") or [])  # watchable on its own? (held back if not)
             clip = s.get(Clip, clip_id)
             if clip:
                 clip.grade = result
@@ -1046,9 +1051,7 @@ class Pipeline:
             if fixes and clip.words:  # names the speech model got wrong, fixed in clips made before the fix was added
                 clip.words = [w.to_dict() for w in overlay.fix_words([Word.from_dict(w) for w in clip.words], fixes)]
             rules = campaigns.clip_rules_of(s, clip)
-            lim = screen.learned(s)  # the length you've taught it, inside any campaign's own rules
-            min_s = max(rules["min_seconds"] or 0, lim["min_seconds"])
-            max_s = min(rules["max_seconds"] or lim["max_seconds"], lim["max_seconds"])
+            min_s, max_s, mine = lengths(s, rules)
             words = [Word(w["start"] - (e["start"] - base), w["end"] - (e["start"] - base), w["text"]) for w in clip.words or []]
             source = Path(clip.source_path)
             ref = clip.reference
@@ -1056,7 +1059,7 @@ class Pipeline:
             creator = clip.creator.name if clip.creator else ""
         db = self._loudness(source, e["start"], e["end"] - e["start"])
         title, quote = titles.make_title(words, creator, preedit.peak_moment(db, 0, e["end"] - e["start"]), rules["overlay_mentions"])
-        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s, named=bool(rules["overlay_mentions"]))).model_dump()
+        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine)).model_dump()
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             clip.edit, clip.title = new, title
@@ -1128,6 +1131,20 @@ class Pipeline:
         s.add(o)
         s.flush()
         return o
+
+    def restyle_waiting(self) -> dict:
+        """Cut every waiting clip you didn't edit again to your learned style (Settings > Your style > Apply)."""
+        with self.ctx.db.session() as s:
+            proc = load_settings(s).processing
+            edited = {int(x) for x in s.scalars(select(AuditLog.entity_id).where(AuditLog.action == "clip.edited")) if x.isdigit()}
+            ids = [c.id for c in s.scalars(select(Clip).where(Clip.status == "ready")) if c.id not in edited]
+        done = 0
+        for cid in ids:
+            try:
+                done += self.preedit_clip(cid, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first, redo=True)
+            except Exception:
+                log.exception("restyling clip %s failed; it keeps its current edit", cid)
+        return {"restyled": done}
 
     def reassign(self, cid: int, creator_id: int) -> dict:
         """The clip is of another streamer than Vyral thought: it's moved to them. Pages that don't take that streamer
@@ -1421,6 +1438,15 @@ class Pipeline:
         return {"clips_expired": expired, "streams_forgotten": vods, "events_forgotten": events.cleanup(self.ctx)}
 
 
+def lengths(s, rules: dict) -> tuple[float, float, dict | None]:
+    """(shortest, longest, your style): a campaign's length rules first; inside them, your style's usual range once
+    enough of your clips are measured (style.py), else what your reviews taught (screen.py)."""
+    lim, mine = screen.learned(s), style.current(s)
+    low = min(lim["min_seconds"], mine["length_low"]) if mine else lim["min_seconds"]
+    high = max(lim["max_seconds"], mine["length_high"]) if mine else lim["max_seconds"]
+    return max(rules["min_seconds"] or 0, low), min(rules["max_seconds"] or high, high), mine
+
+
 def streamer_handle(creator) -> str:
     """The streamer's channel name for @ and # in captions (Jason -> jasontheween, never "jasonlevine"): from their
     stream link, else their own Twitch or Kick source account, else (only if neither is known) their name."""
@@ -1487,6 +1513,8 @@ def register(ctx: Any) -> Pipeline:
     q.register("metrics.refresh", lambda jc, pl: p.refresh_metrics())
     q.register("posts.detect", lambda jc, pl: p.detect_posts())
     q.every("posts.detect", 30 * 60)
+    q.register("style.learn", lambda jc, pl: style.learn(ctx, pl["url"]))
+    q.register("style.apply", lambda jc, pl: p.restyle_waiting())
     q.register("pages.promote", lambda jc, pl: p.promote_best())
     q.every("pages.promote", 2 * 3600)
     q.register("posts.verify", lambda jc, pl: p.verify_posts())
@@ -1495,7 +1523,7 @@ def register(ctx: Any) -> Pipeline:
     q.every("monitor.tick", 60)
     q.every("storage.cleanup", 6 * 3600)
     q.heavy = {"clip.build", "clip.rerender", "longform.make"}
-    q.needs_network = {"clip.build", "longform.make", "intake.link", "source.check", "monitor.tick", "metrics.fetch", "metrics.refresh", "notify.discord", "posts.detect", "posts.verify"}
+    q.needs_network = {"clip.build", "longform.make", "intake.link", "source.check", "monitor.tick", "metrics.fetch", "metrics.refresh", "notify.discord", "posts.detect", "posts.verify", "style.learn"}
     # How long a job may go without any progress (a step finished, data downloaded) before it's given up on.
     # Long searches are fine as long as they keep moving.
     q.time_limits = {"longform.make": 20 * 60, "clip.build": 20 * 60, "clip.rerender": 20 * 60, "intake.link": 10 * 60, "source.check": 10 * 60}

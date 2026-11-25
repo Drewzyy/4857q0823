@@ -80,6 +80,13 @@ export interface PostedRow {
   output_id: number; clip_id: number; clip_title: string; platform: string; page: string; post_url: string | null; url: string;
   status: "verified" | "unverified" | "failed"; reason?: string; by?: string; at: string; posted_by?: string | null;
 }
+export interface StyleFeatures { length: number; hook: number; cuts_per_min: number; layout: string; captions: boolean; headline: number; sfx: number }
+export interface StyleView {
+  needed: number;
+  examples: { url: string; at: string; features: StyleFeatures | null; error: string | null }[];
+  profile: { examples: number; length: number; length_low: number; length_high: number; hook_rate: number; hook_seconds: number; cuts_per_min: number;
+    layout: string; layouts: Record<string, number>; captions_rate: number; headline_rate: number; headline_seconds: number; sfx_rate: number } | null;
+}
 export interface Learned {
   min_seconds: number; max_seconds: number; min_words: number; setup_words: number; min_score: number;
   history: { at: string; note: string; clip_id: number | null; changed: Record<string, [number, number]> }[];
@@ -288,6 +295,10 @@ export const api = {
   removeDiscordInbox: () => request<void>("DELETE", "/discord-inbox"),
   clearAllClips: (confirm: string) => request<{ deleted: number }>("POST", "/clips/clear-all", { confirm }),
   learned: () => request<Learned>("GET", "/learned"),
+  style: () => request<StyleView>("GET", "/style"),
+  learnStyle: (url: string) => request<{ queued: boolean }>("POST", "/style/learn", { url }),
+  forgetStyle: (url?: string) => request<StyleView>("POST", "/style/forget", url ? { url } : undefined),
+  applyStyle: () => request<{ queued: boolean }>("POST", "/style/apply"),
   postedHistory: () => request<PostedRow[]>("GET", "/posted"),
   detectPosts: () => request<{ queued: boolean }>("POST", "/posted/detect"),
   resetLearned: () => request<Learned>("POST", "/learned/reset"),

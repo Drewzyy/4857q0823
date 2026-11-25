@@ -141,6 +141,8 @@ class DiscordInbox:
                         found = parse(content, creators)
                         for link, creator_id in found:
                             self.ctx.jobs.enqueue("intake.link", {"url": link, "creator_id": creator_id}, max_attempts=3)
+                            # It's one of your clips (or one you like): how it's edited goes into your style (style.py).
+                            self.ctx.jobs.enqueue("style.learn", {"url": link}, max_attempts=2)
                         # Long videos (YouTube, Twitch / Kick past broadcasts) go to Long-form to be broken into clips.
                         longs = find_long_links(content)
                         if longs:

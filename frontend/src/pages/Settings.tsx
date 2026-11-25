@@ -21,7 +21,7 @@ export default function SettingsPage() {
         ))}
       </div>
       {tab === "general" && <General />}
-      {tab === "muse" && <><MusePosting /><LearnedCard /></>}
+      {tab === "muse" && <><MusePosting /><StyleCard /><LearnedCard /></>}
       {tab === "dropbox" && <DropboxSettings />}
       {tab === "notifications" && <><Notifications /><PhoneInbox /></>}
       {tab === "security" && <Security />}
@@ -454,6 +454,52 @@ function ClearAllClips() {
           catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
         }}>{busy && <span className="spinner" />}Delete all clips</button>
       </div>
+    </div>
+  );
+}
+
+const LAYOUT_NAMES: Record<string, string> = { stacked: "facecam on top, game under it", two: "two people, one above the other",
+  face: "the streamer's face filling the frame", full: "the whole picture" };
+const pct = (x: number) => `${Math.round(x * 100)}%`;
+
+/** Your style: Vyral measures the clips you send and cuts new ones the same way. */
+function StyleCard() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { data } = useQuery({ queryKey: ["style"], queryFn: api.style, refetchInterval: 20_000 });
+  const [url, setUrl] = useState("");
+  if (!data) return null;
+  const p = data.profile, done = data.examples.filter((e) => e.features).length;
+  const run = async (fn: () => Promise<unknown>, msg: string) => {
+    try { await fn(); toast("ok", msg); qc.invalidateQueries({ queryKey: ["style"] }); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
+  };
+  return (
+    <div className="card stack" style={{ maxWidth: 820, marginTop: 16 }}>
+      <h2>Your style</h2>
+      <p className="small muted">Every clip you post in the Discord inbox (or add here) is downloaded and measured: its length, whether it opens on the climax and
+        for how long, how often it cuts, its layout, captions, the headline and how long it stays, and sound effects. Once {data.needed} are in, new clips are cut
+        the same way. It copies what can be measured, not taste.</p>
+      <div className="row">
+        <input className="input" aria-label="Link to one of your clips" placeholder="https://www.tiktok.com/@you/video/..." value={url} onChange={(e) => setUrl(e.target.value)} />
+        <button className="btn" disabled={url.trim().length < 12} onClick={() => run(async () => { await api.learnStyle(url.trim()); setUrl(""); }, "Measuring it now")}>Learn from it</button>
+      </div>
+      {!p ? <p className="small faint">{done} of {data.needed} clips measured. Until then Vyral's own defaults apply.</p> : (
+        <ul className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+          <li>Length: usually {Math.round(p.length)} s ({Math.round(p.length_low)} to {Math.round(p.length_high)} s)</li>
+          <li>Hook (the climax first): {pct(p.hook_rate)} of your clips{p.hook_seconds ? `, about ${p.hook_seconds} s` : ""}</li>
+          <li>Headline at the top: {pct(p.headline_rate)}{p.headline_seconds ? `, for about ${Math.round(p.headline_seconds)} s` : ""}</li>
+          <li>Layout: mostly {LAYOUT_NAMES[p.layout] ?? p.layout}</li>
+          <li>Captions: {pct(p.captions_rate)} · sound effects: {pct(p.sfx_rate)} · cuts: about {p.cuts_per_min} a minute</li>
+        </ul>)}
+      <div className="row wrap">
+        {p && <button className="btn primary sm" onClick={() => run(api.applyStyle, "Re-cutting waiting clips to your style")}>Apply to waiting clips</button>}
+        {data.examples.length > 0 && <button className="btn ghost sm" onClick={() => { if (window.confirm("Forget every measured clip?")) void run(() => api.forgetStyle(), "Forgotten"); }}>Reset</button>}
+      </div>
+      {data.examples.length > 0 && <details><summary className="small">{data.examples.length} clips</summary>
+        <ul className="small faint" style={{ margin: "6px 0 0", paddingLeft: 18 }}>{data.examples.slice(0, 50).map((e) => (
+          <li key={e.url}><a href={e.url} target="_blank" rel="noopener noreferrer">{e.url.replace(/^https:\/\/(www\.)?/, "").slice(0, 60)}</a>{" "}
+            {e.features ? `${Math.round(e.features.length)} s, ${e.features.hook ? `${e.features.hook} s hook` : "no hook"}, ${LAYOUT_NAMES[e.features.layout] ?? e.features.layout}${e.features.headline ? ", headline" : ""}${e.features.sfx ? ", sound effects" : ""}`
+              : `couldn't be measured: ${e.error ?? "waiting"}`}</li>))}</ul></details>}
     </div>
   );
 }
