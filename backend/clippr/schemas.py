@@ -314,6 +314,7 @@ class ClipEdit(Strict):
     preedited: bool = False  # Vyral's viral pre-edit has been applied (see preedit.py)
     preedit_version: int = Field(0, ge=0)  # which version of it; clips get a newer version once
     trial: dict[str, Any] | None = None  # the choices this clip was cut with (tuner.py), to learn which get more views
+    caption_y: int | None = Field(None, ge=3, le=97)  # captions moved here (% from the top) to keep them off faces
 
 
 class PresetData(Strict):

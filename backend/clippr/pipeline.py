@@ -44,6 +44,13 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+FLOOR = 20.0  # no clip is ever made from less footage than this
+
+
+class TooShort(Exception):
+    """The footage can't make a clip of at least FLOOR seconds."""
+
+
 class Pipeline:
     def __init__(self, ctx: Any):
         self.ctx = ctx
@@ -507,6 +514,9 @@ class Pipeline:
             raise  # retried with backoff by the job queue
         except FFmpegError as e:
             return self._stop(rid, "failed", str(e), account, ref_url)
+        except TooShort as e:  # not retried: the footage won't get longer
+            self._set(rid, "no_match", str(e))
+            return {"status": "too_short"}
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
@@ -536,6 +546,17 @@ class Pipeline:
             return facecam.sample(source, start, dur)
         except Exception:
             log.exception("couldn't look for faces")
+            return None
+
+    @staticmethod
+    def _caption_spot(source: Path, edit: dict, sampled: tuple | None) -> int | None:
+        try:
+            info = probe(source)
+            stream = info.width / info.height if info.width and info.height else 16 / 9
+            frames = sampled or facecam.sample(source, edit["start"], edit["end"] - edit["start"])
+            return facecam.caption_spot(*frames, edit, stream)
+        except Exception:
+            log.exception("couldn't check where the captions go")
             return None
 
     def _auto_layout(self, source: Path, start: float, dur: float, creator_id: int | None = None, sampled: tuple | None = None) -> dict:
@@ -642,25 +663,34 @@ class Pipeline:
                 if stop_requested():
                     return {"status": "stopped"}
                 prefix = f"Clip {n} of {len(chosen)}: "
-                lead, dur = 3.0, m.end - m.start
+                # A short moment gets the video around it, mostly before it (the setup), up to the shortest allowed.
+                with self.ctx.db.session() as s:
+                    least = screen.learned(s)["min_seconds"]
+                extra = max(0.0, least + 2 - (m.end - m.start))
+                a = max(0.0, m.start - extra * 0.75)
+                b = min(length or m.end + extra, m.end + extra - (m.start - a))
+                lead, dur = 3.0, b - a
                 self._lf(lid, "processing", prefix + "cutting it in full quality")
                 if url:
-                    section = self.ctx.fetcher.download_section(url, max(0.0, m.start - lead), m.end + 2, work / f"sec{n}")
+                    section = self.ctx.fetcher.download_section(url, max(0.0, a - lead), b + 2, work / f"sec{n}")
                     # The download starts on a keyframe near the asked-for time: line it up on the sound.
                     ref = work / f"ref{n}.wav"
-                    run(["-ss", f"{m.start:.3f}", "-i", str(audio), "-t", f"{dur:.3f}", "-vn", "-ac", "1", "-ar", "16000", str(ref)])
+                    run(["-ss", f"{a:.3f}", "-i", str(audio), "-t", f"{dur:.3f}", "-vn", "-ac", "1", "-ar", "16000", str(ref)])
                     local = match.find_in_stream(match.extract_features(ref), match.extract_features(section), pad=0.0)
-                    start = local.start if local else min(lead, m.start)
+                    start = local.start if local else min(lead, a)
                 else:
                     section = work / f"sec{n}.mp4"
-                    run(["-ss", f"{max(0.0, m.start - lead):.3f}", "-i", str(file_path), "-t", f"{dur + lead + 2:.3f}",
+                    run(["-ss", f"{max(0.0, a - lead):.3f}", "-i", str(file_path), "-t", f"{dur + lead + 2:.3f}",
                          "-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-c:a", "aac", "-b:a", "256k", str(section)])
-                    start = min(lead, m.start)
-                clip_id, clip_title, graded, _ = self._produce_clip(
-                    section, start, dur, work / f"w{n}", title=moments.title_for(m, title), post_title=title,
-                    creator_id=creator_id, creator_name=creator_name, dest_info=dest_info, hints=hints,
-                    retention_days=cfg.storage.retention_days, progress=lambda d, p=prefix: self._lf(lid, "processing", p + d.lower()),
-                    longform_id=lid)
+                    start = min(lead, a)
+                try:
+                    clip_id, clip_title, graded, _ = self._produce_clip(
+                        section, start, dur, work / f"w{n}", title=moments.title_for(m, title), post_title=title,
+                        creator_id=creator_id, creator_name=creator_name, dest_info=dest_info, hints=hints,
+                        retention_days=cfg.storage.retention_days, progress=lambda d, p=prefix: self._lf(lid, "processing", p + d.lower()),
+                        longform_id=lid)
+                except TooShort:
+                    continue  # the video ends too soon around this moment: no clip
                 made.append({**m.to_dict(), "clip_id": clip_id, "tier": graded["tier"] if graded else None})
                 self._lf(lid, "processing", f"{prefix}ready", moments=made + [x.to_dict() for x in chosen[n:]])
             self._lf(lid, "ready", f"{len(made)} clips ready to upload", moments=made)
@@ -687,6 +717,8 @@ class Pipeline:
         # Keep the full-quality cut until the clip expires so text edits can be re-rendered later.
         clip_dir = self._dir("clips") / f"{'ref' if reference_id else 'long'}{reference_id or longform_id}-{int(now().timestamp() * 1000)}"
         clip_dir.mkdir(parents=True, exist_ok=True)
+        if dur < FLOOR:  # a 5-second clip has no setup and no payoff: never made, whatever the source
+            raise TooShort(f"Too short to make a clip: only {dur:.0f} s of footage (at least {FLOOR:.0f} s)")
         work.mkdir(parents=True, exist_ok=True)  # scratch files (the speech audio) go here
         source = clip_dir / f"source{section.suffix or '.mp4'}"
         shutil.move(str(section), source)
@@ -721,6 +753,7 @@ class Pipeline:
             framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first,
                                     min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force)
             captions_note = " ".join(filter(None, [captions_note, campaigns.too_short(rules, framing["end"] - framing["start"])]))
+        framing["caption_y"] = self._caption_spot(source, framing, sampled)  # captions never over a face
         renders: dict[str, Path] = {}
         qcs: dict[str, dict] = {}
         planned = []
@@ -763,11 +796,12 @@ class Pipeline:
         try:
             run(["-ss", f"{start - pad_before:.3f}", "-i", str(source), "-t", f"{dur + pad_before + 0.8:.3f}",
                  "-vn", "-ac", "1", "-ar", "16000", str(audio)])
-            raw = self.ctx.transcriber.words(audio, hints)
-            shifted = [Word(w.start - pad_before, w.end - pad_before, w.text) for w in raw]
             with self.ctx.db.session() as s:
                 fixes = load_settings(s).captions.fixes
-            return overlay.fix_words(overlay.clean_words(shifted, dur), fixes), ""
+                names = list(dict.fromkeys([*hints, *known_names(s, fixes)]))
+            raw = self.ctx.transcriber.words(audio, names)
+            shifted = [Word(w.start - pad_before, w.end - pad_before, w.text) for w in raw]
+            return overlay.fix_names(overlay.fix_words(overlay.clean_words(shifted, dur), fixes), names), ""
         except (TranscribeError, FFmpegError) as e:
             return [], f"Captions skipped: {e}"
         except Exception as e:
@@ -859,6 +893,8 @@ class Pipeline:
         use_text = bool((ov["title"]["enabled"] and title_text.strip()) or (ov["captions"]["enabled"] and words) or texts)
         placed: list = []
         if use_text:
+            if edit and edit.get("caption_y"):  # moved off the faces in this clip (facecam.caption_spot)
+                ov = {**ov, "captions": {**ov["captions"], "y_percent": edit["caption_y"]}}
             overlay.prepare(ov_dir, overlay.build_ass(fmt.width, fmt.height, ov, title_text, words, out_dur, texts,
                                                       emoji_cache=self._dir("emoji"), emoji_out=placed))
         # Emoji pictures go under the text, each in the gap the text left for it.
@@ -1098,8 +1134,9 @@ class Pipeline:
                 burned = onscreen.has_captions(Path(clip.source_path), base, clip.source_duration or 0.0)
                 e.update(captions=not burned, source_has_captions=burned)
             fixes = load_settings(s).captions.fixes
-            if fixes and clip.words:  # names the speech model got wrong, fixed in clips made before the fix was added
-                clip.words = [w.to_dict() for w in overlay.fix_words([Word.from_dict(w) for w in clip.words], fixes)]
+            if clip.words:  # names the speech model got wrong, fixed in clips made before (your fixes, then near misses)
+                clip.words = [w.to_dict() for w in overlay.fix_names(overlay.fix_words([Word.from_dict(w) for w in clip.words], fixes),
+                                                                       known_names(s, fixes))]
             rules = campaigns.clip_rules_of(s, clip)
             min_s, max_s, mine = lengths(s, rules)
             force = tuner.pick(s)
@@ -1111,6 +1148,8 @@ class Pipeline:
         db = self._loudness(source, e["start"], e["end"] - e["start"])
         title, quote = titles.make_title(words, creator, preedit.peak_moment(db, 0, e["end"] - e["start"]), rules["overlay_mentions"])
         new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force)).model_dump()
+        if redo:
+            new["caption_y"] = self._caption_spot(source, new, None)  # captions never over a face
         with self.ctx.db.session() as s:
             clip = s.get(Clip, cid)
             clip.edit, clip.title = new, title
@@ -1493,6 +1532,17 @@ class Pipeline:
                 if datetime.fromtimestamp(p.stat().st_mtime, timezone.utc) < now() - timedelta(hours=12):
                     files.remove(p)
         return {"clips_expired": expired, "streams_forgotten": vods, "events_forgotten": events.cleanup(self.ctx)}
+
+
+def known_names(s, fixes: list[str] = ()) -> list[str]:
+    """Every name Vyral knows, for the speech model and for fixing near misses: your streamers, their channels and
+    the right-hand side of your name fixes ("asian jeff => Jason Levine")."""
+    out = [f.partition("=>")[2].strip() for f in fixes if "=>" in f]
+    for c in s.scalars(select(Creator)):
+        out.append(c.name)
+        out += [h for h in map(identify.channel_handle, c.vod_channels or []) if h]
+    out += [a.username for a in s.scalars(select(SourceAccount).where(SourceAccount.platform.in_(("twitch", "kick", "youtube"))))]
+    return [n for n in dict.fromkeys(x.strip() for x in out if x and x.strip())]
 
 
 def with_tags(s, page_settings: dict) -> dict:

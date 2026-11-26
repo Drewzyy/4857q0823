@@ -95,6 +95,7 @@ class WhisperTranscriber:
         if len(audio) < 1600:
             return []
         accuracy, language = self.settings()
+        names = list(dict.fromkeys(h.strip() for h in hints if h and h.strip()))
         model = self._load(MODELS.get(accuracy, MODELS["accurate"]))
         segments, _ = model.transcribe(
             audio,
@@ -111,8 +112,10 @@ class WhisperTranscriber:
             hallucination_silence_threshold=1.0,
             # Speech models tidy "um" and "uh" away (and squeeze their time into the next word); a prompt that
             # has them makes the model write them down, so they can be cut.
-            initial_prompt="Umm, so, uh, I was like, hmm, let me think.",
-            hotwords=" ".join(h for h in hints if h) or None,
+            # Names spelled right in the prompt too (the model leans toward words it has just "seen"): the streamer
+            # in the clip first, then everyone else you clip and the names from your fixes.
+            initial_prompt="Umm, so, uh, I was like, hmm, let me think." + (f" With {', '.join(names[:25])}." if names else ""),
+            hotwords=" ".join(names[:40]) or None,
         )
         out: list[Word] = []
         for seg in segments:

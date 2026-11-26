@@ -561,3 +561,26 @@ def test_post_it_from_your_phone_with_the_link_in_the_ping(ctx, tmp_path):
     assert "expired" in api.post(path).text  # once only
     ctx.mcp.host = "127.0.0.1"  # the bridge only on this computer: no phone link (it couldn't be reached)
     assert companion.go_link(ctx, oid) is None
+
+
+def test_captions_move_off_faces_and_short_footage_makes_no_clip(env):
+    from clippr import pipeline
+    from clippr.media import facecam
+    size = (960, 540)
+    # Two people: the left one in the top panel, the right one in the content under it, face where captions usually go.
+    frames = [[(150, 120, 100, 100), (660, 160, 120, 160)] for _ in range(10)]
+    stacked = {"layout": "stacked", "cam": [0.05, 0.05, 0.4, 0.6], "zoom": 1.0, "pan_y": 0.5, "video_height": 1.0}
+    y = facecam.caption_spot(frames, size, stacked, 16 / 9)
+    assert y is not None and y != 70
+    lo, hi = (0.4 + (160 / 540) * 0.6) * 100, (0.4 + (320 / 540) * 0.6) * 100  # the lower face, on the finished video
+    assert y - facecam.CAPTION_HALF >= hi or y + facecam.CAPTION_HALF <= lo
+    # Nothing near the usual place: the captions stay where the page has them.
+    assert facecam.caption_spot([[(400, 40, 80, 80)]] * 10, size, {"zoom": 1.0, "pan_y": 0.5, "video_height": 1.0}, 16 / 9) is None
+    # A 5-second post can't be stretched to a clip: none is made.
+    ctx, c, fake = env
+    try:
+        ctx.pipeline._produce_clip(Path("x.mp4"), 0, 5.0, Path("w"), title="t", post_title="t", creator_id=None, creator_name="",
+                                   dest_info=[], hints=[], retention_days=30, progress=lambda d: None)
+        raise AssertionError("a 5 s clip was made")
+    except pipeline.TooShort as e:
+        assert "at least 20 s" in str(e)

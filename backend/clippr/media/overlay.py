@@ -278,3 +278,40 @@ def prepare(workdir: Path, ass_text: str) -> tuple[str, str]:
         if not (fonts / file).exists():
             shutil.copyfile(FONT_DIR / file, fonts / file)
     return "overlay.ass", "fonts"
+
+
+def fix_names(words: list[Word], names: list[str]) -> list[Word]:
+    """Names the speech model nearly got: a word (or two) that's a close miss of a name Vyral knows, and starts
+    with the same letter, becomes that name ("jasontheweeen" -> "jasontheween", "Lacey" -> "Lacy"). Only names of
+    4 letters or more: short ones match too many ordinary words."""
+    import re as _re
+    from difflib import SequenceMatcher
+    known = []
+    for n in names:
+        parts = n.split()
+        key = _re.sub(r"[^a-z0-9]", "", n.lower())
+        if len(key) >= 4 and len(parts) <= 2:
+            known.append((parts, key, n))
+    if not known:
+        return words
+    norm = [_re.sub(r"[^a-z0-9]", "", w.text.lower()) for w in words]
+    out, i = [], 0
+    while i < len(words):
+        best = None
+        for parts, key, name in known:
+            span = len(parts)
+            said = "".join(norm[i:i + span])
+            if not said or said[0] != key[0] or said == key:
+                continue
+            score = SequenceMatcher(None, said, key).ratio()
+            if score >= 0.82 and (best is None or score > best[0]):
+                best = (score, span, name)
+        if best:
+            _, span, name = best
+            tail = _re.search(r"[^\w']*$", words[i + span - 1].text).group(0)
+            out.append(Word(words[i].start, words[i + span - 1].end, name + tail))
+            i += span
+        else:
+            out.append(words[i])
+            i += 1
+    return out

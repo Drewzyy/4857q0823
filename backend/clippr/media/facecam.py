@@ -170,3 +170,50 @@ def two_people(frames: list, size: tuple[int, int] | None, stream_aspect: float,
     box = cam_box((left[0], left[1], left[2] * 0.7), stream_aspect, panel_aspect)  # the face a little closer than a facecam
     pan = (right[0] - crop_share / 2) / (1 - crop_share) if crop_share < 0.98 else 0.5  # the bottom crop centered on them
     return box, round(min(max(pan, 0.0), 1.0), 3)
+
+
+CAPTION_SPOTS = (70, 80, 86, 60, 50, 32, 22)  # where captions can go (% from the top), the usual first
+CAPTION_HALF = 5.5  # half the height two lines of captions take, in % of the video
+
+
+def caption_spot(frames: list, size: tuple[int, int] | None, edit: dict, stream_aspect: float, usual: int = 70) -> int | None:
+    """Where the captions go so they never cover a face: the usual place if it's clear, else the nearest clear one.
+    None when the usual place is fine (or nothing could be checked). Faces are mapped from the stream onto the
+    finished vertical video for the clip's layout: the facecam panel on top (stacked), the face filling the frame
+    (face), the zoomed-in crop, or the whole stream in a band (fit to frame)."""
+    if not frames or not size:
+        return None
+    w, h = size
+    layout, cam = edit.get("layout"), edit.get("cam")
+    zoom, pan_y = float(edit.get("zoom") or 1.0), float(edit.get("pan_y", 0.5))
+    band = 1080 / 1920 / stream_aspect if not edit.get("video_height") else None  # fit to frame: the stream's height share
+
+    def spans(faces) -> list[tuple[float, float]]:
+        out = []
+        for x, y, fw, fh in faces:
+            top, bottom, cx = y / h, (y + fh) / h, (x + fw / 2) / w
+            if layout == "face" and cam:
+                cxs, cys, cws, chs = cam
+                if cxs <= cx <= cxs + cws:
+                    out.append(((top - cys) / chs, (bottom - cys) / chs))
+            elif layout == "stacked" and cam:
+                cxs, cys, cws, chs = cam
+                if cxs <= cx <= cxs + cws and cys <= top <= cys + chs:  # in the facecam panel (the top 40%)
+                    out.append(((top - cys) / chs * CAM_SHARE, (bottom - cys) / chs * CAM_SHARE))
+                else:  # the content under it fills the rest, full height
+                    out.append((CAM_SHARE + top * (1 - CAM_SHARE), CAM_SHARE + bottom * (1 - CAM_SHARE)))
+            elif band:
+                out.append((0.5 - band / 2 + top * band, 0.5 - band / 2 + bottom * band))
+            else:  # zoomed in: the crop's top edge and height in the stream
+                off = (1 - 1 / zoom) * pan_y
+                out.append(((top - off) * zoom, (bottom - off) * zoom))
+        return [(a * 100, b * 100) for a, b in out if b > 0 and a < 1]
+
+    framed = [spans(f) for f in frames]
+
+    def clear(y: float) -> bool:
+        hit = sum(1 for sp in framed if any(a < y + CAPTION_HALF and b > y - CAPTION_HALF for a, b in sp))
+        return hit <= len(framed) * 0.15  # a face passing through now and then is fine
+    if clear(usual):
+        return None
+    return next((y for y in sorted(CAPTION_SPOTS, key=lambda s: abs(s - usual)) if clear(y)), None)
