@@ -454,6 +454,16 @@ function ClearAllClips() {
           catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
         }}>{busy && <span className="spinner" />}Delete all clips</button>
       </div>
+      <p className="small muted">Or clear only the clips that are too short for the current rules. Posted ones stay in your history.</p>
+      <div><button className="btn ghost" disabled={busy} onClick={async () => {
+        if (!window.confirm("Delete every clip that's too short, with its videos? Posted clips stay.")) return;
+        setBusy(true);
+        try {
+          const r = await api.clearShortClips();
+          toast("ok", `${r.deleted} clips under ${r.under} s deleted` + (r.kept_posted ? `, ${r.kept_posted} posted ones kept` : ""));
+          qc.invalidateQueries();
+        } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+      }}>Clear too-short clips</button></div>
     </div>
   );
 }

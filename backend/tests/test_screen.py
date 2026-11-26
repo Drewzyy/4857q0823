@@ -8,6 +8,7 @@ import numpy as np
 from clippr import preedit, screen
 from clippr.fetch import RemotePost
 from clippr.media.overlay import Word
+from sqlalchemy import select
 from clippr.models import Clip, ClipOutput, DestinationAccount
 
 
@@ -82,6 +83,18 @@ def test_clear_all_needs_the_phrase_and_removes_every_clip(ctx, client, tmp_path
     assert client.post("/api/clips/clear-all", json={"confirm": "DELETE ALL CLIPS"}).json() == {"deleted": 2}
     assert client.get("/api/clips").json() == [] and not (tmp_path / "c0").exists()
 
+
+
+def test_clear_short_removes_only_unposted_clips_under_the_floor(ctx, client, tmp_path):
+    ids = _clip(ctx, tmp_path, n=4)
+    with ctx.db.session() as s:
+        for cid, secs, posted in zip(ids, (6, 45, 8, None), (False, False, True, False)):
+            o = s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)).one()
+            o.quality = {"status": "pass", "measures": {"duration": secs}} if secs else None
+            o.post_url = "https://www.tiktok.com/@mypage/video/1" if posted else None
+    assert client.post("/api/clips/clear-short").json() == {"deleted": 1, "kept_posted": 1, "under": 20.0}
+    left = {c["id"] for c in client.get("/api/clips").json()}
+    assert left == set(ids[1:]) and not (tmp_path / "c0").exists()  # unreadable length (the fake file): kept
 
 def test_posts_on_your_page_are_linked_to_their_clips_by_length(ctx, tmp_path, monkeypatch):
     from clippr.media.ffmpeg import run

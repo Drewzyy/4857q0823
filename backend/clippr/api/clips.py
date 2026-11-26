@@ -338,6 +338,42 @@ def clear_all_clips(body: ClearAll, tasks: BackgroundTasks, s: Session = Depends
     return {"deleted": len(clips)}
 
 
+
+def _finished_seconds(outs: list[ClipOutput]) -> float | None:
+    """How long the finished clip runs: measured when its page videos were checked, else read from a video."""
+    for o in outs:
+        d = ((o.quality or {}).get("measures") or {}).get("duration")
+        if d:
+            return float(d)
+    for o in outs:
+        if o.file_path and Path(o.file_path).exists():
+            try:
+                return probe(Path(o.file_path)).duration
+            except Exception:
+                continue
+    return None
+
+
+@router.post("/clips/clear-short")
+def clear_short_clips(tasks: BackgroundTasks, s: Session = Depends(db)):
+    """Deletes the clips under the shortest a clip may be now (pipeline.FLOOR). Posted clips stay, for their history,
+    and so does any clip whose length can't be read."""
+    from ..pipeline import FLOOR
+    gone, deleted, posted = [], 0, 0
+    for clip in s.scalars(select(Clip)).unique().all():
+        outs = list(s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id)).unique())
+        secs = _finished_seconds(outs)
+        if secs is None or secs >= FLOOR:
+            continue
+        if any(o.status == "uploaded" or o.post_url for o in outs):
+            posted += 1
+            continue
+        gone += _remove_clip(s, clip)
+        deleted += 1
+    tasks.add_task(_delete_files, gone)
+    audit(s, "clips.cleared_short", "clip", "", {"deleted": deleted, "kept_posted": posted})
+    return {"deleted": deleted, "kept_posted": posted, "under": FLOOR}
+
 # ---------------- activity (source posts) ----------------
 @router.get("/references")
 def list_references(include_baseline: bool = False, limit: int = 100, s: Session = Depends(db)):

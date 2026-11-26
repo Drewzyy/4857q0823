@@ -299,6 +299,7 @@ export const api = {
   setDiscordInbox: (b: { token?: string; channel_id?: string }) => request<DiscordInbox>("PUT", "/discord-inbox", b),
   removeDiscordInbox: () => request<void>("DELETE", "/discord-inbox"),
   clearAllClips: (confirm: string) => request<{ deleted: number }>("POST", "/clips/clear-all", { confirm }),
+  clearShortClips: () => request<{ deleted: number; kept_posted: number; under: number }>("POST", "/clips/clear-short"),
   learned: () => request<Learned>("GET", "/learned"),
   style: () => request<StyleView>("GET", "/style"),
   tuned: () => request<Tuned>("GET", "/tuned"),
