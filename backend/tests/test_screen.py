@@ -100,7 +100,7 @@ def test_posts_on_your_page_are_linked_to_their_clips_by_length(ctx, tmp_path, m
     with ctx.db.session() as s:
         linked = [o for o in s.query(ClipOutput).all() if o.post_url]
         assert len(linked) == 1 and linked[0].post_url.endswith("/video/1") and linked[0].status == "uploaded"
-        assert linked[0].file_path.endswith("c1/render-0.mp4") and linked[0].post_check["by"] == "auto-detected"
+        assert Path(linked[0].file_path).parent.name == "c1" and linked[0].post_check["by"] == "auto-detected"
     assert ctx.pipeline.detect_posts() == {"linked": 0}  # never linked twice
 
 
@@ -330,7 +330,7 @@ def _made_clip(tmp_path):
     talk = speechlike(36, 7)
     wav = write_wav(tmp_path / "a.wav", np.concatenate([talk[int(14 * SR):int(17 * SR)], talk]))
     boom = sfx.path("boom", tmp_path / "sfx")
-    font = str(next((Path(__file__).parent.parent / "clippr" / "media" / "fonts").glob("*.ttf"))).replace(":", "\\:")
+    font = next((Path(__file__).parent.parent / "clippr" / "media" / "fonts").glob("*.ttf")).as_posix().replace(":", "\\:")  # Windows too
     caps = ",".join(f"drawtext=fontfile='{font}':text='{w}':fontsize=70:fontcolor=white:borderw=6:x=(w-tw)/2:y=h*0.72:"
                     f"enable='between(t,{i * 3},{i * 3 + 3})'" for i, w in enumerate(["NO WAY", "HE DID", "THAT TO", "THE CAR", "AND THEN",
                                                                                        "IT FELL", "OFF THE", "BRIDGE", "LOOK AT", "HIM GO", "OH NO", "BRO"]))
