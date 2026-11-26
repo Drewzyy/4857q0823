@@ -533,3 +533,31 @@ def test_a_post_waiting_for_you_pings_discord(ctx, tmp_path):
         evs = s.query(Event).order_by(Event.id).all()
         assert [e.title for e in evs] == ["Post ready on TikTok: press Post", "Vyral Companion stopped on TikTok: needs you"]
         assert evs[0].category == "approvals" and "My page" in evs[0].body and evs[1].priority == "urgent"
+
+
+def test_post_it_from_your_phone_with_the_link_in_the_ping(ctx, tmp_path):
+    from fastapi.testclient import TestClient
+    from clippr import companion, mcp
+    from clippr.models import Event
+    _clip(ctx, tmp_path, n=1)
+    with ctx.db.session() as s:
+        oid = s.query(ClipOutput).one().id
+    ctx.mcp.host, ctx.mcp.port = "100.115.250.79", 47821  # the bridge on Tailscale, as for Muse
+    host = "http://100.115.250.79:47821"
+    api = TestClient(mcp.create_app(ctx), base_url=host)
+    tok = {"Authorization": f"Bearer {mcp.token(ctx)}"}
+    api.post("/companion/result", headers=tok, json={"output_id": oid, "attention": True, "text": "filled in"})
+    with ctx.db.session() as s:
+        ev = s.query(Event).one()
+        link = ev.link
+    assert link.startswith(f"{host}/go/{oid}/") and "phone" in ev.body
+    path = link.removeprefix(host)
+    assert api.get(f"/companion/pressed/{oid}", headers=tok).json() == {"pressed": False}
+    page = api.get(path)
+    assert "Post it" in page.text and "My page" in page.text and "#kai" in page.text
+    assert api.get(path.rsplit("/", 1)[0] + "/wrongkey").text.count("expired") == 1  # a guessed link does nothing
+    assert "Posting now" in api.post(path).text
+    assert api.get(f"/companion/pressed/{oid}", headers=tok).json() == {"pressed": True}
+    assert "expired" in api.post(path).text  # once only
+    ctx.mcp.host = "127.0.0.1"  # the bridge only on this computer: no phone link (it couldn't be reached)
+    assert companion.go_link(ctx, oid) is None

@@ -12,6 +12,7 @@ queue), each with an audit entry saying Muse did it. No tool deletes anything, a
 from __future__ import annotations
 
 import hmac
+import html
 import re
 import json
 import os
@@ -480,6 +481,60 @@ def create_app(ctx) -> FastAPI:
             return JSONResponse({"error": "No such approved video"}, status_code=404)
         from fastapi.responses import FileResponse
         return FileResponse(p, media_type="video/mp4", filename=f"vyral-{oid}.mp4")  # to the extension's background page only
+
+    @app.get("/companion/pressed/{oid}")
+    async def companion_pressed(oid: int, request: Request):
+        if (bad := allowed(request)):
+            return bad
+        return JSONResponse({"pressed": companion.go_pressed(oid)})
+
+    # ---- posting from your phone: the one-time link in the Discord ping (no token: the link itself is the key) ----
+    def phone_page(title: str, body: str) -> Response:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<title>{html.escape(title)}</title><style>body{{font:16px system-ui;margin:0;padding:20px;background:#0e0e12;color:#eee}}"
+            "img{width:100%;max-width:360px;border-radius:12px;display:block;margin:12px auto}pre{white-space:pre-wrap;background:#1b1b22;"
+            "padding:12px;border-radius:10px;font:14px system-ui}button{width:100%;padding:18px;font:700 18px system-ui;border:0;"
+            "border-radius:12px;background:#fe2c55;color:#fff;margin-top:12px}.muted{color:#999;font-size:13px}</style></head>"
+            f"<body>{body}</body></html>", headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+    def host_ok(request: Request) -> bool:
+        return request.headers.get("host", "").split(":")[0] in ("127.0.0.1", "localhost", getattr(ctx.mcp, "host", ""))
+
+    @app.get("/go/{oid}/{key}")
+    async def go_page(oid: int, key: str, request: Request):
+        if not host_ok(request) or not companion.go_valid(oid, key):
+            return phone_page("Vyral", "<h2>This link has been used or has expired</h2><p class=muted>Each post's link works once, for 3 hours.</p>")
+        info = await run_in_threadpool(companion.go_page, ctx, oid)
+        if not info:
+            return phone_page("Vyral", "<h2>That video is gone</h2>")
+        e = html.escape
+        return phone_page("Post it?", f"<h2>Post on {e(info['site'])}: {e(info['page'])}</h2><p>{e(info['title'])}</p>"
+                          f"<img src='/go/{oid}/{e(key)}/thumb.jpg' alt=''><p class=muted>Caption</p><pre>{e(info['caption'] or '')}</pre>"
+                          f"<form method=post action='/go/{oid}/{e(key)}'><button type=submit>Post it</button></form>"
+                          "<p class=muted>The upload page on your computer is filled in and waiting: this presses Post there.</p>")
+
+    @app.get("/go/{oid}/{key}/thumb.jpg")
+    async def go_thumb(oid: int, key: str, request: Request):
+        info = await run_in_threadpool(companion.go_page, ctx, oid) if host_ok(request) and companion.go_valid(oid, key) else None
+        thumb = Path(info["thumb"]).with_suffix(".jpg") if info and info["thumb"] else None
+        if not thumb or not thumb.exists():
+            return Response(status_code=404)
+        from fastapi.responses import FileResponse
+        return FileResponse(thumb, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.post("/go/{oid}/{key}")
+    async def go_press(oid: int, key: str, request: Request):
+        if not host_ok(request) or not companion.go_press(oid, key):
+            return phone_page("Vyral", "<h2>This link has been used or has expired</h2>")
+        await run_in_threadpool(audit_press, oid)
+        return phone_page("Posting", "<h2>Posting now</h2><p class=muted>Your computer presses Post in a few seconds. "
+                          "You'll see it in Vyral's Posted history.</p>")
+
+    def audit_press(oid: int) -> None:
+        with ctx.db.session() as s:
+            audit(s, "clip.posted_from_phone", "output", oid, {})
 
     @app.post("/companion/result")
     async def companion_result(request: Request):

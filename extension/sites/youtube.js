@@ -23,7 +23,7 @@ Vyral.run(async (job, cfg) => {
     const b = document.querySelector("#done-button");
     return b && b.getAttribute("aria-disabled") !== "true" ? b : null;
   }, 15 * 60000, "the Publish button");
-  await Vyral.press(done, job, "filled in. Check it, then press Publish.");
+  await Vyral.press(done, job, "filled in. Check it, then press Publish.", () => document.querySelector("#done-button"));
   await Vyral.waitFor(() => /video published|processing will begin|uploaded/i.test(document.body.innerText)
     || !document.querySelector("ytcp-uploads-dialog[opened], #done-button"), 20 * 60000, "the video to publish");
   const id = link && (link.match(/youtu\.be\/([\w-]{6,})/) || link.match(/[?&]v=([\w-]{6,})/) || link.match(/shorts\/([\w-]{6,})/));

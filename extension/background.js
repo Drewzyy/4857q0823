@@ -68,6 +68,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           body: JSON.stringify({ output_id: job.output_id, attention: true, stopped: !!msg.stopped, text: msg.text }) });
       } catch (e) { await note(`Couldn't tell Vyral: ${e.message}`); }
       reply(true);
+    } else if (msg.type === "pressed" && job && sender.tab && sender.tab.id === job.tab) { // Post tapped on your phone?
+      try { reply((await call(await settings(), `/companion/pressed/${job.output_id}`)).pressed); } catch { reply(false); }
     } else if (msg.type === "now") {
       await tick();
       reply(true);

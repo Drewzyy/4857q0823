@@ -12,7 +12,7 @@ Vyral.run(async (job, cfg) => {
     const b = document.querySelector('button[data-e2e="post_video_button"]') || Vyral.byText(/^post$/i, "button");
     return b && !b.disabled && b.getAttribute("aria-disabled") !== "true" ? b : null;
   }, 15 * 60000, "the video to finish uploading");
-  await Vyral.press(post, job, "filled in. Check it, then press Post.");
+  await Vyral.press(post, job, "filled in. Check it, then press Post.", () => { const b = document.querySelector('button[data-e2e="post_video_button"]') || Vyral.byText(/^post$/i, "button"); return b && !b.disabled ? b : null; });
   await Vyral.waitFor(() => /manage your posts|your video (has been|is being) (uploaded|posted)|video published|posted/i.test(document.body.innerText)
     || /\/tiktokstudio\/content/.test(location.pathname), 20 * 60000, "the post to go out");
   return null; // TikTok doesn't show the link here: Vyral finds it on your page

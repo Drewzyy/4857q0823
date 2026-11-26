@@ -550,6 +550,9 @@ function CompanionCard() {
         <li>In the extension's settings, paste the bridge token (Copy token, above) and tick <strong>Post approved videos</strong>.</li>
         <li>Stay logged in to TikTok, Instagram and YouTube Studio in that browser. Approve videos in Ready to Upload as usual.</li>
       </ol>
+      <p className="small muted">From your phone: with the bridge on your Tailscale address (above), each "Post ready" Discord ping has a link. Open it on your
+        phone (Tailscale on), check the clip and caption, tap <strong>Post it</strong>, and the waiting upload page on your computer posts it. Each link works
+        once, for 3 hours. Keep the computer on with Vyral and Chrome running.</p>
       <div className="row wrap">
         <button className="btn primary sm" onClick={async () => { try { setWhere((await api.saveExtension()).path); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } }}>
           Get the extension</button>

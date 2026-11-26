@@ -78,13 +78,26 @@ const Vyral = {
     b.textContent = "Vyral: " + text;
   },
 
-  async press(button, job, ready) {
+  async press(button, job, ready, find) {
     if (job.auto) {
       button.click();
-    } else {
-      this.banner(ready);
-      chrome.runtime.sendMessage({ type: "attention", text: `${job.destination?.name || job.platform}: ${ready}` });
+      return;
     }
+    this.banner(ready + " (or tap Post it in the Discord ping on your phone)");
+    chrome.runtime.sendMessage({ type: "attention", text: `${job.destination?.name || job.platform}: ${ready}` });
+    // Posting from your phone: the Discord ping's link. Checked every few seconds while this page waits for you.
+    (async () => {
+      for (;;) {
+        await this.sleep(3000);
+        if (!document.contains(button) && !(find && find())) return; // posted by hand, or the page moved on
+        if (await chrome.runtime.sendMessage({ type: "pressed" })) {
+          const b = (find && find()) || button;
+          this.banner("Post pressed from your phone: posting…");
+          b.click();
+          return;
+        }
+      }
+    })();
   },
 
   report(result) {

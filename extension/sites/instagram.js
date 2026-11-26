@@ -21,7 +21,7 @@ Vyral.run(async (job, cfg) => {
   if (caption.tagName === "TEXTAREA") { caption.value = job.caption; caption.dispatchEvent(new Event("input", { bubbles: true })); }
   else Vyral.type(caption, job.caption);
   const share = await Vyral.waitFor(() => Vyral.byText(/^share$/i), 60000, "the Share button");
-  await Vyral.press(share, job, "filled in. Check it, then press Share.");
+  await Vyral.press(share, job, "filled in. Check it, then press Share.", () => Vyral.byText(/^share$/i));
   await Vyral.waitFor(() => /your (reel|post) has been shared|reel shared|post shared/i.test(document.body.innerText), 20 * 60000, "the post to go out");
   return null; // Instagram doesn't show the link here
 });

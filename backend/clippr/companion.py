@@ -128,6 +128,59 @@ def attention(ctx, oid: int, text: str, kind: str = "ready") -> dict:
         title = clip.title if clip else ""
     site = {"tiktok": "TikTok", "instagram": "Instagram", "youtube": "YouTube"}.get(o.platform, o.platform)
     head = f"Post ready on {site}: press Post" if kind == "ready" else f"Vyral Companion stopped on {site}: needs you"
+    link = UPLOAD_PAGES.get(o.platform)
+    if kind == "ready":
+        go = go_link(ctx, oid)
+        if go:  # tap it on your phone (Tailscale) to post from anywhere
+            link, text = go, f"{text}\nTap the link to post it from your phone."
     events.emit(ctx, "approvals", head, body=f"{page}: {title}\n{text}"[:500], priority="high" if kind == "ready" else "urgent",
-                link=UPLOAD_PAGES.get(o.platform), dedupe_key=f"companion:{kind}:{oid}", data={"output_id": oid})
+                link=link, dedupe_key=f"companion:{kind}:{oid}", data={"output_id": oid})
     return {"ok": True}
+
+
+# ---- posting from your phone: a one-time link in the Discord ping (over Tailscale) ----
+GO_FOR = timedelta(hours=3)
+_go: dict[int, dict] = {}  # output id -> {"key", "until", "pressed"}: in memory, gone when Vyral restarts
+
+
+def go_link(ctx, oid: int) -> str | None:
+    """A one-time link that posts this video when you press Post on the page it opens: only made when the bridge is
+    on your Tailscale address (a phone can't reach 127.0.0.1), good for one press, for 3 hours."""
+    import secrets
+    host, port = getattr(ctx.mcp, "host", None), getattr(ctx.mcp, "port", None)
+    if not host or host == "127.0.0.1" or not port:
+        return None
+    key = secrets.token_urlsafe(24)
+    _go[oid] = {"key": key, "until": datetime.now(timezone.utc) + GO_FOR, "pressed": False}
+    return f"http://{host}:{port}/go/{oid}/{key}"
+
+
+def go_valid(oid: int, key: str) -> bool:
+    import hmac
+    g = _go.get(oid)
+    return bool(g and not g["pressed"] and datetime.now(timezone.utc) < g["until"] and hmac.compare_digest(g["key"].encode(), key.encode()))
+
+
+def go_press(oid: int, key: str) -> bool:
+    """You pressed Post on your phone: the extension, waiting on the upload page, presses it on the site."""
+    if not go_valid(oid, key):
+        return False
+    _go[oid]["pressed"] = True
+    return True
+
+
+def go_pressed(oid: int) -> bool:
+    """For the extension: has Post been pressed from the phone for this video?"""
+    g = _go.get(oid)
+    return bool(g and g["pressed"])
+
+
+def go_page(ctx, oid: int) -> dict | None:
+    with ctx.db.session() as s:
+        o = s.get(ClipOutput, oid)
+        if not o:
+            return None
+        clip = s.get(Clip, o.clip_id)
+        return {"site": {"tiktok": "TikTok", "instagram": "Instagram", "youtube": "YouTube"}.get(o.platform, o.platform),
+                "page": (o.destination.display_name or o.destination.handle) if o.destination else o.platform,
+                "title": clip.title if clip else "", "caption": o.description, "thumb": bool(o.file_path) and o.file_path}
