@@ -61,7 +61,7 @@ def set_post_link(oid: int, body: PostIn, c=Depends(ctx), s: Session = Depends(d
 def posted_history(limit: int = 200, s: Session = Depends(db)):
     """Every post link recorded or refused, newest first: where it went, who said it was posted, and whether the link
     was opened and found live on that page (verified), couldn't be checked (unverified) or didn't hold up (refused)."""
-    rows = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.post_check.is_not(None))).unique()]
+    rows = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.post_check.is_not(None))).unique() if (o.post_check or {}).get("status")]
     rows.sort(key=lambda o: o.post_check.get("at", ""), reverse=True)
     out = []
     for o in rows[:min(max(limit, 1), 500)]:

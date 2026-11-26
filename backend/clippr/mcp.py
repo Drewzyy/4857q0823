@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import object_session
 
-from . import dropbox, posting, preedit, screen
+from . import companion, dropbox, posting, preedit, screen
 from .audit import audit
 from .api.analytics import HOSTS, link_post
 from .api.clips import _live_outputs, apply_edit
@@ -447,6 +447,58 @@ def create_app(ctx) -> FastAPI:
     async def no_stream():
         return Response(status_code=405)  # no server-initiated messages: plain request and response
 
+    # ---- the Vyral Companion browser extension (companion.py): the same address and token as Muse ----
+    def allowed(request: Request) -> JSONResponse | None:
+        if request.headers.get("host", "").split(":")[0] not in ("127.0.0.1", "localhost", getattr(ctx.mcp, "host", "")):
+            return JSONResponse({"error": "Forbidden host"}, status_code=421)
+        given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(given.encode(), token(ctx).encode()):
+            return JSONResponse({"error": "Missing or invalid token"}, status_code=401)
+        return None
+
+    from starlette.concurrency import run_in_threadpool
+
+    @app.get("/companion/next")
+    async def companion_next(request: Request):
+        if (bad := allowed(request)):
+            return bad
+        def find():
+            with ctx.db.session() as s:
+                return companion.next_job(s)
+        return JSONResponse({"job": await run_in_threadpool(find)})
+
+    @app.get("/companion/video/{oid}")
+    async def companion_video(oid: int, request: Request):
+        if (bad := allowed(request)):
+            return bad
+        def path():
+            with ctx.db.session() as s:
+                o = s.get(ClipOutput, oid)
+                return o.file_path if o and o.review == "approved" and o.file_path and Path(o.file_path).exists() else None
+        p = await run_in_threadpool(path)
+        if not p:
+            return JSONResponse({"error": "No such approved video"}, status_code=404)
+        from fastapi.responses import FileResponse
+        return FileResponse(p, media_type="video/mp4", filename=f"vyral-{oid}.mp4")  # to the extension's background page only
+
+    @app.post("/companion/result")
+    async def companion_result(request: Request):
+        if (bad := allowed(request)):
+            return bad
+        body = await request.json()
+        try:
+            oid = int(body["output_id"])
+            if body.get("attention"):  # waiting for you to press Post, or stopped at a captcha / login: a Discord ping
+                out = await run_in_threadpool(companion.attention, ctx, oid, str(body.get("text") or ""),
+                                              "stopped" if body.get("stopped") else "ready")
+            elif body.get("posted"):
+                out = await run_in_threadpool(companion.posted, ctx, oid, (body.get("post_url") or "").strip() or None)
+            else:
+                out = await run_in_threadpool(companion.failed, ctx, oid, str(body.get("reason") or "unknown"))
+        except (KeyError, ValueError, TypeError) as e:
+            return JSONResponse({"error": str(e)}, status_code=422)
+        return JSONResponse(out)
+
     return app
 
 
@@ -472,9 +524,18 @@ class Server:
                           f"Can't listen on {cfg.mcp_host} ({e.strerror}): is Tailscale running and is that this computer's Tailscale address?")
             log.error("MCP server not started: %s", self.error)
             return
+        socks = [sock]
+        if cfg.mcp_host != "127.0.0.1":  # on Tailscale for Muse elsewhere, and on this computer too (the companion extension)
+            local = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                local.bind(("127.0.0.1", cfg.mcp_port))
+                socks.append(local)
+            except OSError as e:
+                local.close()
+                log.warning("the bridge isn't on 127.0.0.1:%s as well (%s)", cfg.mcp_port, e.strerror)
         token(self.ctx)
         self.server = uvicorn.Server(uvicorn.Config(create_app(self.ctx), log_level="warning", access_log=False))
-        self.thread = threading.Thread(target=self.server.run, kwargs={"sockets": [sock]}, name="mcp", daemon=True)
+        self.thread = threading.Thread(target=self.server.run, kwargs={"sockets": socks}, name="mcp", daemon=True)
         self.thread.start()
         for _ in range(100):  # ready before anyone is told it's on
             if self.server.started or not self.thread.is_alive():

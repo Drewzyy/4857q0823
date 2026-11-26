@@ -21,7 +21,7 @@ export default function SettingsPage() {
         ))}
       </div>
       {tab === "general" && <General />}
-      {tab === "muse" && <><MusePosting /><StyleCard /><TunedCard /><LearnedCard /></>}
+      {tab === "muse" && <><MusePosting /><CompanionCard /><StyleCard /><TunedCard /><LearnedCard /></>}
       {tab === "dropbox" && <DropboxSettings />}
       {tab === "notifications" && <><Notifications /><PhoneInbox /></>}
       {tab === "security" && <Security />}
@@ -529,6 +529,32 @@ function TunedCard() {
       </tbody></table>
       <div className="row small faint">{data.updated ? `Last compared ${relTime(data.updated)} on ${data.posts ?? 0} posts.` : "Nothing compared yet: it needs posts with views."}
         <span className="spacer" /><button className="btn ghost sm" onClick={async () => { qc.setQueryData(["tuned"], await api.resetTuned()); }}>Reset</button></div>
+    </div>
+  );
+}
+
+/** Posting without Muse: the Vyral Companion extension, in your own browser. */
+function CompanionCard() {
+  const toast = useToast();
+  const [where, setWhere] = useState<string | null>(null);
+  return (
+    <div className="card stack" style={{ maxWidth: 820, marginTop: 16 }}>
+      <h2>Post without Muse: Vyral Companion</h2>
+      <p className="small muted">A Chrome extension that posts the videos you approved, on the TikTok, Instagram and YouTube websites in your own browser, where you're
+        logged in. It waits for each video's time (spacing and posting hours), opens the upload page, puts the video in and fills in the caption (and the title on
+        YouTube). You press Post, unless that page's Auto-post is on, then it does. A captcha, a login or any check stops it and asks you; it never gets around
+        them. The sites' rules don't allow automated posting, so Auto-post can get an account flagged: it's off unless you turn it on, page by page.</p>
+      <ol className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+        <li>Press <strong>Get the extension</strong>: it's saved next to your Vyral folder.</li>
+        <li>In Chrome, open <code>chrome://extensions</code>, turn on <strong>Developer mode</strong>, press <strong>Load unpacked</strong> and pick that folder.</li>
+        <li>In the extension's settings, paste the bridge token (Copy token, above) and tick <strong>Post approved videos</strong>.</li>
+        <li>Stay logged in to TikTok, Instagram and YouTube Studio in that browser. Approve videos in Ready to Upload as usual.</li>
+      </ol>
+      <div className="row wrap">
+        <button className="btn primary sm" onClick={async () => { try { setWhere((await api.saveExtension()).path); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } }}>
+          Get the extension</button>
+        {where && <span className="small">Saved to <code>{where}</code></span>}
+      </div>
     </div>
   );
 }

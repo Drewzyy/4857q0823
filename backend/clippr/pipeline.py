@@ -1399,8 +1399,9 @@ class Pipeline:
                 fresh.append(p)
             posts = fresh
             with self.ctx.db.session() as s:
+                # Not yet linked: waiting to be posted, or posted by the companion extension without its link.
                 waiting = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.destination_id == did, ClipOutput.post_url.is_(None),
-                                                                         ClipOutput.status == "ready", ClipOutput.render_state == "ready")).unique()]
+                                                                         ClipOutput.status.in_(("ready", "uploaded")), ClipOutput.render_state == "ready")).unique()]
                 for p in sorted(posts, key=lambda x: x.posted_at or now()):  # oldest first: each post takes the clip made just before it
                     if not waiting:
                         break

@@ -108,3 +108,26 @@ def reset_tuned(s: Session = Depends(db)):
     tuner.reset(s)
     s.flush()
     return {**tuner.state(s), "names": tuner.NAMES, "min_posts": tuner.MIN_POSTS}
+
+
+@router.post("/companion/extension")
+def save_extension(c=Depends(ctx)):
+    """Puts the Vyral Companion browser extension in Downloads (or your save folder's folder) and shows it, ready to
+    load in Chrome: chrome://extensions, Developer mode on, Load unpacked, pick this folder."""
+    import shutil
+    from .clips import _reveal
+    from .system import save_folder
+    from .. import companion
+    src = companion.extension_dir()
+    if not src:
+        raise ApiError(410, "missing", "The extension isn't in this copy of Vyral")
+    with c.db.session() as s:
+        dest = save_folder(load_settings(s)).parent / "Vyral Companion"
+    try:
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.copytree(src, dest)
+    except OSError as e:
+        raise ApiError(422, "folder", f"Couldn't save it to {dest} ({e.strerror or e})")
+    if c.config.desktop_mode:
+        _reveal(dest)
+    return {"path": str(dest)}

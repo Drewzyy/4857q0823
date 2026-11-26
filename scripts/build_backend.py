@@ -31,6 +31,7 @@ def main() -> None:
            "--collect-data", "cv2",  # the face model files for facecam layout
            "--collect-submodules", "fontTools.ttLib.tables",  # loaded by name when measuring text for emoji
            "--add-data", f"{BACKEND / 'clippr' / 'media' / 'models'}{sep}clippr/media/models",
+           "--add-data", f"{BACKEND.parent / 'extension'}{sep}clippr/companion_extension",  # the browser extension, handed out from Settings
            "--collect-all", "curl_cffi",  # browser impersonation; without it TikTok blocks account pages
            "--hidden-import", "keyring.backends.macOS", "--hidden-import", "keyring.backends.Windows",
            # Pulled in as optional extras by dependencies; Vyral never uses them.

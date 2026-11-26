@@ -302,6 +302,7 @@ export const api = {
   learned: () => request<Learned>("GET", "/learned"),
   style: () => request<StyleView>("GET", "/style"),
   tuned: () => request<Tuned>("GET", "/tuned"),
+  saveExtension: () => request<{ path: string }>("POST", "/companion/extension"),
   resetTuned: () => request<Tuned>("POST", "/tuned/reset"),
   learnStyle: (url: string) => request<{ queued: boolean }>("POST", "/style/learn", { url }),
   forgetStyle: (url?: string) => request<StyleView>("POST", "/style/forget", url ? { url } : undefined),

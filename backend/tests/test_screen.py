@@ -473,3 +473,63 @@ def test_vyral_keeps_what_gets_more_views_on_your_pages(ctx, tmp_path):
     assert got["best"] == {"length": -10} and got["results"]["length"]["-10"]["posts"] == 8
     with ctx.db.session() as s:
         assert all(p.get("length") == -10 or p.get("exploring") == "length" for p in (tuner.pick(s, random.Random(i)) for i in range(50)))
+
+
+def test_the_companion_extension_gets_due_videos_and_reports_back(ctx, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from clippr import mcp
+    from clippr.fetch import RemotePost
+    ids = _clip(ctx, tmp_path, n=2)
+    with ctx.db.session() as s:
+        for o in s.query(ClipOutput).all():
+            c = s.get(Clip, o.clip_id)
+            c.grade, c.safety = {"score": 80, "screen": {"pass": True}}, {"status": "pass"}
+            o.render_state, o.quality = "ready", {"status": "pass"}
+        s.query(ClipOutput).filter(ClipOutput.clip_id == ids[1]).one().review = "pending"  # not approved: never offered
+    monkeypatch.setattr("clippr.posting.probe", lambda p: type("I", (), {"duration": 40.0})(), raising=False)
+    monkeypatch.setattr("clippr.media.ffmpeg.probe", lambda p: type("I", (), {"duration": 40.0})())
+    monkeypatch.setattr("clippr.posting.in_window", lambda when, cfg: when)  # whatever the time of day the test runs
+    api = TestClient(mcp.create_app(ctx), base_url="http://127.0.0.1:47821")
+    tok = {"Authorization": f"Bearer {mcp.token(ctx)}"}
+    assert api.get("/companion/next").status_code == 401
+    job = api.get("/companion/next", headers=tok).json()["job"]
+    assert job["platform"] == "tiktok" and job["upload_page"].startswith("https://www.tiktok.com") and job["auto"] is False
+    v = api.get(job["video"], headers={**tok, "Origin": "https://www.tiktok.com"})
+    assert v.status_code == 200 and "access-control-allow-origin" not in v.headers  # no website reads it: only the extension
+    assert api.get(job["video"]).status_code == 401
+    # It couldn't post (a captcha): that video waits an hour, and nothing else is due.
+    assert api.post("/companion/result", headers=tok, json={"output_id": job["output_id"], "posted": False, "reason": "captcha"}).json() == {"ok": True}
+    assert api.get("/companion/next", headers=tok).json()["job"] is None
+    with ctx.db.session() as s:
+        s.get(ClipOutput, job["output_id"]).post_check = None
+    monkeypatch.setattr(ctx.fetcher, "post_details", lambda url: RemotePost("9", url, "x", channels=("mypage",)), raising=False)
+    r = api.post("/companion/result", headers=tok, json={"output_id": job["output_id"], "posted": True,
+                                                          "post_url": "https://www.tiktok.com/@mypage/video/9"}).json()
+    assert r["recorded"] and r["post_check"]["status"] == "verified"
+    with ctx.db.session() as s:
+        o = s.get(ClipOutput, job["output_id"])
+        assert o.status == "uploaded" and o.post_url.endswith("/video/9")
+
+
+def test_the_extension_is_handed_out_from_settings(client, tmp_path, monkeypatch):
+    monkeypatch.setenv("CLIPPR_DOWNLOADS_DIR", str(tmp_path / "dl"))
+    where = Path(client.post("/api/companion/extension").json()["path"])
+    assert (where / "manifest.json").exists() and (where / "sites" / "tiktok.js").exists()
+
+
+def test_a_post_waiting_for_you_pings_discord(ctx, tmp_path):
+    from fastapi.testclient import TestClient
+    from clippr import mcp
+    from clippr.models import Event
+    _clip(ctx, tmp_path, n=1)
+    with ctx.db.session() as s:
+        oid = s.query(ClipOutput).one().id
+    api = TestClient(mcp.create_app(ctx), base_url="http://127.0.0.1:47821")
+    tok = {"Authorization": f"Bearer {mcp.token(ctx)}"}
+    for _ in range(2):  # once per video
+        assert api.post("/companion/result", headers=tok, json={"output_id": oid, "attention": True, "text": "filled in, press Post"}).json() == {"ok": True}
+    api.post("/companion/result", headers=tok, json={"output_id": oid, "attention": True, "stopped": True, "text": "The site is showing a captcha"})
+    with ctx.db.session() as s:
+        evs = s.query(Event).order_by(Event.id).all()
+        assert [e.title for e in evs] == ["Post ready on TikTok: press Post", "Vyral Companion stopped on TikTok: needs you"]
+        assert evs[0].category == "approvals" and "My page" in evs[0].body and evs[1].priority == "urgent"
