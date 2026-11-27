@@ -351,11 +351,11 @@ def view(s: Session) -> dict:
 
 
 def add(s: Session, url: str, features: dict | None, error: str | None = None, views: int | None = None,
-        hashtags: list[str] = (), song: str | None = None) -> dict | None:
+        hashtags: list[str] = (), song: str | None = None, title: str | None = None) -> dict | None:
     row = _row(s)
     ex = [e for e in row.get("examples", []) if e["url"] != url]
     ex.append({"url": url, "at": datetime.now(timezone.utc).isoformat(timespec="minutes"), "features": features, "error": error,
-               "views": views, "hashtags": list(hashtags), "song": song})
+               "views": views, "hashtags": list(hashtags), "song": song, "title": (title or "")[:300] or None})
     row["examples"] = ex[-KEEP:]
     row["profile"] = profile_of(row["examples"])
     _save(s, row)
@@ -384,16 +384,19 @@ def learn(ctx, url: str) -> dict:
         feats, err = None, str(e)[:200]
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    views, tags, song = None, [], None
+    views, tags, song, title = None, [], None, None
     try:  # the post itself: how many watched it (the better ones count more), its hashtags and its song
         post = ctx.fetcher.post_details(url)
+        title = post.title
         views, tags, song = post.views, sorted({x.lower() for x in re.findall(r"#\w+", post.title or "")}), post.music
         if song and re.match(r"(original sound|som original|sonido original|son original)", song, re.I):
             song = None  # the clip's own audio, not a song added to it
     except Exception:
         pass
     with ctx.db.session() as s:
-        profile = add(s, url, feats, err, views, tags, song)
+        profile = add(s, url, feats, err, views, tags, song, title)
+    from . import obsidian
+    obsidian.learned(ctx, url, title or "")  # its note in your Obsidian vault, when one is connected
     return {"features": feats, "error": err, "profile": profile, "views": views, "hashtags": tags, "song": song}
 
 

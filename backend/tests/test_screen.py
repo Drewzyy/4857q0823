@@ -663,3 +663,17 @@ def test_purge_deletes_clips_that_fail_the_rules_and_fixes_name_colon_headlines(
     assert ctx.pipeline.purge_failing() == {"deleted": 2, "retitled": 1}
     with ctx.db.session() as s:
         assert s.get(Clip, ids[0]) is None and s.get(Clip, ids[1]) is None and s.get(Clip, ids[2]).title == "“he sold my sword”"
+
+
+def test_vyral_opens_the_upload_page_of_each_site_you_post_to(ctx, tmp_path, monkeypatch):
+    import subprocess
+    import webbrowser
+    from clippr import companion
+    _clip(ctx, tmp_path, n=1)  # a TikTok page
+    opened = []
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: opened.append(cmd[-1]))
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **k: opened.append(cmd[-1]))
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    with ctx.db.session() as s:
+        assert companion.open_sites(s) == [companion.UPLOAD_PAGES["tiktok"]]
+    assert opened == [companion.UPLOAD_PAGES["tiktok"]]

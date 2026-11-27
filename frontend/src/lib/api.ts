@@ -55,7 +55,8 @@ export interface AppSettings {
   intake: { clipboard: boolean };
   safety: { banned_words: string[]; banned_scenes: string[]; banned_games: string[] };
   dropbox: { auto_upload: boolean; folder: string; app_key: string };
-  posting: { auto_post_kill_switch: boolean; mcp_enabled: boolean; mcp_host: string; mcp_port: number; min_virality: number; spacing_minutes: number; per_streamer_day: number; post_from: number; post_until: number };
+  obsidian: { vault: string };
+  posting: { auto_post_kill_switch: boolean; open_sites_on_start: boolean; mcp_enabled: boolean; mcp_host: string; mcp_port: number; min_virality: number; spacing_minutes: number; per_streamer_day: number; post_from: number; post_until: number };
 }
 export interface Bridge { mcp: { running: boolean; port: number | null; error: string | null; enabled: boolean; url: string; token: string } }
 export interface RefPost {
@@ -100,6 +101,10 @@ export interface Learned {
 export interface DropboxState {
   connected: boolean; needs_reconnect: boolean; account: string | null; error: string | null; connect_error: string | null; connecting: boolean; app_key_set: boolean; redirect_uri: string;
   counts: { queued: number; uploading: number; uploaded: number; failed: number };
+}
+export interface ObsidianState {
+  connected: boolean; vault: string; name: string | null; notes: number; synced: string | null; error: string | null; warnings: string[];
+  rules: Record<string, Record<string, boolean | number | string>>;
 }
 export interface LongformMoment { start: number; end: number; peak: number; score: number; why: string[]; text: string; clip_id?: number; tier?: string | null; clip_title?: string | null }
 export interface LongformT {
@@ -316,6 +321,10 @@ export const api = {
   connectDropbox: () => request<{ url: string }>("POST", "/dropbox/connect"),
   disconnectDropbox: () => request<DropboxState>("POST", "/dropbox/disconnect"),
   syncAllToDropbox: () => request<{ queued: number }>("POST", "/dropbox/sync-all"),
+  obsidian: () => request<ObsidianState>("GET", "/obsidian"),
+  connectObsidian: (path: string) => request<ObsidianState>("POST", "/obsidian/connect", { path }),
+  disconnectObsidian: () => request<ObsidianState>("POST", "/obsidian/disconnect"),
+  syncObsidian: () => request<ObsidianState>("POST", "/obsidian/sync"),
   retryDropbox: (id: number) => request<{ ok: boolean }>("POST", `/dropbox/uploads/${id}/retry`),
   removeWebhook: () => request<void>("DELETE", "/notifications/webhook"),
   testNotification: (category?: string) => request<{ sent: boolean }>("POST", "/notifications/test", category ? { category } : {}),

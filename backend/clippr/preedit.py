@@ -195,11 +195,19 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     style: your learned style (style.py), once enough of your clips are measured: your length, whether your clips
     have a hook (and how long), a headline (and for how long), sound effects and captions, instead of the defaults.
     force: choices Vyral is testing or has found work better (tuner.py): hook, headline, sfx, zoom (on/off) and
-    length (seconds more or less). They win over the style. What the clip actually got is kept as its trial."""
-    force = force or {}
+    length (seconds more or less). They win over the style. What the clip actually got is kept as its trial.
+    force["situations"]: your Obsidian rules (obsidian.py), {situation: choices}; the ones for this clip's situation
+    (its mood, from what's said) and for "any" win over the rest, and may also set sound, captions and max_length."""
+    force = dict(force or {})
     e = dict(edit)
     if e.get("preedit_version", 1 if e.get("preedited") else 0) >= VERSION:
         return e
+    by = force.pop("situations", None)
+    if by:
+        mood = titles._mood(" ".join(w.text for w in words))
+        force.update({**by.get("any", {}), **by.get(mood, {}), "situation": mood})
+    if force.get("max_length"):
+        max_s = min(max_s or float("inf"), max(force["max_length"], min_s))
     dur = e["end"] - e["start"]
     a, b = best_window(db, words, dur, min_s, max_s, style, force.get("length", 0))
     title_for = TITLE_SECONDS
@@ -212,6 +220,9 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
             e["captions"] = False  # yours don't have captions
     hook = force.get("hook", hook)
     sound = force.get("sfx", sound)
+    choice = force.get("sound", choice)
+    if "captions" in force:
+        e["captions"] = force["captions"]
     e["start"], e["end"] = round(e["start"] + a, 3), round(e["start"] + b, 3)
     texts = [t for t in e.get("texts") or [] if not (t.get("box") or t.get("headline"))]
     # Not every clip needs a title on the video. When someone is talking, text over the picture competes with them
@@ -256,6 +267,7 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
         if x.get("headline"):  # the hook plays first, so the headline stays through it and a few seconds more
             x["end"] = round(min(b - a, title_for) + ((e["hook"][1] - e["hook"][0]) if e.get("hook") else 0), 2)
     e["trial"] = {"hook": bool(e.get("hook")), "headline": any(x.get("headline") for x in e["texts"]), "sfx": bool(e.get("sounds")),
-                  "zoom": bool(e.get("punch")), "length": force.get("length", 0), "exploring": force.get("exploring")}
+                  "zoom": bool(e.get("punch")), "length": force.get("length", 0), "exploring": force.get("exploring"),
+                  **({"situation": force["situation"]} if "situation" in force else {})}
     e["preedited"], e["preedit_version"] = True, VERSION
     return e

@@ -19,7 +19,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import object_session
 from sqlalchemy import delete, func, select
 
-from . import campaigns, content, describe, events, files, grade, identify, moments, notify, posting, preedit, safety, screen, style, titles, tuner
+from . import campaigns, content, describe, events, files, grade, identify, moments, notify, obsidian, posting, preedit, safety, screen, style, titles, tuner
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
@@ -753,7 +753,7 @@ class Pipeline:
             title, quote = titles.make_title(words, creator_name, preedit.peak_moment(db, 0, dur), rules["overlay_mentions"])
             with self.ctx.db.session() as s:
                 min_s, max_s, mine = lengths(s, rules)
-                force = tuner.pick(s)  # the best choices so far, or one being tried (self-improving: tuner.py)
+                force = {**tuner.pick(s), **obsidian.force(s)}  # your Obsidian rules win; the best choices so far, or one being tried (self-improving: tuner.py)
             framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first,
                                     min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force)
             captions_note = " ".join(filter(None, [captions_note, campaigns.too_short(rules, framing["end"] - framing["start"])]))
@@ -1209,7 +1209,7 @@ class Pipeline:
                                                                        known_names(s, fixes))]
             rules = campaigns.clip_rules_of(s, clip)
             min_s, max_s, mine = lengths(s, rules)
-            force = tuner.pick(s)
+            force = {**tuner.pick(s), **obsidian.force(s)}
             words = [Word(w["start"] - (e["start"] - base), w["end"] - (e["start"] - base), w["text"]) for w in clip.words or []]
             source = Path(clip.source_path)
             ref = clip.reference
@@ -1675,6 +1675,11 @@ def hook_span(edit: dict, start: float, dur: float) -> tuple[float, float] | Non
     return (a, b) if b - a >= 1.0 else None
 
 
+def _obsidian_sync(ctx: Any) -> dict:
+    with ctx.db.session() as s:
+        return obsidian.sync(s)
+
+
 def register(ctx: Any) -> Pipeline:
     p = Pipeline(ctx)
     ctx.pipeline = p
@@ -1698,6 +1703,8 @@ def register(ctx: Any) -> Pipeline:
     q.every("posts.detect", 30 * 60)
     q.register("style.learn", lambda jc, pl: style.learn(ctx, pl["url"]))
     q.register("style.refresh", lambda jc, pl: style.refresh(ctx))
+    q.register("obsidian.sync", lambda jc, pl: _obsidian_sync(ctx))
+    q.every("obsidian.sync", 600)  # your Obsidian notes and rules, read and written again
     q.register("tuner.learn", lambda jc, pl: p.tune())
     q.every("tuner.learn", 6 * 3600)  # which choices get more views on your pages: the winners become the default
     q.every("style.refresh", 12 * 3600)  # your clips' views keep growing: re-read them so the hits keep counting more

@@ -192,3 +192,31 @@ def go_page(ctx, oid: int) -> dict | None:
         return {"site": {"tiktok": "TikTok", "instagram": "Instagram", "youtube": "YouTube"}.get(o.platform, o.platform),
                 "page": (o.destination.display_name or o.destination.handle) if o.destination else o.platform,
                 "title": clip.title if clip else "", "caption": o.description, "thumb": bool(o.file_path) and o.file_path}
+
+
+def open_sites(s: Session) -> list[str]:
+    """The upload page of each site your pages post to, opened in Chrome (where the extension lives) when Vyral
+    starts, so they're signed in and ready. Settings > Muse & posting turns it off."""
+    import shutil
+    import subprocess
+    import sys
+    import webbrowser
+    from .models import DestinationAccount
+    if not load_settings(s).posting.open_sites_on_start:
+        return []
+    sites = sorted({d.platform for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()
+                    if d.platform in UPLOAD_PAGES})
+    urls = [UPLOAD_PAGES[p] for p in sites]
+    for url in urls:
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["open", "-a", "Google Chrome", url], check=True, timeout=20)
+            elif sys.platform == "win32":
+                subprocess.run(["cmd", "/c", "start", "", "chrome", url], check=True, timeout=20)
+            elif shutil.which("google-chrome"):
+                subprocess.Popen(["google-chrome", url])
+            else:
+                webbrowser.open(url)
+        except Exception:
+            webbrowser.open(url)  # no Chrome found: the default browser
+    return urls

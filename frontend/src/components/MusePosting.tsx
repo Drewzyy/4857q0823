@@ -74,6 +74,8 @@ export function MusePosting() {
         <div className="row"><ShieldAlert size={16} /><h2>Posting rules</h2></div>
         <label className="check"><input type="checkbox" checked={s.posting.auto_post_kill_switch} onChange={(e) => P({ auto_post_kill_switch: e.target.checked })} />
           Kill switch: nothing posts by itself, whatever each page's Auto-post says</label>
+        <label className="check"><input type="checkbox" checked={s.posting.open_sites_on_start} onChange={(e) => P({ open_sites_on_start: e.target.checked })} />
+          When Vyral opens, open TikTok, Instagram and YouTube upload pages in Chrome (for the extension)</label>
         <div className="field"><label htmlFor="min-viral">Minimum virality score to reach review: {s.posting.min_virality}</label>
           <input id="min-viral" type="range" min={0} max={100} value={s.posting.min_virality} onChange={(e) => P({ min_virality: Number(e.target.value) })} /></div>
         <div className="field"><label htmlFor="per-day">Best clips per streamer per day: {s.posting.per_streamer_day || "no limit"}</label>

@@ -100,6 +100,13 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
             ctx.jobs.enqueue("clips.purge", {}, max_attempts=1)  # clips the screener or safety check failed: gone
             ctx.mcp.start()  # the local bridge for Muse (Settings can turn it off)
             ctx.dropbox.start()  # finished videos to Dropbox, once it's connected
+            if cfg.desktop_mode:
+                from . import companion
+                try:
+                    with ctx.db.session() as s:
+                        companion.open_sites(s)
+                except Exception:
+                    log.exception("couldn't open the posting sites")
         yield
         ctx.dropbox.stop()
         ctx.mcp.stop()

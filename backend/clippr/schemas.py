@@ -176,6 +176,7 @@ class SafetySettings(Strict):
 
 
 class PostingSettings(Strict):
+    open_sites_on_start: bool = True  # the desktop app opens each posting site's upload page in Chrome when it starts
     auto_post_kill_switch: bool = False  # on: nothing posts by itself, whatever each page's Auto-post says
     mcp_enabled: bool = True  # the bridge Muse connects to (token required)
     # Where it listens: this computer only (127.0.0.1), or this computer's Tailscale address so Muse on your other
@@ -218,6 +219,11 @@ class DropboxSettings(Strict):
         return v
 
 
+class ObsidianSettings(Strict):
+    """Your Obsidian vault, Vyral's readable memory (obsidian.py). Set through Settings > Obsidian, which checks it."""
+    vault: str = Field("", max_length=1000)  # the vault folder's full path; "" = not connected
+
+
 class AppSettings(Strict):
     safety: SafetySettings = Field(default_factory=SafetySettings)
     posting: PostingSettings = Field(default_factory=PostingSettings)
@@ -227,6 +233,7 @@ class AppSettings(Strict):
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
     intake: IntakeSettings = Field(default_factory=IntakeSettings)
     dropbox: DropboxSettings = Field(default_factory=DropboxSettings)
+    obsidian: ObsidianSettings = Field(default_factory=ObsidianSettings)
 
 
 class TextOverlay(Strict):

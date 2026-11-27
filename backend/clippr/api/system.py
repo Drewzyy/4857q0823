@@ -220,3 +220,38 @@ def pick_folder():
         return {"path": None}
     path = r.stdout.strip().rstrip("/\\") if r.returncode == 0 else ""
     return {"path": path or None}  # cancelled: null
+
+
+# ---------- Obsidian (obsidian.py) ----------
+@router.get("/obsidian")
+def obsidian_state(s: Session = Depends(db)):
+    from .. import obsidian
+    return obsidian.view(s)
+
+
+@router.post("/obsidian/connect")
+def obsidian_connect(body: dict, s: Session = Depends(db)):
+    from .. import obsidian
+    try:
+        vault = obsidian.check_vault(str(body.get("path") or ""))
+    except ValueError as e:
+        raise ApiError(422, "vault", str(e))
+    put_settings({"obsidian": {"vault": str(vault)}}, s)
+    obsidian._save(s, {})
+    obsidian.sync(s)
+    return obsidian.view(s)
+
+
+@router.post("/obsidian/disconnect")
+def obsidian_disconnect(s: Session = Depends(db)):
+    from .. import obsidian
+    put_settings({"obsidian": {"vault": ""}}, s)
+    obsidian._save(s, {})
+    return obsidian.view(s)  # the notes stay in the vault: they're yours
+
+
+@router.post("/obsidian/sync")
+def obsidian_sync(s: Session = Depends(db)):
+    from .. import obsidian
+    obsidian.sync(s)
+    return obsidian.view(s)
