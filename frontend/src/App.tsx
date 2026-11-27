@@ -13,6 +13,7 @@ import Planned from "./pages/Planned";
 import Ready from "./pages/Ready";
 import ActivityPage from "./pages/Activity";
 import UpdateBanner from "./components/UpdateBanner";
+import UpdateNow from "./components/UpdateNow";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import EditorPage from "./pages/Editor";
 
@@ -63,7 +64,7 @@ export default function App() {
         </nav>
         <div className="sidebar-foot">
           <span className={`pill ${isError ? "err" : health ? "ok" : ""}`}>{isError ? "Service offline" : health ? (dash?.monitoring.enabled ? "Watching" : "Paused") : "Starting…"}</span>
-          {health && <span>v{health.version}</span>}
+          {health && <span className="row" style={{ gap: 4 }}>v{health.version}<UpdateNow /></span>}
         </div>
       </aside>
       <main className="main">
