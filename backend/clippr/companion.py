@@ -41,8 +41,10 @@ def _posted_today(s: Session, dest_id: int) -> int:
                                                                        ClipOutput.uploaded_at >= start)) or 0
 
 
-def next_job(s: Session) -> dict | None:
-    """The next video the extension should post now, with everything it needs, or None."""
+def next_job(s: Session, why: list[str] | None = None) -> dict | None:
+    """The next video the extension should post now, with everything it needs, or None. why, if given, gets the
+    reason each approved video is waiting, so the extension can say why nothing is posting."""
+    why = [] if why is None else why
     cfg = load_settings(s).posting
     now = datetime.now(timezone.utc)
     rows = s.scalars(select(ClipOutput).where(ClipOutput.review == "approved", ClipOutput.status == "ready", ClipOutput.render_state == "ready",
@@ -51,20 +53,26 @@ def next_job(s: Session) -> dict | None:
     for o in rows:
         tried = (o.post_check or {}).get("companion_failed_at")
         if tried and now - datetime.fromisoformat(tried) < SNOOZE:
+            why.append("one failed a moment ago: tried again in a while")
             continue
         clip = s.get(Clip, o.clip_id)
         if not clip or posting.held_back(clip, cfg.min_virality, you=o.reviewed_by == "you") or (o.quality or {}).get("status") == "fail":
+            why.append("held back: " + (posting.held_back(clip, cfg.min_virality, you=o.reviewed_by == "you") or "its video failed the quality check") if clip else "its clip is gone")
             continue
         if o.scheduled_at and o.scheduled_at > now:
+            why.append(f"scheduled for {o.scheduled_at:%b %d %H:%M} UTC")
             continue
         st = dict(o.destination.settings or {}) if o.destination else {}
         if o.destination_id and _posted_today(s, o.destination_id) >= int(st.get("daily_cap", 3)):
+            why.append(f"{o.destination.handle} already has its {int(st.get('daily_cap', 3))} posts today")
             continue
         try:
             pkg = posting.package(s, o.id)
-        except posting.PostingError:
+        except posting.PostingError as e:
+            why.append(str(e))
             continue
         if datetime.fromisoformat(pkg["post_after"]) > now:
+            why.append(f"next post time {pkg['post_after']} (posting hours and spacing, Settings)")
             continue
         auto = bool(st.get("auto_post")) and not cfg.auto_post_kill_switch and (clip.safety or {}).get("status") == "pass"
         return {**pkg, "upload_page": UPLOAD_PAGES[o.platform], "video": f"/companion/video/{o.id}", "auto": auto,

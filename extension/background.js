@@ -30,9 +30,9 @@ async function tick() {
     if (Date.now() - job.started > LIMIT_MS) await finish(job, { posted: false, reason: "It didn't finish within 25 minutes" });
     return; // one post at a time
   }
-  let next;
-  try { next = (await call(cfg, "/companion/next")).job; } catch (e) { await note(`Can't reach Vyral: ${e.message}`); return; }
-  if (!next) { await note("Nothing due right now"); return; }
+  let next, why;
+  try { ({ job: next, why } = await call(cfg, "/companion/next")); } catch (e) { await note(`Can't reach Vyral: ${e.message}`); return; }
+  if (!next) { await note(`Nothing due right now${why ? ": " + why : ""}`); return; }
   const tab = await chrome.tabs.create({ url: next.upload_page, active: true });
   await chrome.storage.session.set({ job: { ...next, tab: tab.id, started: Date.now() } });
   await note(`Posting to ${next.destination?.name || next.platform}${next.auto ? " (Auto-post)" : ": fill-in, you press Post"}`);
