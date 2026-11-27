@@ -95,6 +95,7 @@ export interface StyleView {
 export interface Learned {
   min_seconds: number; max_seconds: number; min_words: number; setup_words: number; min_score: number;
   history: { at: string; note: string; clip_id: number | null; changed: Record<string, [number, number]> }[];
+  your_reviews?: number; auto_after?: number;
 }
 export interface DropboxState {
   connected: boolean; needs_reconnect: boolean; account: string | null; error: string | null; connect_error: string | null; connecting: boolean; app_key_set: boolean; redirect_uri: string;

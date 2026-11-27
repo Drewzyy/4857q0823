@@ -2,9 +2,11 @@
 
 The chain for each page's video: made -> safety check (safety.py) -> virality grade -> review -> approved or
 rejected -> Muse posts it (get_posting_package) -> Muse reports the link (mark_posted).
-- A quarantined clip (safety fail), a streamer without clip permission, or a grade under Settings' minimum never
-  reaches review, whatever page it's moved to or however it's re-rendered.
+- A quarantined clip (safety fail) or a streamer without clip permission never reaches review, whatever page it's
+  moved to or however it's re-rendered. A clip the screener, the score minimum or the daily cap held back goes out
+  only if you approve it yourself.
 - Approving needs whoever approves to have watched it (the picture isn't machine-checked: see safety.py).
+- After your first 100 reviews, Vyral approves the clips you would have (auto_review); you can still reject any.
 - Vyral posts nothing itself. A page's Auto-post setting only tells Muse it may post an approved clip without
   asking you first: it needs 5 reviewed posts on the page first, a clip that passed safety outright, the daily
   cap not reached and the kill switch off.
@@ -31,8 +33,9 @@ class PostingError(Exception):
     pass
 
 
-def held_back(clip: Clip, min_virality: int) -> str | None:
-    """Why this clip can't be reviewed or posted, or None if it can."""
+def held_back(clip: Clip, min_virality: int, you: bool = False) -> str | None:
+    """Why this clip can't be reviewed or posted, or None if it can. When you approve it yourself (you=True), the
+    screener, the score minimum and the daily cap give way to you; permission and the safety check never do."""
     if clip.creator and not clip.creator.clip_permission:
         return "You haven't confirmed permission to clip this streamer"
     safe = clip.safety or {}
@@ -43,6 +46,8 @@ def held_back(clip: Clip, min_virality: int) -> str | None:
     score = (clip.grade or {}).get("score")
     if score is None:
         return "Not graded yet"
+    if you:
+        return None
     scr = (clip.grade or {}).get("screen")
     if scr and not scr.get("pass"):
         return "Held back by the screener: " + "; ".join(scr.get("reasons", []))
@@ -73,10 +78,48 @@ def _rank_today(s: Session, clip: Clip, least: int) -> int:
     return 1 + sum(1 for c in rivals if c.id != clip.id and ok(c) and ((c.grade or {}).get("score") or 0, -c.id) > mine)
 
 
+AUTO_APPROVE_AFTER = 100  # your own reviews before Vyral starts approving clips by itself
+
+
+def your_reviews(s: Session) -> int:
+    """Videos you approved or rejected yourself (Muse's and Vyral's reviews don't count)."""
+    return s.scalar(select(func.count()).select_from(ClipOutput).where(
+        ClipOutput.reviewed_by == "you", ClipOutput.review.in_(("approved", "rejected")))) or 0
+
+
+def auto_review(ctx) -> dict:
+    """After your first AUTO_APPROVE_AFTER reviews, Vyral approves the waiting videos you would have: a clip that
+    passes the screener (taught by your rejection notes), passed the safety and quality checks outright, and scores
+    at least what three in four of the clips you approved did. Approved videos then go to the extension like yours do:
+    posted by itself on pages with Auto-post on, otherwise a Discord ping with the link to press Post. The kill switch
+    stops it."""
+    with ctx.db.session() as s:
+        n = your_reviews(s)
+        if n < AUTO_APPROVE_AFTER:
+            return {"waiting": f"{n} of {AUTO_APPROVE_AFTER} reviews"}
+        cfg = load_settings(s).posting
+        if cfg.auto_post_kill_switch:
+            return {"skipped": "kill switch"}
+        yours = sorted(((c.grade or {}).get("score") or 0) for c in s.scalars(select(Clip).join(ClipOutput, ClipOutput.clip_id == Clip.id).where(
+            ClipOutput.reviewed_by == "you", ClipOutput.review == "approved")).unique())
+        bar = yours[len(yours) // 4] if yours else 0
+        done = []
+        for o in s.scalars(select(ClipOutput).where(ClipOutput.review == "pending", ClipOutput.status == "ready",
+                                                    ClipOutput.render_state == "ready", ClipOutput.post_url.is_(None))).unique():
+            clip = s.get(Clip, o.clip_id)
+            if not clip or held_back(clip, cfg.min_virality) or (clip.safety or {}).get("status") != "pass" \
+                    or (o.quality or {}).get("status") != "pass" or ((clip.grade or {}).get("score") or 0) < bar:
+                continue
+            o.review, o.review_note, o.reviewed_by = "approved", "", "vyral"
+            audit(s, "output.approved", "clip_output", o.id, {"by": "vyral", "clip": clip.id, "bar": bar})
+            done.append(o.id)
+        return {"approved": len(done), "bar": bar}
+
+
 def reviewed_posts(s: Session, dest_id: int) -> int:
     """Videos on this page that were reviewed, approved and were posted."""
     return s.scalar(select(func.count()).select_from(ClipOutput).where(
-        ClipOutput.destination_id == dest_id, ClipOutput.review == "approved", ClipOutput.reviewed_by != "auto",
+        ClipOutput.destination_id == dest_id, ClipOutput.review == "approved", ClipOutput.reviewed_by.notin_(("auto", "vyral")),
         ClipOutput.status == "uploaded")) or 0
 
 
@@ -90,7 +133,7 @@ def _output(s: Session, oid: int) -> tuple[ClipOutput, Clip]:
 def approve(s: Session, oid: int, actor: str, *, watched: bool, caption: str | None = None,
             scheduled_at: datetime | None = None) -> ClipOutput:
     o, clip = _output(s, oid)
-    why = held_back(clip, load_settings(s).posting.min_virality)
+    why = held_back(clip, load_settings(s).posting.min_virality, you=actor == "you")
     if why:
         raise PostingError(why)
     if not watched:

@@ -597,3 +597,57 @@ def test_captions_move_off_faces_and_short_footage_makes_no_clip(env):
         raise AssertionError("a 5 s clip was made")
     except pipeline.TooShort as e:
         assert "at least 20 s" in str(e)
+
+
+def test_your_approval_overrides_the_screener_but_never_the_safety_check(ctx, tmp_path):
+    from clippr import posting
+    ids = _clip(ctx, tmp_path, n=2)
+    with ctx.db.session() as s:
+        outs = [s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)).one() for cid in ids]
+        for o in outs:
+            o.review = "pending"
+        held, bad = (s.get(Clip, cid) for cid in ids)
+        held.grade, held.safety = {"score": 20, "screen": {"pass": False, "reasons": ["no payoff"]}}, {"status": "pass"}
+        bad.grade, bad.safety = {"score": 90, "screen": {"pass": True}}, {"status": "fail", "flags": [{"level": "fail", "reason": "nudity"}]}
+        s.flush()
+        try:
+            posting.approve(s, outs[0].id, "muse", watched=True)
+            raise AssertionError("Muse got past the screener")
+        except posting.PostingError as e:
+            assert "screener" in str(e)
+        assert posting.approve(s, outs[0].id, "you", watched=True).review == "approved"
+        try:
+            posting.approve(s, outs[1].id, "you", watched=True)
+            raise AssertionError("a quarantined clip was approved")
+        except posting.PostingError as e:
+            assert "Quarantined" in str(e)
+
+
+def test_after_100_of_your_reviews_vyral_approves_what_you_would_have(ctx, tmp_path):
+    from clippr import posting
+    ids = _clip(ctx, tmp_path, n=3)
+    with ctx.db.session() as s:
+        outs = [s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)).one() for cid in ids]
+        mine, good, low = (s.get(Clip, cid) for cid in ids)
+        for c, score in ((mine, 70), (good, 80), (low, 40)):
+            c.grade, c.safety = {"score": score, "screen": {"pass": True}}, {"status": "pass"}
+        outs[0].reviewed_by = "you"
+        for o in outs[1:]:
+            o.review, o.quality = "pending", {"status": "pass"}
+    assert posting.auto_review(ctx) == {"waiting": "1 of 100 reviews"}
+    with ctx.db.session() as s:
+        for i in range(99):
+            s.add(ClipOutput(clip_id=ids[0], platform="tiktok", status="expired", review="rejected", reviewed_by="you"))
+    assert posting.auto_review(ctx) == {"approved": 1, "bar": 70}  # the 40 is under what you approve
+    with ctx.db.session() as s:
+        assert [s.get(ClipOutput, o.id).reviewed_by for o in outs[1:]] == ["vyral", ""]
+
+
+def test_clips_that_fail_the_screener_after_the_redo_are_deleted_unless_posted(ctx, tmp_path):
+    ids = _clip(ctx, tmp_path, n=2)
+    with ctx.db.session() as s:
+        s.scalars(select(ClipOutput).where(ClipOutput.clip_id == ids[1])).one().post_url = "https://www.tiktok.com/@mypage/video/2"
+    assert ctx.pipeline._delete_unposted(ids, "clips.screened_out") == 1
+    with ctx.db.session() as s:
+        assert s.get(Clip, ids[0]) is None and s.get(Clip, ids[1]) is not None
+    assert not (tmp_path / "c0").exists() and (tmp_path / "c1").exists()

@@ -350,9 +350,14 @@ def test_titles_and_cuts_follow_a_campaigns_length_and_names():
     from clippr import preedit, titles
     from clippr.media.overlay import Word
     words = [Word(6.0 + i * 0.4, 6.3 + i * 0.4, t) for i, t in enumerate("no way he actually drove the car".split())]
-    quote, is_quote = titles.make_title(words, "Lacy", 6.5, ["LACY"])
-    assert is_quote and quote.startswith("LACY: “no way") and "LACY" not in titles.make_title(words, "Lacy", 6.5)[0]  # named only when asked
-    assert titles.make_title(words, "Lacy", 6.5, ["Dani", "Lacy"])[0].startswith("Dani and Lacy: ")
+    line, is_quote = titles.make_title(words, "Lacy", 6.5, ["LACY"])  # the line doesn't name her: a summary that does
+    assert not is_quote and "lacy" in line.lower() and ":" not in line and "LACY" not in titles.make_title(words, "Lacy", 6.5)[0]  # named only when asked
+    assert "Dani and Lacy" in titles.make_title(words, "Lacy", 6.5, ["Dani", "Lacy"])[0]
+    for who in ("Lacy", None):  # never "name: the line", never "the streamer"
+        for n in range(30):
+            t = titles.make_title([Word(1.0 + i * 0.4, 1.3 + i * 0.4, x) for i, x in enumerate(f"he sold my sword for {n} coins".split())], who, 2.0)[0]
+            assert not t.lower().startswith("lacy:") and "streamer" not in t
+        assert "streamer" not in titles.make_title([], who, None)[0]
     assert titles.make_title([], "Lacy", None, ["LACY"])[0].count("Lacy") == 1 and "Dani" in titles.make_title([], "Lacy", None, ["Dani"])[0]  # a summary already names the streamer
     db = np.full(600, -30.0)
     db[300:320] = -5  # a moment at 30 s of a 60 s clip
@@ -394,7 +399,7 @@ def test_a_new_clip_is_cut_and_titled_for_its_campaign(env):
     ctx.pipeline.check_source(sid)
     drain(ctx)
     [clip] = c.get("/api/clips").json()
-    assert clip["title"].startswith("STREAMER A: “no way he actually drove")  # its name is on the video, the quote word for word
+    assert "streamer a" in clip["title"].lower() and ":" not in clip["title"]  # its name is on the video, never "name: ..."
     with ctx.db.session() as s:
         e = s.get(Clip, clip["id"]).edit
     assert e["texts"][0]["text"] == clip["title"] and 0 < clip_seconds(e) <= 14, e  # cut to the campaign's longest (the teaser counts)
@@ -421,7 +426,7 @@ def test_tagging_a_clip_that_breaks_the_rules_cuts_it_again(env):
     [clip] = c.get("/api/clips").json()
     with ctx.db.session() as s:
         e = s.get(Clip, clip["id"]).edit
-    assert clip["title"].startswith("STREAMER A: ") and 0 < clip_seconds(e) <= 8 and e["texts"][0]["text"] == clip["title"]
+    assert "streamer a" in clip["title"].lower() and ":" not in clip["title"] and 0 < clip_seconds(e) <= 8 and e["texts"][0]["text"] == clip["title"]
     assert all(o["video_title"] == clip["title"] and o["render_state"] == "ready" for o in clip["outputs"])
     assert campaigns.complies(Clip(edit=e, title=clip["title"]), {"min_seconds": 0, "max_seconds": 8, "overlay_mentions": ["STREAMER A"]})
 

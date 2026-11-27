@@ -19,7 +19,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import object_session
 from sqlalchemy import delete, func, select
 
-from . import campaigns, content, describe, events, files, grade, identify, moments, notify, preedit, safety, screen, style, titles, tuner
+from . import campaigns, content, describe, events, files, grade, identify, moments, notify, posting, preedit, safety, screen, style, titles, tuner
 from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
@@ -1075,19 +1075,40 @@ class Pipeline:
             redo_all = [c.id for c in old if (c.edit or {}).get("preedit_version", 0) < preedit.REDO_EDITED_BELOW]
             ids = [c.id for c in old if c.id not in edited or c.id in redo_all]
             mine = [c.id for c in old if c.id in edited and c.id not in redo_all]
-        done = 0
+        done, failing = 0, []
         for cid in ids:  # cut again from all the footage kept with it, to the current rules (length, setup, headline)
             try:
                 self.widen_clip(cid)
                 done += self.preedit_clip(cid, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first, redo=True)
+                g = self.grade_clip(cid) or {}
+                if not (g.get("screen") or {"pass": True}).get("pass", True):
+                    failing.append(cid)
             except Exception:
                 log.exception("pre-edit failed for clip %s; it keeps its current edit", cid)
+        deleted = self._delete_unposted(failing, "clips.screened_out")
         for cid in mine:  # your edit stays; it's only screened again
             try:
                 self.grade_clip(cid)
             except Exception:
                 log.exception("re-grading clip %s failed", cid)
-        return {"preedited": done, "screened": len(mine)}
+        return {"preedited": done, "screened": len(mine), "deleted": deleted}
+
+    def _delete_unposted(self, ids: list[int], why: str) -> int:
+        """Deletes these clips and their videos, except any with a page video already posted (kept for its history)."""
+        from .api.clips import _delete_files, _remove_clip
+        gone, n = [], 0
+        with self.ctx.db.session() as s:
+            for cid in ids:
+                clip = s.get(Clip, cid)
+                outs = s.scalars(select(ClipOutput).where(ClipOutput.clip_id == cid)).all() if clip else []
+                if not clip or any(o.status == "uploaded" or o.post_url for o in outs):
+                    continue
+                gone += _remove_clip(s, clip)
+                n += 1
+            if n:
+                audit(s, why, "clip", "", {"deleted": n})
+        _delete_files(gone)
+        return n
 
     def widen_clip(self, cid: int) -> bool:
         """A clip shorter than the minimum gets more of the stream around it, from the footage kept with it (stream
@@ -1632,6 +1653,8 @@ def register(ctx: Any) -> Pipeline:
     q.every("tuner.learn", 6 * 3600)  # which choices get more views on your pages: the winners become the default
     q.every("style.refresh", 12 * 3600)  # your clips' views keep growing: re-read them so the hits keep counting more
     q.register("style.apply", lambda jc, pl: p.restyle_waiting())
+    q.register("review.auto", lambda jc, pl: posting.auto_review(ctx))
+    q.every("review.auto", 15 * 60)  # after your first 100 reviews, Vyral approves what you would have
     q.register("pages.promote", lambda jc, pl: p.promote_best())
     q.every("pages.promote", 2 * 3600)
     q.register("posts.verify", lambda jc, pl: p.verify_posts())

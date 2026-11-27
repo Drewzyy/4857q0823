@@ -53,7 +53,7 @@ def next_job(s: Session) -> dict | None:
         if tried and now - datetime.fromisoformat(tried) < SNOOZE:
             continue
         clip = s.get(Clip, o.clip_id)
-        if not clip or posting.held_back(clip, cfg.min_virality) or (o.quality or {}).get("status") == "fail":
+        if not clip or posting.held_back(clip, cfg.min_virality, you=o.reviewed_by == "you") or (o.quality or {}).get("status") == "fail":
             continue
         if o.scheduled_at and o.scheduled_at > now:
             continue

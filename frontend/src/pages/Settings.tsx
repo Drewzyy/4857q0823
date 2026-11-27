@@ -426,6 +426,9 @@ function LearnedCard() {
       <h2>What Vyral learned from your reviews</h2>
       <p className="small muted">When you or Muse reject a clip and say why ("too short", "boring", "no context", "just screaming"), these limits move a step,
         and the next clips are cut and screened to them. Clips that don't meet them are held back from review with the reason.</p>
+      {data.auto_after != null && <p className="small">{(data.your_reviews ?? 0) >= data.auto_after
+        ? "Vyral now approves clips you would have and sends them to the extension (posted by itself where Auto-post is on, otherwise a Discord ping to press Post). Reject any it gets wrong, with a note."
+        : `Vyral starts approving clips by itself after ${data.auto_after} of your reviews: ${data.your_reviews ?? 0} so far.`}</p>}
       <div className="grid cols-2 small">{Object.entries(LABELS).map(([k, l]) => <div key={k}>{l}: <strong>{String(data[k as Exclude<keyof Learned, "history">])}</strong></div>)}</div>
       {data.history.length > 0 && <ul className="small faint" style={{ margin: 0, paddingLeft: 18 }}>{data.history.slice(-8).reverse().map((h, i) => (
         <li key={i}>{relTime(h.at)}: "{h.note}": {Object.entries(h.changed).map(([k, [a, b]]) => `${LABELS[k] ?? k} ${a} → ${b}`).join(", ")}</li>))}</ul>}

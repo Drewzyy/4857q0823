@@ -7,7 +7,7 @@ Two kinds, both built only from what happens in the clip, so the video always de
 1. The line itself: the most striking thing said, word for word, with the filler at the front taken off
    ("bro, like, he really just did that" -> "he really just did that"). Picked from the transcript: a real
    sentence (not a fragment or a laugh), said at or near the big moment, short enough to read at a glance. Shown
-   as a quote, as the streamer's quote, or bare, varied from clip to clip.
+   as a quote or bare, varied from clip to clip. Never "name: the line", and never "the streamer".
 2. If nothing said lands, a short understated line about the kind of moment, with the streamer's name
    ("kai did not see that coming", "lacy was not having it"). Understatement reads as a person; hype reads as a bot.
 """
@@ -37,6 +37,7 @@ SUMMARIES = {
     "hype": ["{n} actually pulled it off", "{n} went off after this", "chat could not believe {n} did this", "{n} was locked in"],
     "plain": ["{n} had a moment", "{n} explains", "{n} on this", "wait for the end", "{n} meant every word"],
 }
+NAMELESS = ["wait for the end", "nobody saw this coming", "this went exactly how you think", "had to clip this one"]
 # A title never swears (platforms show it to fewer people and it says nothing) and is never only a reaction: "what
 # the fuck", "oh my god", "no way bro" fit any clip, so they tell a viewer nothing about this one.
 PROFANE = re.compile(r"\b(fuck\w*|f+ck\w*|shit\w*|bitch\w*|ass(hole)?|dick\w*|cunt|bastard|damn|goddamn|piss\w*|motherf\w*|wtf|stfu|"
@@ -121,19 +122,13 @@ def make_title(words: list, creator: str | None, peak: float | None = None, name
     quote = best_quote(words, peak)
     if quote:
         line = casual(quote[0], [who, *names])
-        missing = [n for n in names if not has_name(line, n)]
-        if missing:
-            return f"{' and '.join(missing)}: “{line}”", True
-        style = pick % 3
-        if style == 1 and who:
-            return f"{who.lower() if who.islower() else who}: “{line}”", True
-        return (line if style == 2 else f"“{line}”"), True
-    options = SUMMARIES[mood]
-    name = who or "the streamer"
+        if all(has_name(line, n) for n in names):  # a name a campaign wants on screen and the line lacks: a summary says it
+            return (line if pick % 3 == 2 else f"“{line}”"), True
+    name = who
     if names and not all(has_name(name, n) for n in names):  # the campaign's name for the streamer is the one on screen
         name = " and ".join(names)
-    line = options[pick % len(options)].format(n=name)
-    return (line[:1].upper() + line[1:] if line.startswith("the streamer") else line), False
+    options = [o for o in SUMMARIES[mood] if ("{n}" in o) == bool(name)] or NAMELESS
+    return options[pick % len(options)].format(n=name), False
 
 
 def shouts(text: str) -> bool:

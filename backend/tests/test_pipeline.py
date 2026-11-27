@@ -55,7 +55,7 @@ def setup_accounts(c, *, permission=True, channels=("https://www.twitch.tv/strea
 
 
 @respx.mock
-def test_new_post_becomes_ready_to_upload_clip(env):
+def test_new_post_becomes_ready_to_upload_clip(env, monkeypatch):
     ctx, c, fake = env
     discord = respx.post(HOOK).mock(return_value=httpx.Response(204))
     assert c.put("/api/notifications", json={"webhook_url": HOOK}).json()["configured"] is True
@@ -99,9 +99,12 @@ def test_new_post_becomes_ready_to_upload_clip(env):
         assert e["preedited"] and e["hide_title"] and not any(x.get("headline") for x in e["texts"])
         # A clip from before the pre-edit gets it once at startup, and is re-rendered.
         clip.edit = {**e, "preedited": False, "preedit_version": 0, "hide_title": False, "texts": [], "sounds": []}
-    assert ctx.pipeline.preedit_ready() == {"preedited": 1, "screened": 0}
+    from clippr import screen
+    real = screen.check
+    monkeypatch.setattr(screen, "check", lambda *a, **k: {**real(*a, **k), "pass": True})  # this short test clip says too little
+    assert ctx.pipeline.preedit_ready() == {"preedited": 1, "screened": 0, "deleted": 0}
     drain(ctx)
-    assert ctx.pipeline.preedit_ready() == {"preedited": 0, "screened": 0}  # never twice
+    assert ctx.pipeline.preedit_ready() == {"preedited": 0, "screened": 0, "deleted": 0}  # never twice
     with ctx.db.session() as s:
         assert s.get(Clip, clips[0]["id"]).edit["preedit_version"] == preedit.VERSION
     assert all(o["render_state"] == "ready" for o in c.get("/api/clips").json()[0]["outputs"])

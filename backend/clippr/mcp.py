@@ -101,9 +101,10 @@ def _clips(s, wanted: Callable[[ClipOutput], bool]) -> list[dict]:
     cfg = load_settings(s).posting
     res = []
     for c in s.scalars(select(Clip).where(Clip.status == "ready").order_by(Clip.created_at.desc()).limit(200)).unique():
-        if posting.held_back(c, cfg.min_virality):
-            continue  # quarantined, no permission, or under the score: never offered
-        outs = [o for o in _live_outputs(s, c.id) if wanted(o) and (o.quality or {}).get("status") != "fail"]  # broken files never offered
+        live = _live_outputs(s, c.id)
+        if posting.held_back(c, cfg.min_virality, you=any(o.review == "approved" and o.reviewed_by == "you" for o in live)):
+            continue  # quarantined, no permission, or under the score (unless you approved it): never offered
+        outs = [o for o in live if wanted(o) and (o.quality or {}).get("status") != "fail"]  # broken files never offered
         if outs:
             res.append(_clip(c, outs))
     return res

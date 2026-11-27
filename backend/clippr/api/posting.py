@@ -52,8 +52,9 @@ def restart(c=Depends(ctx)):
 
 @router.get("/learned")
 def get_learned(s: Session = Depends(db)):
-    """What the screener has learned from your review notes (screen.py), with the note behind each change."""
-    return screen.learned(s)
+    """What the screener has learned from your review notes (screen.py), with the note behind each change, and how
+    many of your reviews are in (Vyral approves by itself after posting.AUTO_APPROVE_AFTER)."""
+    return {**screen.learned(s), "your_reviews": posting.your_reviews(s), "auto_after": posting.AUTO_APPROVE_AFTER}
 
 
 @router.post("/learned/reset")
