@@ -1,6 +1,7 @@
 """The automatic loop end to end: real audio matching, real FFmpeg renders, simulated internet."""
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from sqlalchemy import select
 
 import httpx
 
@@ -55,7 +56,7 @@ def setup_accounts(c, *, permission=True, channels=("https://www.twitch.tv/strea
 
 
 @respx.mock
-def test_new_post_becomes_ready_to_upload_clip(env, monkeypatch):
+def test_new_post_becomes_ready_to_upload_clip(env, monkeypatch, screen_passes):
     ctx, c, fake = env
     discord = respx.post(HOOK).mock(return_value=httpx.Response(204))
     assert c.put("/api/notifications", json={"webhook_url": HOOK}).json()["configured"] is True
@@ -117,7 +118,7 @@ def test_new_post_becomes_ready_to_upload_clip(env, monkeypatch):
     assert tt_out["video_title"] == title
     assert tt_out["overlay"]["title"]["color"] == "#FFFFFF" and tt_out["overlay"]["captions"]["color"] == "#FFE500"
     assert tt_out["overlay"]["title"]["all_caps"] and tt_out["overlay"]["title"]["duration"] == 5
-    assert clips[0]["captions_text"] == "no way he actually drove the car into the lake" and clips[0]["editable"]
+    assert clips[0]["captions_text"].startswith("no way he actually drove the car into the lake") and clips[0]["editable"]
     assert outs["tiktok"]["destination"]["handle"] == "@streamera.tt"
 
     # Rendered from the original stream: the 20 s moment widened to 35 s with the setup before it, plus the hook up front.
@@ -250,7 +251,7 @@ def test_creator_links_and_webhook_validation(env):
     assert c.get("/api/notifications").json()["configured"] is False
 
 
-def test_captions_skipped_gracefully_without_speech_model(env):
+def test_captions_skipped_gracefully_without_speech_model(env, screen_passes):
     ctx, c, fake = env
     ctx.transcriber = FakeTranscriber(fail=True)
     _, sid, *_ = setup_accounts(c)
@@ -262,6 +263,24 @@ def test_captions_skipped_gracefully_without_speech_model(env):
     clip = c.get("/api/clips").json()[0]
     assert clip["has_captions"] is False and "Captions skipped" in clip["captions_note"]
     assert c.get("/api/references").json()[0]["status"] == "ready"
+
+
+def test_a_clip_that_fails_the_screener_is_never_made(env, monkeypatch):
+    from clippr import screen
+    real = screen.check
+    monkeypatch.setattr(screen, "check", lambda *a, **k: {**real(*a, **k), "pass": False, "reasons": ["says too little"]})
+    ctx, c, fake = env
+    _, sid, *_ = setup_accounts(c)
+    fake.posts = []
+    ctx.pipeline.check_source(sid)
+    fake.posts = [RemotePost("bad1", "https://www.tiktok.com/@a.clips/video/bad1", "fails the screener")]
+    ctx.pipeline.check_source(sid)
+    drain(ctx)
+    ref = c.get("/api/references").json()[0]
+    assert ref["status"] == "no_match" and "screener" in ref["status_detail"], ref
+    assert c.get("/api/clips").json() == []
+    with ctx.db.session() as s:
+        assert s.scalars(select(Clip)).first() is None and s.scalars(select(ClipOutput)).first() is None
 
 
 def test_one_clipping_account_covering_several_streamers(env):
@@ -328,7 +347,7 @@ def test_analytics_from_post_links(env):
     assert ctx.pipeline.refresh_metrics()["queued"] == 2
 
 
-def test_video_editor_trim_zoom_speed_and_text(env):
+def test_video_editor_trim_zoom_speed_and_text(env, screen_passes):
     ctx, c, fake = env
     _, sid, *_ = setup_accounts(c)
     fake.posts = []
@@ -355,7 +374,8 @@ def test_video_editor_trim_zoom_speed_and_text(env):
     with ctx.db.session() as s:
         path = Path(s.get(ClipOutput, outs[0]["id"]).file_path)
     info = probe(path)
-    expect = (new["end"] - new["start"]) / 1.25
+    hook = e["hook"][1] - e["hook"][0] if e.get("hook") else 0  # the climax played first, from the pre-edit
+    expect = (new["end"] - new["start"] + hook) / 1.25
     assert abs(info.duration - expect) < 0.4, (info.duration, expect)
     f = _frame(path, 2.0)  # the green text is burned in during its window
     g = ((f[..., 1] > 170) & (f[..., 0] < 90) & (f[..., 2] < 120)).sum()
@@ -401,7 +421,7 @@ def test_pasted_link_finds_the_streamer_it_names(env):
     assert [cname for _, _, cname in order] == ["Streamer B", "Streamer B", "Streamer A", "Streamer A"]
 
 
-def test_twitch_channel_clips_become_videos(env):
+def test_twitch_channel_clips_become_videos(env, screen_passes):
     """A streamer's Twitch channel as a source: its most-watched new clips are matched to the VOD and rendered;
     clips few people watched wait, and a second clip of the same moment isn't made twice."""
     ctx, c, fake = env
@@ -469,7 +489,7 @@ def test_copied_and_batch_pasted_links_become_clips_once(env):
     assert c.post("/api/intake", json={"urls": ["https://vm.tiktok.com/ZMabc123/", "https://www.youtube.com/shorts/xyz_1"]}).json()["queued"] == 2
 
 
-def test_group_page_gets_clips_from_each_members_account(env):
+def test_group_page_gets_clips_from_each_members_account(env, screen_passes):
     """Each member is their own streamer, and every member's account is routed to one group page tied to the group:
     the routes are respected (this used to stop with "isn't routed to any page")."""
     ctx, c, fake = env
@@ -778,7 +798,7 @@ def test_gameplay_split_stickers_and_presets(env, tmp_path):
     assert c.get("/api/presets").json() == []
 
 
-def test_cutting_a_part_out_shortens_the_clip(env):
+def test_cutting_a_part_out_shortens_the_clip(env, screen_passes):
     ctx, c, fake = env
     _, sid, *_ = setup_accounts(c)
     fake.posts = []
@@ -795,11 +815,12 @@ def test_cutting_a_part_out_shortens_the_clip(env):
     out = c.get("/api/clips").json()[0]["outputs"][0]
     with ctx.db.session() as s:
         path = Path(s.get(ClipOutput, out["id"]).file_path)
-    expect = (e["end"] - e["start"]) - 4  # the overlapping cuts remove 2..6 s
+    hook = e["hook"][1] - e["hook"][0] if e.get("hook") else 0  # the climax played first, from the pre-edit
+    expect = (e["end"] - e["start"]) + hook - 4  # the overlapping cuts remove 2..6 s
     assert abs(probe(path).duration - expect) < 0.4, (probe(path).duration, expect)
 
 
-def test_kick_channel_clips_become_videos(env):
+def test_kick_channel_clips_become_videos(env, screen_passes):
     """A Kick channel is watched like a Twitch one: its most-watched new clips are matched and rendered."""
     ctx, c, fake = env
     cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://kick.com/streamera"]}).json()["id"]
@@ -887,7 +908,7 @@ def test_captions_are_the_streamer_and_hashtags_only():
     assert yt == "#lacy #fyp #funny #shorts"  # YouTube shows the title on its own
 
 
-def test_retry_makes_a_clip_of_a_moment_that_was_already_made(env):
+def test_retry_makes_a_clip_of_a_moment_that_was_already_made(env, screen_passes):
     ctx, c, fake = env
     cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
     sid = c.post("/api/sources", json={"input": "twitch.tv/streamera", "platform": "twitch", "creator_ids": [cid]}).json()["id"]
@@ -964,7 +985,7 @@ def test_your_own_posted_links_are_not_made_into_clips(env):
     assert ctx.pipeline.intake_link("https://vm.tiktok.com/ZMmine/") == {"skipped": "one of your own posts"}
 
 
-def test_clips_of_a_live_stream_are_made_right_away_from_the_viewer_clip(env):
+def test_clips_of_a_live_stream_are_made_right_away_from_the_viewer_clip(env, screen_passes):
     ctx, c, fake = env
     cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
     sid = c.post("/api/sources", json={"input": "twitch.tv/streamera", "platform": "twitch", "creator_ids": [cid]}).json()["id"]

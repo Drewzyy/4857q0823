@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clapperboard, Pause, Play, Plus, Redo2, RotateCcw, Trash2, Type, Undo2 } from "lucide-react";
-import { api, type ClipEditT, type EditorData, type FontKey, type Overlay, type TextOverlayT, type TextStyle } from "../lib/api";
+import { api, PLATFORM_LABEL, type ClipEditT, type ClipOutputT, type EditorData, type FontKey, type Overlay, type TextOverlayT, type TextStyle } from "../lib/api";
 import { Empty, ErrorNote, Loading, relTime, useToast } from "../components/ui";
 import { EditorExtras, LayerPreview, useLibrary } from "../components/EditorExtras";
 import { GradeBadge, GradeCard } from "../components/GradeBadge";
@@ -73,11 +73,16 @@ function useHistory(initial: ClipEditT) {
   }, []);
   const undo = useCallback(() => { last.current.key = ""; setState((h) => (h.past.length ? { past: h.past.slice(0, -1), now: h.past[h.past.length - 1], future: [h.now, ...h.future] } : h)); }, []);
   const redo = useCallback(() => { last.current.key = ""; setState((h) => (h.future.length ? { past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h)); }, []);
-  return { edit: state.now, set, undo, redo, canUndo: state.past.length > 0, canRedo: state.future.length > 0 };
+  // Take changes the server made to the edit (e.g. a new title turns off the pre-edit headline) into every step, keeping yours.
+  const rebase = useCallback((p: Partial<ClipEditT>) => setState((h) => ({
+    past: h.past.map((x) => ({ ...x, ...p })), now: { ...h.now, ...p }, future: h.future.map((x) => ({ ...x, ...p })) })), []);
+  return { edit: state.now, set, undo, redo, rebase, canUndo: state.past.length > 0, canRedo: state.future.length > 0 };
 }
 
 function ClipEditor({ clipId }: { clipId: number }) {
-  const { data, isLoading, error } = useQuery({ queryKey: ["editor", clipId], queryFn: () => api.editor(clipId), staleTime: Infinity, retry: false });
+  const { data, isLoading, error } = useQuery({ queryKey: ["editor", clipId], queryFn: () => api.editor(clipId), staleTime: Infinity, retry: false,
+    // While a page re-renders, keep checking so its buttons come back when it's done.
+    refetchInterval: (q) => (q.state.data?.outputs.some((o) => o.render_state === "rendering") ? 3000 : false) });
   if (error) return <div className="page"><div className="page-head"><h1>Video Editor</h1></div><ErrorNote error={error} /><Link to="/editor">Back to clips</Link></div>;
   if (isLoading || !data) return <div className="page"><Loading /></div>;
   return <EditorBody data={data} />;
@@ -111,9 +116,18 @@ function EditorBody({ data }: { data: EditorData }) {
   const firstGameplay = library.find((m) => m.kind === "video");
   const boxHeight = zoomedIn ? Math.max(e.video_height, fullWidth) : fullWidth;
   const total = data.section_duration;
-  const first = data.outputs[0];
+  const [pageId, setPageId] = useState(data.outputs[0]?.id);
+  const first = data.outputs.find((o) => o.id === pageId) ?? data.outputs[0];
+  const [serverEdit, setServerEdit] = useState(data.edit);
+  useEffect(() => {
+    const changed = (Object.keys(data.edit) as (keyof ClipEditT)[]).filter((k) => JSON.stringify(data.edit[k]) !== JSON.stringify(serverEdit[k]));
+    if (changed.length) h.rebase(Object.fromEntries(changed.map((k) => [k, data.edit[k]])));
+    setServerEdit(data.edit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.edit]);
   const overlay: Overlay | null = first?.overlay ?? null;
   const dirty = JSON.stringify(e) !== JSON.stringify(data.edit);
+  const refresh = () => qc.invalidateQueries({ queryKey: ["editor", data.id] });
   const len = e.end - e.start;
   const outLen = len / e.speed;
   const out = clamp((t - e.start) / e.speed, 0, outLen); // where the playhead is in the finished clip
@@ -310,10 +324,7 @@ function EditorBody({ data }: { data: EditorData }) {
             <span className="spacer" />
             <span className="small faint">Space plays · [ ] set start/end</span>
           </div>
-        </div>
-
-        <div className="stack" style={{ minWidth: 0, gap: 14 }}>
-          <div className="card stack">
+          <div className="card stack" style={{ alignSelf: "stretch" }}>
             <div className="row"><h2>Trim</h2><span className="spacer" />
               <button className="btn ghost sm" onClick={() => patch({ start: r1(data.original_start), end: r1(data.original_start + data.original_duration) })}><RotateCcw size={12} />Vyral's cut</button></div>
             <div className="ed-timeline" ref={bar} onPointerDown={(ev) => seek(atX(ev.clientX))} role="slider" aria-label="Playhead"
@@ -360,6 +371,26 @@ function EditorBody({ data }: { data: EditorData }) {
             )}
             <p className="small faint">Kept {(len - cutLen).toFixed(1)} s of the {total.toFixed(0)} s that was downloaded. The shaded band is the part Vyral matched to the post; red parts are cut out. The preview skips them.</p>
           </div>
+        </div>
+
+        <div className="stack" style={{ minWidth: 0, gap: 14 }}>
+          {first && (
+            <div className="card stack">
+              <div className="row"><Type size={16} /><h2>Title and captions</h2></div>
+              {data.outputs.length > 1 && (
+                <div className="seg" role="group" aria-label="Page" style={{ alignSelf: "flex-start" }}>
+                  {data.outputs.map((o) => <button key={o.id} className={o.id === first.id ? "on" : ""} onClick={() => setPageId(o.id)}>
+                    {o.destination?.display_name ?? PLATFORM_LABEL[o.platform] ?? o.platform}</button>)}</div>
+              )}
+              <VideoTextPanel key={first.id} o={first} toast={toast} onChange={refresh}
+                clip={{ id: data.id, outputs: data.outputs, has_captions: data.words.length > 0, captions_text: data.words.map((w) => w.text).join(" ") }} />
+              <PostCaption key={`pc${first.id}`} o={first} toast={toast} onSaved={refresh} />
+            </div>
+          )}
+
+          <details className="card ed-more">
+            <summary><h2>More tools</h2><span className="small faint">Framing, zoom, speed, extra text, thumbnail, sounds, overlays and grade</span></summary>
+            <div className="stack" style={{ gap: 14 }}>
 
           <div className="card stack">
             <div className="row"><h2>Framing, zoom and speed</h2><span className="spacer" />
@@ -448,15 +479,6 @@ function EditorBody({ data }: { data: EditorData }) {
                 Pause the video where you want, then Use this frame. It's saved as a JPG next to each video and set as the video's cover. Saving re-renders, and the picture here updates when it's done.</p></div>
           </div>
 
-          {first && (
-            <div className="card stack">
-              <div className="row"><Type size={16} /><h2>Title and captions</h2></div>
-              <p className="small faint" style={{ margin: 0 }}>The title on the video, how the title and captions look, and the caption words. Saved on its own and re-rendered right away.</p>
-              <VideoTextPanel o={first} toast={toast} onChange={() => qc.invalidateQueries({ queryKey: ["editor", data.id] })}
-                clip={{ id: data.id, outputs: data.outputs, has_captions: data.words.length > 0, captions_text: data.words.map((w) => w.text).join(" ") }} />
-            </div>
-          )}
-
           <GradeCard grade={data.grade} />
 
           <EditorExtras e={e} patch={patch} at={out} outLen={outLen} toast={toast} />
@@ -467,7 +489,7 @@ function EditorBody({ data }: { data: EditorData }) {
 
           <div className="card stack">
             <div className="row"><h2>Text</h2><span className="spacer" /><button className="btn sm" disabled={e.texts.length >= 20} onClick={addText}><Plus size={13} />Add text</button></div>
-            <p className="small faint">Extra text on top of the title and captions. Times are in the finished clip. To change the title or caption style, use Edit text in Ready to Upload.</p>
+            <p className="small faint">Extra text on top of the title and captions. Times are in the finished clip. To change the title or caption style, use Title and captions above.</p>
             {e.texts.map((x, i) => (
               <fieldset key={i} className={`ed-textrow${selText === i ? " sel" : ""}`} onFocus={() => setSelText(i)}>
                 <div className="row">
@@ -498,8 +520,30 @@ function EditorBody({ data }: { data: EditorData }) {
               </fieldset>
             ))}
           </div>
+            </div>
+          </details>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** The caption posted with the video on this page (a YouTube description). Saved on its own; no re-render. */
+function PostCaption({ o, onSaved, toast }: { o: ClipOutputT; onSaved: () => void; toast: ReturnType<typeof useToast> }) {
+  const [desc, setDesc] = useState(o.description);
+  const [busy, setBusy] = useState(false);
+  const isYT = o.platform === "youtube";
+  const save = async () => {
+    setBusy(true);
+    try { await api.updateOutput(o.id, { description: desc }); toast("ok", "Post caption saved."); onSaved(); }
+    catch (err) { toast("err", err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="field"><label htmlFor={`pc-${o.id}`}>{isYT ? "Post description" : "Post caption"}</label>
+      <textarea id={`pc-${o.id}`} className="textarea" rows={4} maxLength={5000} value={desc} onChange={(ev) => setDesc(ev.target.value)} />
+      <div className="row"><span className="hint">Posted with the video on this page. {desc.length}/{isYT ? 5000 : 2200}</span><span className="spacer" />
+        <button className="btn" disabled={desc === o.description || busy} onClick={save}>Save post caption</button></div>
     </div>
   );
 }

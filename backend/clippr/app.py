@@ -97,6 +97,7 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
             ctx.inbox.start()
             ctx.jobs.enqueue("clips.restore", {}, max_attempts=1)  # brings back page videos a past update lost
             ctx.jobs.enqueue("clips.preedit", {}, max_attempts=1)  # clips made before the pre-edit get it once
+            ctx.jobs.enqueue("clips.purge", {}, max_attempts=1)  # clips the screener or safety check failed: gone
             ctx.mcp.start()  # the local bridge for Muse (Settings can turn it off)
             ctx.dropbox.start()  # finished videos to Dropbox, once it's connected
         yield

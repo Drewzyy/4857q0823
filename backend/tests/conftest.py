@@ -52,3 +52,12 @@ def env(tmp_path, media, monkeypatch):
     ctx = build_context(cfg, secrets=MemoryStore(), fetcher=fake, transcriber=FakeTranscriber())
     with TestClient(create_app(ctx=ctx), base_url="http://127.0.0.1:8765", headers={"X-Clippr-Token": TOKEN}) as c:
         yield ctx, c, fake
+
+
+@pytest.fixture
+def screen_passes(monkeypatch):
+    """For tests about something other than screening (rendering, editing, sources): their short fake clips pass
+    the screener, so the pipeline keeps them. The real result is kept; only "pass" is forced."""
+    from clippr import screen
+    real = screen.check
+    monkeypatch.setattr(screen, "check", lambda *a, **k: {**real(*a, **k), "pass": True})

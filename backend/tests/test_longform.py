@@ -1,4 +1,6 @@
 """Long-form: the moment finder, and the whole path from a dropped-in file to graded clips."""
+from dataclasses import replace
+
 import numpy as np
 
 from clippr import moments
@@ -38,8 +40,13 @@ def test_reaction_lines_add_points():
     assert m.score > flat.score and "awe" in " ".join(m.why)
 
 
-def test_a_dropped_in_file_becomes_clips(env, tmp_path):
+def test_a_dropped_in_file_becomes_clips(env, tmp_path, screen_passes):
     ctx, c, fake = env
+    # The fake speech model says the same 25 words everywhere, which would count as one moment repeated; give each
+    # candidate its own words so only the sound decides which moments are picked.
+    said = ctx.transcriber.words
+    ctx.transcriber.words = lambda *a, **k: [replace(w, text=f"{'abcdefghijklmnopqrstuvwxyz'[ctx.transcriber.calls % 26] * 3}{w.text}")
+                                             for w in said(*a, **k)]
     video = tmp_path / "podcast.mp4"
     # 2 minutes of quiet room tone with three loud moments, over a test picture.
     run(["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=120",

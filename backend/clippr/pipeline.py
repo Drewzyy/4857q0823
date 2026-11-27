@@ -51,6 +51,10 @@ class TooShort(Exception):
     """The footage can't make a clip of at least FLOOR seconds."""
 
 
+class Rejected(TooShort):
+    """The finished clip failed the screener or the safety check: it's deleted, never shown."""
+
+
 class Pipeline:
     def __init__(self, ctx: Any):
         self.ctx = ctx
@@ -753,6 +757,7 @@ class Pipeline:
             framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first,
                                     min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force)
             captions_note = " ".join(filter(None, [captions_note, campaigns.too_short(rules, framing["end"] - framing["start"])]))
+        title = titles.unprefix(title, creator_name)  # never "lacy: ..."
         framing["caption_y"] = self._caption_spot(source, framing, sampled)  # captions never over a face
         renders: dict[str, Path] = {}
         qcs: dict[str, dict] = {}
@@ -786,7 +791,51 @@ class Pipeline:
             audit(s, "clip.ready", "clip", clip.id, {"reference": reference_id, "longform": longform_id, "destinations": len(dest_info)})
             campaigns.auto_tag(s, clip)
             clip_title, clip_id = clip.title, clip.id
-        return clip_id, clip_title, self.grade_clip(clip_id), captions_note
+        graded = self.grade_clip(clip_id)
+        why = self.fails_rules(clip_id)
+        if why:  # never shown as a clip: deleted with its videos
+            self._delete_unposted([clip_id], "clip.screened_out")
+            raise Rejected(why)
+        return clip_id, clip_title, graded, captions_note
+
+    def fails_rules(self, clip_id: int) -> str | None:
+        """Why this clip can't be one: the screener or the platforms' rules (safety check) failed it."""
+        with self.ctx.db.session() as s:
+            clip = s.get(Clip, clip_id)
+            if not clip:
+                return None
+            scr = (clip.grade or {}).get("screen") or {"pass": True}
+            if (clip.safety or {}).get("status") == "fail":
+                return "Against the platforms' rules: " + "; ".join(f["reason"] for f in clip.safety.get("flags", []) if f.get("level") == "fail")
+            if not scr.get("pass", True):
+                return "Didn't pass the screener: " + "; ".join(scr.get("reasons", []))
+        return None
+
+    def purge_failing(self) -> dict:
+        """Deletes every clip not yet posted that the screener or the safety check failed, and takes "name:" off
+        the front of any headline. Runs at startup and hourly."""
+        with self.ctx.db.session() as s:
+            ids = [c.id for c in s.scalars(select(Clip)).unique()]
+        bad = [cid for cid in ids if self.fails_rules(cid)]
+        n = self._delete_unposted(bad, "clips.screened_out")
+        fixed = []
+        with self.ctx.db.session() as s:
+            for clip in s.scalars(select(Clip)).unique():
+                name = clip.creator.name if clip.creator else ""
+                new = titles.unprefix(clip.title, name)
+                if new == clip.title:
+                    continue
+                clip.title = new
+                clip.edit = {**(clip.edit or {}), "texts": [{**x, "text": titles.unprefix(x.get("text", ""), name)} for x in (clip.edit or {}).get("texts", [])]}
+                outs = [o for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id)) if o.status == "ready"]
+                for o in outs:
+                    o.video_title, o.title = new, titles.unprefix(o.title, name)
+                    o.render_state, o.render_error = "rendering", None
+                s.flush()
+                fixed += [o.id for o in outs]
+            if fixed:
+                self.ctx.jobs.enqueue("clip.rerender", {"output_ids": fixed}, max_attempts=1, session=s)
+        return {"deleted": n, "retitled": len(fixed)}
 
     def _transcribe(self, source: Path, start: float, dur: float, work: Path, hints: list[str]) -> tuple[list[Word], str]:
         """Words spoken in the clip, timed from the clip's start. Captions are skipped (with a note) if this fails.
@@ -1653,6 +1702,8 @@ def register(ctx: Any) -> Pipeline:
     q.every("tuner.learn", 6 * 3600)  # which choices get more views on your pages: the winners become the default
     q.every("style.refresh", 12 * 3600)  # your clips' views keep growing: re-read them so the hits keep counting more
     q.register("style.apply", lambda jc, pl: p.restyle_waiting())
+    q.register("clips.purge", lambda jc, pl: p.purge_failing())
+    q.every("clips.purge", 60 * 60)
     q.register("review.auto", lambda jc, pl: posting.auto_review(ctx))
     q.every("review.auto", 15 * 60)  # after your first 100 reviews, Vyral approves what you would have
     q.register("pages.promote", lambda jc, pl: p.promote_best())

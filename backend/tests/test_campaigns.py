@@ -387,7 +387,7 @@ def clip_seconds(e: dict) -> float:
 
 
 @respx.mock
-def test_a_new_clip_is_cut_and_titled_for_its_campaign(env):
+def test_a_new_clip_is_cut_and_titled_for_its_campaign(env, screen_passes):
     ctx, c, fake = env
     respx.post(HOOK).mock(return_value=httpx.Response(204))
     cid, sid, *_ = setup_accounts(c)

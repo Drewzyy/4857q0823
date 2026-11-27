@@ -22,7 +22,8 @@ export function VideoTextPanel({ o, clip, onChange, toast }: { o: ClipOutputT; c
     <div className="stack">
       <div className="field"><label htmlFor={`vt-${o.id}`}>Title on the video</label>
         <input id={`vt-${o.id}`} className="input" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Leave empty for no title" /></div>
-      <OverlayEditor value={overlay} onChange={setOverlay} title={title} />
+      <details className="ed-style"><summary className="small">Title and caption style</summary>
+        <OverlayEditor value={overlay} onChange={setOverlay} title={title} /></details>
       <div className="row wrap">
         {clip.outputs.length > 1 && <label className="check small"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />Use this style for every page of this clip</label>}
         <span className="spacer" />

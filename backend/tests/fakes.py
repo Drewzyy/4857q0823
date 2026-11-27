@@ -92,7 +92,9 @@ class FakeTranscriber:
             raise TranscribeError("Couldn't load the speech model (ConnectError). Check your internet connection for the one-time download.")
         text = "no way he actually drove the car into the lake".split()
         # Times are relative to the audio Vyral hands over, which starts 0.8 s before the clip.
-        return [Word(1.2 + i * 0.45, 1.6 + i * 0.45, t) for i, t in enumerate(text)]
+        more = "because chat bet him fifty bucks it would float and now the whole car is gone".split()  # context: enough said to pass the screener
+        return [Word(1.2 + i * 0.45, 1.6 + i * 0.45, t) for i, t in enumerate(text)] + \
+            [Word(12.0 + i * 0.45, 12.4 + i * 0.45, t) for i, t in enumerate(more)]
 
 
 def drain(ctx):

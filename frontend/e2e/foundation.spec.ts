@@ -29,7 +29,7 @@ test("a clip made automatically is ready to upload with captions per page", asyn
   await expect(caption).toHaveValue("@streamera #streamera #fyp #funny #gaming");  // the streamer's @ and hashtags only: never the title again
   await expect(card.getByText(/Streamed Nov [78], 2026/).first()).toBeVisible();
   await card.getByRole("button", { name: "Save to computer" }).click();
-  await expect(page.getByText(/Saved to .*Downloads.Vyral.*Streamer A TikTok - no way he actually drove the car into the lake\.mp4/)).toBeVisible();
+  await expect(page.getByText(/Saved to .*Downloads.Vyral.*Streamer A TikTok - .?no way he actually drove the car into the lake.?\.mp4/)).toBeVisible();
 
   // Edit the caption, it sticks.
   await caption.fill("my own caption #gaming");
@@ -40,7 +40,7 @@ test("a clip made automatically is ready to upload with captions per page", asyn
 
   // YouTube tab has a separate title and #shorts.
   await page.getByRole("tab", { name: /Streamer A YouTube/ }).click();
-  await expect(page.getByLabel("Title")).toHaveValue(/^no way he actually drove the car into the lake/);
+  await expect(page.getByLabel("Title")).toHaveValue(/^“?no way he actually drove the car into the lake/);
   await expect(page.getByLabel("Description")).toHaveValue("#streamera #fyp #funny #shorts");
 
   // Mark TikTok uploaded -> it moves to the Uploaded tab, YouTube stays Ready.
@@ -136,7 +136,8 @@ test("edit the title, its style and the caption words in the video editor", asyn
   await card.getByRole("link", { name: /Edit the title, captions and text style in the Video Editor/ }).click();
   await expect(page).toHaveURL(/\/editor\/\d+$/);
   const panel = page.locator(".card", { has: page.getByRole("heading", { name: "Title and captions" }) });
-  await expect(panel.getByLabel("Title on the video")).toHaveValue(/^no way he actually drove the car into the lake/);
+  await expect(panel.getByLabel("Title on the video")).toHaveValue(/^“?no way he actually drove the car into the lake/);
+  await panel.getByText("Title and caption style").click();
   // Defaults: white title, yellow captions, all caps, title shown 5 s.
   await expect(panel.getByLabel("Title color", { exact: true })).toHaveValue("#ffffff");
   await expect(panel.getByLabel("Captions color", { exact: true })).toHaveValue("#ffe500");
@@ -147,6 +148,13 @@ test("edit the title, its style and the caption words in the video editor", asyn
   await expect(panel.locator(".ov-preview .ov-text").first()).toHaveText("BRO REALLY SAID IT 🔥");
   await panel.getByRole("button", { name: "Re-render with changes" }).click();
   await expect(page.getByText(/Re-rendering\. The new version/)).toBeVisible();
+  // The editor notices when the re-render is done, so the title can be changed again without reopening it.
+  await panel.getByLabel("Title on the video").fill("BRO REALLY SAID IT AGAIN");
+  await expect(panel.getByRole("button", { name: "Re-render with changes" })).toBeEnabled({ timeout: 40_000 });
+  // The caption posted with the video, per page, right in the editor.
+  await panel.getByLabel(/^Post (caption|description)$/).fill("new caption #fyp");
+  await panel.getByRole("button", { name: "Save post caption" }).click();
+  await expect(page.getByText("Post caption saved.")).toBeVisible();
   await page.goto("/ready");
   await expect.poll(async () => {
     const c = page.locator(".card", { hasText: "no way he actually drove the car into the lake" }).first();
@@ -204,6 +212,7 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 1)).toBe(true);
   const save = page.getByRole("button", { name: "Save & render" });
   await expect(save).toBeDisabled();
+  await page.getByText("More tools", { exact: true }).click();  // the advanced controls are folded away
 
   // New clips open zoomed in to fill the frame; Fit to frame shows the whole stream; Reset goes back to the default.
   const framing = page.getByRole("group", { name: "Framing" });
@@ -249,6 +258,7 @@ test("video editor: trim, speed, zoom, text, undo, then re-render", async ({ pag
   await page.goto("/editor");
 248
   await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).click();
+  await page.getByText("More tools", { exact: true }).click();  // the advanced controls are folded away
   await expect(page.getByLabel("Text 1", { exact: true })).toHaveValue("WAIT FOR IT");
   await expect(page.getByRole("group", { name: "Speed" }).getByRole("button", { name: "1.5x" })).toHaveClass(/on/);
 });
@@ -284,6 +294,7 @@ test("video editor: facecam on top with a hand-drawn box", async ({ page }) => {
   await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).click();
   const video = page.locator(".ed-preview video");
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 2)).toBe(true);
+  await page.getByText("More tools", { exact: true }).click();  // the advanced controls are folded away
   await page.getByRole("button", { name: "Facecam on top" }).click();
   const area = page.getByText("Drag a box around the streamer's camera").locator("xpath=following-sibling::div[1]");
   const box = (await area.boundingBox())!;
@@ -305,6 +316,7 @@ test("video editor: gameplay under the stream, a sticker on top, saved as a pres
   await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).click();
   const video = page.locator(".ed-preview video").first();
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState >= 2)).toBe(true);
+  await page.getByText("More tools", { exact: true }).click();  // the advanced controls are folded away
   await page.getByLabel("Add files to library").setInputFiles([`${dir}/game.mp4`, `${dir}/sticker.png`]);
   await expect(page.getByText("Added 2 files to your library.")).toBeVisible();
   await page.locator(".list-row", { hasText: "game" }).getByRole("button", { name: "Gameplay on bottom" }).click();
@@ -325,6 +337,7 @@ test("every clip shows its grade, with the breakdown in the editor", async ({ pa
   const row = page.getByRole("link", { name: /no way he actually drove the car into the lake/i });
   await expect(row.locator(".grade-badge")).toBeVisible();
   await row.click();
+  await page.getByText("More tools", { exact: true }).click();  // the advanced controls are folded away
   await expect(page.getByRole("heading", { name: "Grade" })).toBeVisible();
   await expect(page.getByText("Hook in the first 3 seconds")).toBeVisible();
   if (process.env.SHOT) await page.getByRole("heading", { name: "Grade" }).locator("xpath=../..").screenshot({ path: process.env.SHOT });
@@ -399,6 +412,7 @@ test("video editor: add a sound effect at the playhead and save", async ({ page 
   await page.goto("/editor");
 395
   await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).first().click();
+  await page.getByText("More tools", { exact: true }).click();  // the advanced controls are folded away
   await expect(page.getByRole("heading", { name: "Sound effects" })).toBeVisible();
   await page.getByLabel("Sound to add").selectOption("scratch");
   const before = await page.getByRole("button", { name: /^Remove Record scratch/ }).count();
@@ -423,6 +437,7 @@ test("video editor: add your own sound file and use it", async ({ page }) => {
   await page.goto("/editor");
 418
   await page.getByRole("link", { name: /no way he actually drove the car into the lake/i }).first().click();
+  await page.getByText("More tools", { exact: true }).click();  // the advanced controls are folded away
   await page.getByLabel("Sound files").setInputFiles(mp3);
   await expect(page.getByText("Sound added. It's in the list for every clip.")).toBeVisible();
   await expect(page.getByLabel("Sound to add")).toHaveValue(/^lib:\d+$/);

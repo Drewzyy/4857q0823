@@ -651,3 +651,15 @@ def test_clips_that_fail_the_screener_after_the_redo_are_deleted_unless_posted(c
     with ctx.db.session() as s:
         assert s.get(Clip, ids[0]) is None and s.get(Clip, ids[1]) is not None
     assert not (tmp_path / "c0").exists() and (tmp_path / "c1").exists()
+
+
+def test_purge_deletes_clips_that_fail_the_rules_and_fixes_name_colon_headlines(ctx, tmp_path):
+    ids = _clip(ctx, tmp_path, n=3)
+    with ctx.db.session() as s:
+        bad, nsfw, ok = (s.get(Clip, cid) for cid in ids)
+        bad.grade = {"score": 50, "screen": {"pass": False, "reasons": ["no payoff"]}}
+        nsfw.safety = {"status": "fail", "flags": [{"level": "fail", "reason": "nudity"}]}
+        ok.grade, ok.title = {"score": 70, "screen": {"pass": True}}, "lacy: “he sold my sword”"
+    assert ctx.pipeline.purge_failing() == {"deleted": 2, "retitled": 1}
+    with ctx.db.session() as s:
+        assert s.get(Clip, ids[0]) is None and s.get(Clip, ids[1]) is None and s.get(Clip, ids[2]).title == "“he sold my sword”"

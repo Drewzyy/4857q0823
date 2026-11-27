@@ -131,6 +131,17 @@ def make_title(words: list, creator: str | None, peak: float | None = None, name
     return options[pick % len(options)].format(n=name), False
 
 
+def unprefix(title: str, name: str = "") -> str:
+    """'lacy: “the line”' or 'the streamer: ...' -> '“the line”'. A headline never opens on a name and a colon."""
+    m = re.match(r"^\s*([\w .'&-]{1,40}?)\s*:\s+(.+)$", title or "")
+    if not m:
+        return title
+    who = m.group(1).strip().lower()
+    if who in ("the streamer", "streamer") or (name and has_name(who, name)) or len(who.split()) <= 3 and "“" in m.group(2)[:1]:
+        return m.group(2).strip()
+    return title
+
+
 def shouts(text: str) -> bool:
     """True if the text has an emoji or shouting in it (what a title shouldn't have unless the page adds its own)."""
     letters = [c for c in text if c.isalpha()]
