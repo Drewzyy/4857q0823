@@ -548,31 +548,60 @@ function TunedCard() {
   );
 }
 
+const LOGOS: Record<string, JSX.Element> = { // our own fixed SVGs, no remote images
+  tiktok: <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden><rect width="24" height="24" rx="5" fill="#000" /><path d="M14 5v9.2a2.8 2.8 0 1 1-2.4-2.8V9a5.3 5.3 0 1 0 4.9 5.3V9.6a6 6 0 0 0 3 1V8.2A3.4 3.4 0 0 1 16.4 5z" fill="#fff" /></svg>,
+  instagram: <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden><rect width="24" height="24" rx="6" fill="#d62976" /><rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="#fff" strokeWidth="1.8" /><circle cx="12" cy="12" r="3.3" fill="none" stroke="#fff" strokeWidth="1.8" /><circle cx="16.3" cy="7.7" r="1" fill="#fff" /></svg>,
+  youtube: <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden><rect y="4" width="24" height="16" rx="5" fill="#f00" /><path d="M10 8.5v7l6-3.5z" fill="#fff" /></svg>,
+};
+const LIGHT = { green: "var(--ok)", amber: "var(--warn)", grey: "var(--faint)" };
+
 /** Posting without Muse: the Vyral Companion extension, in your own browser. */
 function CompanionCard() {
   const toast = useToast();
-  const [where, setWhere] = useState<string | null>(null);
+  const { data, error } = useQuery({ queryKey: ["companion"], queryFn: api.companion, refetchInterval: 20000 });
+  const folder = async () => { try { await api.companionFolder(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } };
+  const on = !!data?.connected;
   return (
     <div className="card stack" style={{ maxWidth: 820, marginTop: 16 }}>
-      <h2>Post without Muse: Vyral Companion</h2>
-      <p className="small muted">A Chrome extension that posts the videos you approved, on the TikTok, Instagram and YouTube websites in your own browser, where you're
+      <h2>Chrome extension: Vyral Companion</h2>
+      {error ? <ErrorNote error={error} /> : (
+        <div className="row" role="status" aria-label="Chrome extension status">
+          <span style={{ width: 14, height: 14, borderRadius: 7, background: on ? "var(--ok)" : "var(--err)" }} />
+          <strong style={{ fontSize: 20, color: on ? "var(--ok)" : "var(--err)" }}>{on ? "Connected" : "Not connected"}</strong>
+          <span className="small muted">{on ? `Version ${data?.version}${data?.enabled ? ", posting on" : ", posting off (tick Post approved videos in the extension)"}`
+            : data?.last_seen ? `Last heard from ${relTime(data.last_seen)}` : "Not heard from since Vyral started"}</span>
+        </div>)}
+      {data && data.accounts.length > 0 && (
+        <div className="stack" style={{ gap: 6 }}>
+          {data.accounts.map((a) => (
+            <div key={a.id} className="row small" data-testid="companion-account">
+              <span title={a.text} style={{ width: 10, height: 10, borderRadius: 5, background: on ? LIGHT[a.light] : LIGHT.grey }} />
+              <span title={a.site}>{LOGOS[a.platform]}</span>
+              <strong>{a.display_name}</strong><span className="muted">{a.handle}</span>
+              <span className="muted">{on ? a.text : "Extension not connected"}</span>
+            </div>))}
+        </div>)}
+      {data && !data.accounts.length && <p className="small muted">No TikTok, Instagram or YouTube pages yet (Destinations).</p>}
+      <p className="small muted">The extension posts the videos you approved, on the TikTok, Instagram and YouTube websites in your own browser, where you're
         logged in. It waits for each video's time (spacing and posting hours), opens the upload page, puts the video in and fills in the caption (and the title on
         YouTube). You press Post, unless that page's Auto-post is on, then it does. A captcha, a login or any check stops it and asks you; it never gets around
         them. The sites' rules don't allow automated posting, so Auto-post can get an account flagged: it's off unless you turn it on, page by page.</p>
+      <p className="small">Once only:</p>
       <ol className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
-        <li>Press <strong>Get the extension</strong>: it's saved next to your Vyral folder.</li>
-        <li>In Chrome, open <code>chrome://extensions</code>, turn on <strong>Developer mode</strong>, press <strong>Load unpacked</strong> and pick that folder.</li>
+        <li>In Chrome, open <code>chrome://extensions</code> and turn on <strong>Developer mode</strong>.</li>
+        <li>Press <strong>Load unpacked</strong> and pick this folder: {data?.folder ? <code>{data.folder}</code> : "loading"}</li>
         <li>In the extension's settings, paste the bridge token (Copy token, above) and tick <strong>Post approved videos</strong>.</li>
         <li>Stay logged in to TikTok, Instagram and YouTube Studio in that browser. Approve videos in Ready to Upload as usual.</li>
       </ol>
+      <div className="row wrap">
+        <button className="btn sm" disabled={!data?.folder} onClick={async () => { await navigator.clipboard.writeText(data?.folder || ""); toast("ok", "Folder path copied"); }}>Copy path</button>
+        <button className="btn sm" onClick={folder}>Show folder</button>
+      </div>
+      <p className="small muted">Updates: Vyral keeps this folder up to date when it updates, and the extension reloads itself with the new version when
+        nothing is posting. When Vyral starts it opens the upload page of each site you post to; the extension doesn't open a second tab for a site already open.</p>
       <p className="small muted">From your phone: with the bridge on your Tailscale address (above), each "Post ready" Discord ping has a link. Open it on your
         phone (Tailscale on), check the clip and caption, tap <strong>Post it</strong>, and the waiting upload page on your computer posts it. Each link works
         once, for 3 hours. Keep the computer on with Vyral and Chrome running.</p>
-      <div className="row wrap">
-        <button className="btn primary sm" onClick={async () => { try { setWhere((await api.saveExtension()).path); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } }}>
-          Get the extension</button>
-        {where && <span className="small">Saved to <code>{where}</code></span>}
-      </div>
     </div>
   );
 }

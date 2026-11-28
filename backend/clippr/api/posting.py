@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends
@@ -61,6 +62,8 @@ def get_learned(s: Session = Depends(db)):
 def reset_learned(s: Session = Depends(db)):
     screen.reset(s)
     s.flush()
+    from .. import obsidian
+    obsidian.write_taught(s)  # the vault's playbook forgets it too
     return screen.learned(s)
 
 
@@ -108,7 +111,30 @@ def get_tuned(s: Session = Depends(db)):
 def reset_tuned(s: Session = Depends(db)):
     tuner.reset(s)
     s.flush()
+    from .. import obsidian
+    obsidian.write_taught(s)  # the vault's playbook forgets it too
     return {**tuner.state(s), "names": tuner.NAMES, "min_posts": tuner.MIN_POSTS}
+
+
+@router.get("/companion")
+def companion_status(s: Session = Depends(db), c=Depends(ctx)):
+    """Is the Chrome extension connected, which version, its folder, and each page's signed-in light."""
+    from .. import companion
+    return companion.status(s, c.config.data_dir)
+
+
+@router.post("/companion/folder")
+def companion_folder(c=Depends(ctx)):
+    """Makes sure the extension's folder is up to date and shows it (desktop), for Chrome's Load unpacked."""
+    from .clips import _reveal
+    from .. import companion
+    try:
+        out = companion.install(c.config.data_dir)
+    except OSError as e:
+        raise ApiError(422, "folder", f"Couldn't update the extension folder ({e.strerror or e})")
+    if c.config.desktop_mode:
+        _reveal(Path(out["folder"]))
+    return out
 
 
 @router.post("/companion/extension")

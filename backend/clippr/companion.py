@@ -229,3 +229,104 @@ def open_sites(s: Session) -> list[str]:
         except Exception:
             webbrowser.open(url)  # no Chrome found: the default browser
     return urls
+
+
+# ---- is the extension connected, and signed in where it should be: its heartbeat (POST /companion/status) ----
+_beat: dict = {}  # the latest heartbeat, in memory: gone when Vyral restarts until the extension's next tick
+SITE_NAMES = {"tiktok": "TikTok", "instagram": "Instagram", "youtube": "YouTube"}
+
+
+def _norm(v) -> str:
+    return str(v or "").strip().removeprefix("@").lower()
+
+
+def light(acc: dict, seen: dict | None) -> tuple[str, str]:
+    """(green | amber | grey, text) for one page: the same rules as the extension's accounts.js."""
+    if not seen or seen.get("signedIn") is None:
+        return "amber", "Can't tell: open the site"
+    if seen.get("signedIn") is False:
+        return "grey", "Not signed in"
+    shown = seen.get("handle") or seen.get("name")
+    if not shown:
+        return "amber", "Signed in: open Studio to check the channel"
+    if _norm(shown) in (_norm(acc.get("handle")), _norm(acc.get("display_name"))):
+        return "green", "Signed in, ready to post"
+    return "amber", f"Signed in as {seen.get('handle') or shown}: switch account"
+
+
+def heartbeat(body: dict) -> dict:
+    """The extension's tick: its version, whether posting is on, and who it saw signed in on each site. Kept as
+    plain short strings only (never anything else from the pages)."""
+    seen = {}
+    for p, v in (body.get("seen") or {}).items() if isinstance(body.get("seen"), dict) else ():
+        if p in PLATFORMS and isinstance(v, dict):
+            si = v.get("signedIn")
+            seen[p] = {"signedIn": si if isinstance(si, bool) else None, "handle": str(v.get("handle") or "")[:60] or None,
+                       "name": str(v.get("name") or "")[:100] or None, "at": str(v.get("at") or "")[:40] or None}
+    try:
+        every = min(60.0, max(1.0, float(body.get("every") or 5)))
+    except (TypeError, ValueError):
+        every = 5.0
+    _beat.clear()
+    _beat.update(version=str(body.get("version") or "")[:20], enabled=bool(body.get("enabled")), every=every, seen=seen,
+                 at=datetime.now(timezone.utc))
+    return {"ok": True, "bundled_version": bundled_version()}
+
+
+def status(s: Session, data_dir=None) -> dict:
+    """For the app: is the extension connected (a heartbeat within twice its interval), and each page's light."""
+    now = datetime.now(timezone.utc)
+    at = _beat.get("at")
+    connected = bool(at and now - at <= timedelta(minutes=2 * _beat.get("every", 5)))
+    seen = _beat.get("seen", {}) if connected else {}
+    rows = []
+    for a in accounts(s):
+        lt, text = light(a, seen.get(a["platform"]))
+        rows.append({**a, "site": SITE_NAMES[a["platform"]], "light": lt, "text": text, "seen": seen.get(a["platform"])})
+    return {"connected": connected, "last_seen": at.isoformat() if at else None, "version": _beat.get("version") or None,
+            "enabled": bool(_beat.get("enabled")) if connected else False, "bundled_version": bundled_version(),
+            "folder": str(install_folder(data_dir)) if data_dir else None, "accounts": rows}
+
+
+# ---- updating it: the bundled extension, copied to a folder that stays put, for Chrome's Load unpacked ----
+def _version(d) -> str | None:
+    import json
+    if d is None:
+        return None
+    try:
+        return str(json.loads((d / "manifest.json").read_text(encoding="utf-8")).get("version") or "") or None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def bundled_version() -> str | None:
+    return _version(extension_dir())
+
+
+def install_folder(data_dir):
+    from pathlib import Path
+    return Path(data_dir) / "chrome-extension"
+
+
+def install(data_dir) -> dict:
+    """Copy the bundled extension to <data folder>/chrome-extension when its version differs, atomically (a full copy
+    beside it, then swapped in), so Chrome loading the folder never sees half a version. The extension reloads itself
+    when it sees the newer version (background.js)."""
+    import os
+    import shutil
+    src, dest = extension_dir(), install_folder(data_dir)
+    if not src:
+        return {"copied": False, "folder": str(dest), "reason": "no extension in this copy of Vyral"}
+    want = _version(src)
+    if dest.exists() and _version(dest) == want:
+        return {"copied": False, "folder": str(dest), "version": want}
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp, old = dest.with_name(f".{dest.name}.new-{os.getpid()}"), dest.with_name(f".{dest.name}.old-{os.getpid()}")
+    shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(old, ignore_errors=True)
+    shutil.copytree(src, tmp)
+    if dest.exists():
+        os.replace(dest, old)
+    os.replace(tmp, dest)
+    shutil.rmtree(old, ignore_errors=True)
+    return {"copied": True, "folder": str(dest), "version": want}

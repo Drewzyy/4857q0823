@@ -102,6 +102,10 @@ def create_app(config: Config | None = None, ctx: AppContext | None = None) -> F
             ctx.dropbox.start()  # finished videos to Dropbox, once it's connected
             if cfg.desktop_mode:
                 from . import companion
+                try:  # the extension's files where Chrome loads them from, when this version brings new ones
+                    companion.install(cfg.data_dir)
+                except Exception:
+                    log.exception("couldn't update the Chrome extension folder")
                 try:
                     with ctx.db.session() as s:
                         companion.open_sites(s)

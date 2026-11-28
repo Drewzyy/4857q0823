@@ -94,6 +94,10 @@ def learn(s: Session) -> dict:
         r.value = value
     else:
         s.add(Setting(key=KEY, value=value))
+    if best != st.get("best", {}):  # a new winner (or one dropped): the vault's playbook says so
+        from . import obsidian
+        s.flush()
+        obsidian.write_taught(s)
     return value
 
 

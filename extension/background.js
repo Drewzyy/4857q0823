@@ -22,7 +22,41 @@ function notify(title, message) {
   chrome.notifications.create({ type: "basic", iconUrl: "icon.png", title, message, priority: 2 });
 }
 
+// Tells Vyral the extension is here: its version, whether posting is on, and who each site showed as signed in
+// (only what accounts.js shows: signed in or not, and the visible handle or channel name). Vyral answers with the
+// version it carries; when that's newer and nothing is posting, the extension reloads to pick up the new files
+// Vyral copied into the folder Chrome loads it from.
+async function heartbeat() {
+  const cfg = await settings();
+  if (!cfg.token) return;
+  const { status = {} } = await chrome.storage.local.get("status");
+  const version = chrome.runtime.getManifest().version;
+  let bundled;
+  try {
+    ({ bundled_version: bundled } = await call(cfg, "/companion/status", { method: "POST",
+      body: JSON.stringify({ version, enabled: !!cfg.enabled, every: Number(cfg.every) || 5, seen: status }) }));
+  } catch { return; } // tick() says when Vyral can't be reached
+  const { job } = await chrome.storage.session.get("job");
+  if (bundled && newer(bundled, version) && !job) {
+    const { reloadedFor } = await chrome.storage.local.get("reloadedFor");
+    if (reloadedFor === bundled) { // reloaded once already and still old: Chrome loads it from another folder
+      await note(`Vyral has version ${bundled}: load the extension from the folder shown in Vyral's Settings`);
+      return;
+    }
+    await chrome.storage.local.set({ reloadedFor: bundled });
+    await note(`Updating to ${bundled}`);
+    chrome.runtime.reload();
+  }
+}
+
+function newer(a, b) {
+  const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+}
+
 async function tick() {
+  await heartbeat();
   const cfg = await settings();
   if (!cfg.enabled || !cfg.token) return;
   const { job } = await chrome.storage.session.get("job");
@@ -74,7 +108,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       const { status = {} } = await chrome.storage.local.get("status");
       const seen = { signedIn: msg.seen?.signedIn ?? null, handle: String(msg.seen?.handle || "").slice(0, 60) || null,
         name: String(msg.seen?.name || "").slice(0, 100) || null, at: new Date().toISOString() };
+      const changed = JSON.stringify({ ...status[msg.platform], at: 0 }) !== JSON.stringify({ ...seen, at: 0 });
       await chrome.storage.local.set({ status: { ...status, [msg.platform]: seen } });
+      if (changed) heartbeat(); // Vyral's Settings shows the new light right away
       reply(true);
     } else if (msg.type === "accounts") {
       reply(await accounts());
@@ -144,7 +180,11 @@ async function openAccounts() { // when it's turned on: the upload page of each 
   const got = await accounts();
   if (got.error) { await note(got.error); return; }
   const pages = [...new Set(got.accounts.filter((a) => got.openOnStart[a.id] !== false).map((a) => a.upload_page))];
-  for (const url of pages) await chrome.tabs.create({ url, active: false });
+  const open = (await chrome.tabs.query({ url: SITE_TABS })).map((t) => { try { return new URL(t.url).hostname; } catch { return ""; } });
+  const site = (h) => h.replace(/^(www|studio)\./, ""); // youtube.com and studio.youtube.com are one site
+  for (const url of pages) { // Vyral opens these at startup too: a site already open isn't opened again
+    if (!open.some((h) => site(h) === site(new URL(url).hostname))) await chrome.tabs.create({ url, active: false });
+  }
 }
 
 chrome.storage.onChanged.addListener((c, area) => {
@@ -157,5 +197,6 @@ async function schedule() {
 }
 chrome.runtime.onInstalled.addListener(schedule);
 chrome.runtime.onStartup.addListener(schedule);
+chrome.runtime.onStartup.addListener(heartbeat);
 chrome.storage.onChanged.addListener((c) => { if (c.every) schedule(); });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === "tick") tick(); });

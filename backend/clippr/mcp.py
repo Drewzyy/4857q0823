@@ -280,6 +280,8 @@ def give_feedback(ctx, a):
         c = _get(s, a["clip_id"])
         changed = screen.learn(s, a["note"], c.id)
         audit(s, "clip.feedback", "clip", c.id, {"by": ACTOR, "note": a["note"][:200], "learned": changed})
+        from . import obsidian
+        obsidian.feedback(s, title=c.title, page="", decision="feedback from Muse", note=a["note"][:500], changed=changed)
         return {"learned": changed, "now": {k: v for k, v in screen.learned(s).items() if k != "history"}}
 
 
@@ -479,6 +481,18 @@ def create_app(ctx) -> FastAPI:
             with ctx.db.session() as s:
                 return companion.accounts(s)
         return JSONResponse({"accounts": await run_in_threadpool(find)})
+
+    @app.post("/companion/status")
+    async def companion_status(request: Request):
+        if (bad := allowed(request)):
+            return bad
+        try:
+            body = await request.json()
+        except ValueError:
+            return JSONResponse({"error": "Not JSON"}, status_code=422)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "Expected an object"}, status_code=422)
+        return JSONResponse(companion.heartbeat(body))
 
     @app.get("/companion/video/{oid}")
     async def companion_video(oid: int, request: Request):

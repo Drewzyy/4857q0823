@@ -93,6 +93,15 @@ export interface StyleView {
     layout: string; layouts: Record<string, number>; captions_rate: number; headline_rate: number; headline_seconds: number; sfx_rate: number; sound?: string | null; zoom_rate?: number;
     peak_share?: number | null; tail?: number | null; hashtags?: string[]; songs?: string[] } | null;
 }
+export interface CompanionAccount {
+  id: number; platform: "tiktok" | "instagram" | "youtube"; site: string; handle: string; display_name: string; upload_page: string;
+  light: "green" | "amber" | "grey"; text: string; seen: { at: string | null } | null;
+}
+export interface CompanionStatus {
+  connected: boolean; last_seen: string | null; version: string | null; enabled: boolean; bundled_version: string | null;
+  folder: string | null; accounts: CompanionAccount[];
+}
+
 export interface Learned {
   min_seconds: number; max_seconds: number; min_words: number; setup_words: number; min_score: number;
   history: { at: string; note: string; clip_id: number | null; changed: Record<string, [number, number]> }[];
@@ -309,6 +318,8 @@ export const api = {
   learned: () => request<Learned>("GET", "/learned"),
   style: () => request<StyleView>("GET", "/style"),
   tuned: () => request<Tuned>("GET", "/tuned"),
+  companion: () => request<CompanionStatus>("GET", "/companion"),
+  companionFolder: () => request<{ folder: string; copied: boolean }>("POST", "/companion/folder"),
   saveExtension: () => request<{ path: string }>("POST", "/companion/extension"),
   resetTuned: () => request<Tuned>("POST", "/tuned/reset"),
   learnStyle: (url: string) => request<{ queued: boolean }>("POST", "/style/learn", { url }),

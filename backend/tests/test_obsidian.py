@@ -86,3 +86,57 @@ def test_vault_gone_is_harmless(ctx, vault):
         assert obsidian.force(s) == {}
         assert "error" in obsidian.sync(s)
         assert obsidian.view(s)["error"]
+
+
+def test_review_notes_go_to_the_vault_and_the_playbook_keeps_my_rules(client, ctx, vault, tmp_path):
+    from datetime import datetime
+    from clippr import obsidian, posting, tuner
+    from clippr.models import ClipOutput, Setting
+    from test_screen import _clip
+    client.post("/api/obsidian/connect", json={"path": str(vault)})
+    book = vault / "Vyral" / "Playbook.md"
+    book.write_text(book.read_text().replace("## My rules", "## My rules\n- laugh: zoom=off", 1))
+    mine = obsidian._mine(book.read_text())
+    _clip(ctx, tmp_path, n=1)
+    with ctx.db.session() as s:
+        oid = s.query(ClipOutput).first().id
+        posting.reject(s, oid, "you", "too short, no context")
+    month = vault / "Vyral" / "Feedback" / f"{datetime.now().astimezone():%Y-%m}.md"
+    text = month.read_text()
+    assert "Clip 0" in text and "Page: My page" in text and "rejected by you" in text and "too short, no context" in text
+    assert "min seconds 35 to 38" in text
+    pb = book.read_text()
+    assert "## What your reviews taught" in pb and "min seconds: 38" in pb and "too short, no context (1)" in pb
+    assert obsidian._mine(pb).rstrip() == mine.rstrip() and pb.index("## What your reviews taught") < pb.index("## My rules")
+    with ctx.db.session() as s:  # a tuner winner: the section is regenerated, once, with My rules kept
+        s.merge(Setting(key="tuned", value={"best": {}, "results": {}}))
+        s.flush()
+        orig = tuner._scores
+        tuner._scores = lambda s, since: [({"hook": True}, 1.0)] * 6 + [({"hook": False}, 0.0)] * 6
+        try:
+            tuner.learn(s)
+        finally:
+            tuner._scores = orig
+    pb = book.read_text()
+    assert pb.count("## What your reviews taught") == 1 and "Climax first (hook): True" in pb and obsidian._mine(pb).rstrip() == mine.rstrip()
+    r = client.post("/api/obsidian/sync").json()  # a full sync keeps the section too
+    assert r["rules"] == {"laugh": {"zoom": False}} and "## What your reviews taught" in book.read_text()
+
+
+def test_feedback_without_a_vault_is_skipped_quietly(client, ctx, tmp_path):
+    from clippr import obsidian, posting
+    from clippr.models import ClipOutput
+    from test_screen import _clip
+    _clip(ctx, tmp_path, n=1)
+    with ctx.db.session() as s:
+        posting.reject(s, s.query(ClipOutput).first().id, "you", "boring")  # not connected: nothing written, no error
+        obsidian.feedback(s, title="x", page="y", decision="z", note="n")
+        obsidian.write_taught(s)
+    gone = tmp_path / "gone vault"
+    (gone / ".obsidian").mkdir(parents=True)
+    client.post("/api/obsidian/connect", json={"path": str(gone)})
+    import shutil
+    shutil.rmtree(gone)
+    with ctx.db.session() as s:  # connected, then the vault went away
+        posting.reject(s, s.query(ClipOutput).first().id, "you", "too long")
+    assert not gone.exists()

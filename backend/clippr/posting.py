@@ -154,6 +154,10 @@ def reject(s: Session, oid: int, actor: str, reason: str, teach: bool = True) ->
     o.review, o.review_note, o.reviewed_by = "rejected", reason.strip()[:500], actor
     learned = screen.learn(s, o.review_note, clip.id) if teach else {}  # "too short", "boring", "no context": the next clips are cut to it
     audit(s, "output.rejected", "clip_output", oid, {"by": actor, "clip": clip.id, "reason": o.review_note, "learned": learned})
+    if teach:  # into the Obsidian vault, when one is connected (never fails the review)
+        from . import obsidian
+        obsidian.feedback(s, title=clip.title if clip else "", page=(o.destination.display_name or o.destination.handle) if o.destination else o.platform,
+                          decision=f"rejected by {actor}", note=o.review_note, changed=learned)
     return o
 
 
