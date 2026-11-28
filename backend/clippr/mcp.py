@@ -462,6 +462,13 @@ def create_app(ctx) -> FastAPI:
 
     from starlette.concurrency import run_in_threadpool
 
+    @app.get("/companion/ping")
+    async def companion_ping(request: Request):
+        """No token and no data: lets the extension tell "can't reach Vyral" apart from a wrong token or address."""
+        if request.headers.get("host", "").split(":")[0] not in ("127.0.0.1", "localhost", getattr(ctx.mcp, "host", "")):
+            return JSONResponse({"error": "Forbidden host"}, status_code=421)
+        return JSONResponse({"ok": True, "app": "vyral"})
+
     @app.get("/companion/next")
     async def companion_next(request: Request):
         if (bad := allowed(request)):
@@ -602,6 +609,9 @@ class Server:
             sock.close()
             self.error = (f"Port {cfg.mcp_port} is already in use ({e.strerror}); the MCP server for Muse is off. Pick another port in Settings."
                           if e.errno in (48, 98, 10048) else
+                          # Windows (Hyper-V, WSL, Docker) can reserve port ranges: binding then fails with "access denied"
+                          f"Windows has reserved port {cfg.mcp_port} for something else ({e.strerror}); the bridge is off. Pick another port in Settings."
+                          if e.errno in (10013, 13) and cfg.mcp_host == "127.0.0.1" else
                           f"Can't listen on {cfg.mcp_host} ({e.strerror}): is Tailscale running and is that this computer's Tailscale address?")
             log.error("MCP server not started: %s", self.error)
             return
@@ -622,6 +632,11 @@ class Server:
             if self.server.started or not self.thread.is_alive():
                 break
             threading.Event().wait(0.05)
+        if not self.server.started:  # it stopped (or never came up): don't report it as running
+            self.server.should_exit = True
+            self.server, self.error = None, f"The bridge didn't start on {cfg.mcp_host}:{cfg.mcp_port}; see logs/clippr.log, or try another port in Settings."
+            log.error("MCP server not started: %s", self.error)
+            return
         self.port, self.host, self.error = cfg.mcp_port, cfg.mcp_host, None
         log.info("MCP server for Muse on http://%s:%s/mcp", cfg.mcp_host, cfg.mcp_port)
 

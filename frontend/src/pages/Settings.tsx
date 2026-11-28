@@ -6,7 +6,7 @@ import { DropboxSettings } from "../components/DropboxSettings";
 import { MusePosting } from "../components/MusePosting";
 import { ObsidianSettings } from "../components/ObsidianSettings";
 import { api, type AppSettings, type Learned, type NotifyCategory, type NotifyState } from "../lib/api";
-import { ErrorNote, Loading, relTime, Toggle, useToast } from "../components/ui";
+import { bytes, ErrorNote, Loading, relTime, Toggle, useToast } from "../components/ui";
 
 type Tab = "general" | "muse" | "dropbox" | "obsidian" | "notifications" | "security" | "shortcuts";
 
@@ -137,6 +137,7 @@ function General() {
           <div className="row"><input id="mediaf" className="input" style={{ flex: 1 }} value={s.storage.media_folder} placeholder="Vyral's own data folder" onChange={(e) => up("storage", { media_folder: e.target.value })} />
             <ChooseFolder onPick={(p) => up("storage", { media_folder: p })} /></div>
           <span className="hint">A full folder path with room for your clips. Clips already made stay where they are.</span></div>
+        <DataLocation />
       </div>
 
       <div className="row" style={{ position: "sticky", bottom: 12 }}>
@@ -401,6 +402,36 @@ function SoundChoice({ value, onChange }: { value: string; onChange: (v: string)
   );
 }
 
+/** Where all of Vyral's own data lives (database, clips, models, logs, the extension), and moving it to another drive. */
+function DataLocation() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["storage-location"], queryFn: api.storageLocation });
+  const [to, setTo] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!data) return null;
+  const move = async () => {
+    if (!window.confirm(`Move all of Vyral's data to ${to}? It's copied the next time Vyral starts, then the old folder is deleted.`)) return;
+    setBusy(true);
+    try { const r = await api.moveData(to); toast("ok", `Will move to ${r.path}. Quit Vyral from its tray icon and open it again to move now.`); qc.invalidateQueries({ queryKey: ["storage-location"] }); }
+    catch (e) { toast("err", e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="field"><label htmlFor="movef">Storage location</label>
+      <div className="small">Vyral's data folder: <span className="mono">{data.data_dir}</span> ({bytes(data.disk_free_bytes)} free on that drive)</div>
+      {data.pending && <div className="small" style={{ color: "var(--warn)" }}>Moving to <span className="mono">{data.pending}</span> the next time Vyral starts. Quit Vyral from its tray icon and open it again.</div>}
+      {data.error && <div className="small" style={{ color: "var(--err)" }}>{data.error}</div>}
+      {data.env_override ? <span className="hint">Fixed by CLIPPR_DATA_DIR on this computer.</span> : <>
+        <div className="row"><input id="movef" className="input" style={{ flex: 1 }} value={to} placeholder={"D:\\Vyral"} onChange={(e) => setTo(e.target.value)} />
+          <ChooseFolder onPick={setTo} />
+          <button type="button" className="btn" disabled={!to.trim() || busy} onClick={move}>{busy && <span className="spinner" />}Move Vyral's data</button></div>
+        <span className="hint">Everything Vyral keeps (clips, database, speech models, downloads in progress, logs, the Chrome extension folder) moves to this folder.
+          After moving, load the extension again from its new folder (Chrome extension card). The program itself is chosen when installing.</span></>}
+    </div>
+  );
+}
+
 /** Opens this computer's own folder picker (through the Vyral service) and fills the field with the folder chosen. */
 function ChooseFolder({ onPick }: { onPick: (path: string) => void }) {
   const toast = useToast();
@@ -561,6 +592,7 @@ function CompanionCard() {
   const { data, error } = useQuery({ queryKey: ["companion"], queryFn: api.companion, refetchInterval: 20000 });
   const folder = async () => { try { await api.companionFolder(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } };
   const on = !!data?.connected;
+  const bridge = useQuery({ queryKey: ["bridge"], queryFn: api.bridge, refetchInterval: 20000 }).data?.mcp;
   return (
     <div className="card stack" style={{ maxWidth: 820, marginTop: 16 }}>
       <h2>Chrome extension: Vyral Companion</h2>
@@ -571,6 +603,9 @@ function CompanionCard() {
           <span className="small muted">{on ? `Version ${data?.version}${data?.enabled ? ", posting on" : ", posting off (tick Post approved videos in the extension)"}`
             : data?.last_seen ? `Last heard from ${relTime(data.last_seen)}` : "Not heard from since Vyral started"}</span>
         </div>)}
+      {bridge && <div className="small" data-testid="companion-bridge">In the extension's options use address <span className="mono">http://127.0.0.1:{bridge.port ?? new URL(bridge.url).port}</span> and
+        the bridge token from Muse &amp; posting. Bridge: {!bridge.enabled ? <strong style={{ color: "var(--err)" }}>off (turn it on in Muse &amp; posting)</strong>
+          : bridge.running ? <strong style={{ color: "var(--ok)" }}>running</strong> : <strong style={{ color: "var(--err)" }}>not running{bridge.error ? `: ${bridge.error}` : ""}</strong>}</div>}
       {data && data.accounts.length > 0 && (
         <div className="stack" style={{ gap: 6 }}>
           {data.accounts.map((a) => (

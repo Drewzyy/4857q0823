@@ -58,7 +58,7 @@ export interface AppSettings {
   obsidian: { vault: string };
   posting: { auto_post_kill_switch: boolean; open_sites_on_start: boolean; mcp_enabled: boolean; mcp_host: string; mcp_port: number; min_virality: number; spacing_minutes: number; per_streamer_day: number; post_from: number; post_until: number };
 }
-export interface Bridge { mcp: { running: boolean; port: number | null; error: string | null; enabled: boolean; url: string; token: string } }
+export interface Bridge { mcp: { running: boolean; port: number | null; error: string | null; enabled: boolean; url: string; host: string; token: string } }
 export interface RefPost {
   queue_position?: number | null;
   id: number; platform: string; url: string; title: string; thumbnail_url: string | null; posted_at: string | null;
@@ -240,6 +240,8 @@ export const api = {
   deleteDestination: (id: number) => request<void>("DELETE", `/destinations/${id}`),
   settings: () => request<AppSettings>("GET", "/settings"),
   bridge: () => request<Bridge>("GET", "/bridge"),
+  storageLocation: () => request<{ data_dir: string; disk_free_bytes: number; pending: string | null; error: string | null; env_override: boolean }>("GET", "/storage/location"),
+  moveData: (path: string) => request<{ ok: true; path: string }>("POST", "/storage/move", { path }),
   pickFolder: () => request<{ path: string | null }>("POST", "/pick-folder"),
   restartBridge: () => request<Bridge["mcp"]>("POST", "/bridge/restart"),
   review: (oid: number, b: { decision: "approve" | "reject"; reason?: string; watched?: boolean; caption?: string }) =>

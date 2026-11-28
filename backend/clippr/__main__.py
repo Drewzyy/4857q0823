@@ -119,14 +119,18 @@ def main() -> None:
 
     if args.parent_pid:
         threading.Thread(target=_watch_parent, args=(args.parent_pid,), daemon=True).start()
-    if args.data_dir:
-        os.environ["CLIPPR_DATA_DIR"] = args.data_dir
+    if args.data_dir:  # the desktop app's folder; a folder chosen with "Move Vyral's data" still wins
+        os.environ["CLIPPR_BASE_DATA_DIR"] = args.data_dir
     import uvicorn
 
     from clippr.app import create_app
     from clippr.config import Config
 
+    from clippr.config import apply_pending_move, use_data_dir_for_temp
+
+    apply_pending_move()
     cfg = Config(port=args.port)
+    use_data_dir_for_temp(cfg.data_dir)
     if args.frontend:
         cfg.frontend_dist = Path(args.frontend).resolve()
     else:

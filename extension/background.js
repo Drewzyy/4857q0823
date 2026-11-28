@@ -8,8 +8,14 @@ async function settings() {
 }
 
 async function call(cfg, path, init = {}) {
-  const r = await fetch(cfg.address.replace(/\/$/, "") + path, {
-    ...init, headers: { Authorization: "Bearer " + cfg.token, "Content-Type": "application/json", ...(init.headers || {}) } });
+  let r;
+  try {
+    r = await fetch(cfg.address.replace(/\/$/, "") + path, {
+      ...init, headers: { Authorization: "Bearer " + cfg.token, "Content-Type": "application/json", ...(init.headers || {}) } });
+  } catch (e) {
+    throw new Error(`${e.message} at ${cfg.address}. Is Vyral open, with the bridge on in Settings › Muse & posting on that port?`);
+  }
+  if (r.status === 401) throw new Error("wrong token. Paste the bridge token from Vyral › Settings › Muse & posting.");
   if (!r.ok) throw new Error(`Vyral said ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return r.json();
 }

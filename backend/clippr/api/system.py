@@ -193,6 +193,57 @@ def audit_log(limit: int = 100, s: Session = Depends(db)):
     return [{"id": a.id, "ts": a.ts.isoformat(), "action": a.action, "entity": a.entity, "entity_id": a.entity_id, "details": a.details} for a in rows]
 
 
+@router.get("/storage/location")
+def storage_location(c=Depends(ctx)):
+    from ..config import read_location
+
+    loc = read_location()
+    return {"data_dir": str(c.config.data_dir), "disk_free_bytes": shutil.disk_usage(c.config.data_dir).free,
+            "pending": loc.get("path") if loc.get("move_from") and not loc.get("error") else None,
+            "error": loc.get("error"), "env_override": bool(os.environ.get("CLIPPR_DATA_DIR"))}
+
+
+def check_move_target(raw: str, current: Path, needed: int) -> Path:
+    """Where the data would go; raises ApiError with what's wrong with the folder."""
+    raw = (raw or "").strip()
+    if not raw or not Path(raw).is_absolute():
+        raise ApiError(422, "folder", "Give a full folder path, like D:\\Vyral")
+    target = Path(raw)
+    if target.exists() and not target.is_dir():
+        raise ApiError(422, "folder", f"{target} is a file, not a folder")
+    if target.is_dir() and any(target.iterdir()):
+        target = target / "Vyral"  # e.g. D:\ chosen: keep Vyral's files together in their own folder
+        if target.exists() and (not target.is_dir() or any(target.iterdir())):
+            raise ApiError(422, "folder", f"{target} already has files in it. Choose an empty or new folder.")
+    cur, tgt = current.resolve(), target.resolve()
+    if tgt == cur or tgt.is_relative_to(cur):
+        raise ApiError(422, "folder", "That folder is inside Vyral's current data folder. Choose one outside it.")
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        (target / ".vyral-write-test").write_bytes(b"")
+        (target / ".vyral-write-test").unlink()
+    except OSError as e:
+        raise ApiError(422, "folder", f"Vyral can't write to {target} ({e.strerror or e})")
+    free = shutil.disk_usage(target).free
+    if free < needed:
+        raise ApiError(422, "space", f"Not enough room on that drive: Vyral's data needs about {needed // 2**20} MB, {free // 2**20} MB is free.")
+    return target
+
+
+@router.post("/storage/move")
+def move_data(body: dict, c=Depends(ctx), s: Session = Depends(db)):
+    """Moves everything at the next start: the folder is checked now, the copy happens before the database opens."""
+    from ..config import write_location
+
+    if os.environ.get("CLIPPR_DATA_DIR"):
+        raise ApiError(409, "env", "The data folder is fixed by CLIPPR_DATA_DIR on this computer; change that instead.")
+    current = c.config.data_dir
+    target = check_move_target(str(body.get("path", "")), current, int(_dir_size(current) * 1.1) + 200 * 2**20)
+    write_location({"path": str(target), "move_from": str(current)})
+    audit(s, "storage.move_requested", "settings", "", {"to": str(target)})
+    return {"ok": True, "path": str(target)}
+
+
 @router.post("/pick-folder")
 def pick_folder():
     """Opens this computer's own folder picker (Finder on a Mac, File Explorer on Windows) and returns the folder

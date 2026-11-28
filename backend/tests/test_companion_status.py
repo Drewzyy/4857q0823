@@ -64,3 +64,14 @@ def test_extension_folder_copied_only_when_the_version_changes(tmp_path, monkeyp
     assert sorted(p.name for p in data.iterdir()) == ["chrome-extension"]  # no temp or old copies left behind
     monkeypatch.setattr(companion, "extension_dir", lambda: None)
     assert not companion.install(data)["copied"] and companion.bundled_version() is None
+
+
+def test_ping_needs_no_token_but_everything_else_still_does(ctx):
+    from fastapi.testclient import TestClient
+    mc = TestClient(mcp.create_app(ctx), base_url="http://127.0.0.1:47821")
+    assert mc.get("/companion/ping").json() == {"ok": True, "app": "vyral"}
+    assert mc.get("/companion/ping", headers={"Host": "evil.com"}).status_code == 421
+    for method, path in (("get", "/companion/next"), ("get", "/companion/accounts"), ("post", "/companion/status"),
+                         ("get", "/companion/video/1"), ("post", "/companion/result")):
+        assert getattr(mc, method)(path, headers={"Authorization": "Bearer wrong"}).status_code == 401, path
+    assert mc.get("/companion/accounts", headers={"Authorization": f"Bearer {mcp.token(ctx)}"}).status_code == 200
