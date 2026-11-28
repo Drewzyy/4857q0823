@@ -28,7 +28,7 @@ from .media.ffmpeg import FFmpegError, probe, run, scene_cuts
 from .media.overlay import Word
 from .media.render import Layer, OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
-from .models import AuditLog, Clip, ClipOutput, Creator, DestinationAccount, Job, LongformVideo, MediaItem, MetricSnapshot, ReferenceVideo, SourceAccount, VodAsset
+from .models import AuditLog, Clip, ClipOutput, Creator, DestinationAccount, Job, LongformVideo, MediaItem, MetricSnapshot, ReferenceVideo, Setting, SourceAccount, VodAsset
 from .routing import destination_creator_ids, for_kind, pages_for, source_creator_ids
 from .schemas import VIDEO_HEIGHT, ClipEdit, OverlaySettings, lenient
 
@@ -1297,17 +1297,41 @@ class Pipeline:
             for clip in s.scalars(select(Clip).where(Clip.status == "ready", ~has, Clip.expires_at > now())):
                 if not clip.source_path or not Path(clip.source_path).exists():
                     continue
-                dests = pages_for(s, {clip.creator_id}) if clip.creator_id else \
-                    [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()]
-                own = (clip.creator.content_kind if clip.creator else "") or "regular"
-                found = clip.content or {}
-                dests = for_kind(dests, found["page_kind"] if found.get("confidence", 0) >= 0.6 else own, own)
-                for d in dests:
+                for d in self._pages_of(s, clip):
                     restored.append(self._add_output(s, clip, d).id)
             if restored:
                 self.ctx.jobs.enqueue("clip.rerender", {"output_ids": restored}, max_attempts=1, session=s)
                 log.warning("restoring %d page videos lost in an earlier update", len(restored))
-        return {"restored": len(restored)}
+        return {"restored": len(restored), **self.backfill_general_pages()}
+
+    BACKFILL_KEY = "routing.general_pages_backfilled"
+
+    def backfill_general_pages(self) -> dict:
+        """Once: waiting clips (none of their videos posted) get the pages today's routing gives them but they lack,
+        like gaming clips that only went to the gaming page and not the general clips page."""
+        added = []
+        with self.ctx.db.session() as s:
+            if s.get(Setting, self.BACKFILL_KEY):
+                return {"backfilled": 0}
+            posted = select(ClipOutput.id).where(ClipOutput.clip_id == Clip.id, ClipOutput.status == "uploaded").exists()
+            for clip in s.scalars(select(Clip).where(Clip.status == "ready", ~posted, Clip.expires_at > now())):
+                if not clip.source_path or not Path(clip.source_path).exists():
+                    continue
+                has = {o.destination_id for o in s.scalars(select(ClipOutput).where(ClipOutput.clip_id == clip.id))}  # a withdrawn page stays off
+                added += [self._add_output(s, clip, d).id for d in self._pages_of(s, clip) if d.id not in has]
+            if added:
+                self.ctx.jobs.enqueue("clip.rerender", {"output_ids": added}, max_attempts=1, session=s)
+            s.add(Setting(key=self.BACKFILL_KEY, value={"added": len(added), "at": now().isoformat()}))
+        return {"backfilled": len(added)}
+
+    @staticmethod
+    def _pages_of(s, clip: Clip) -> list[DestinationAccount]:
+        """The pages a clip goes to: its streamer's pages, picked by the clip's kind (else the streamer's)."""
+        dests = pages_for(s, {clip.creator_id}) if clip.creator_id else \
+            [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()]
+        own = (clip.creator.content_kind if clip.creator else "") or "regular"
+        found = clip.content or {}
+        return for_kind(dests, found["page_kind"] if found.get("confidence", 0) >= 0.6 else own, own)
 
     @staticmethod
     def _add_output(s, clip: Clip, d: DestinationAccount, **fields) -> ClipOutput:

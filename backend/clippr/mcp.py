@@ -480,6 +480,24 @@ def create_app(ctx) -> FastAPI:
         job = await run_in_threadpool(find)
         return JSONResponse({"job": job, "why": None if job else (why[0] if why else "no approved videos waiting to post")})
 
+    @app.get("/companion/wait")
+    async def companion_wait(request: Request, timeout: float = 25):
+        """Long poll: answers as soon as a video is due (checked every second), else after `timeout` seconds, so your
+        Approve starts posting within seconds."""
+        if (bad := allowed(request)):
+            return bad
+        import asyncio
+        import time
+        why: list[str] = []
+        def find():
+            why.clear()
+            with ctx.db.session() as s:
+                return companion.next_job(s, why)
+        until = time.monotonic() + min(max(timeout, 0.0), 25.0)
+        while not (job := await run_in_threadpool(find)) and time.monotonic() < until:
+            await asyncio.sleep(1)
+        return JSONResponse({"job": job, "why": None if job else (why[0] if why else "no approved videos waiting to post")})
+
     @app.get("/companion/accounts")
     async def companion_accounts(request: Request):
         if (bad := allowed(request)):

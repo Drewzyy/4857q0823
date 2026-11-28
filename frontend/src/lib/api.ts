@@ -245,7 +245,9 @@ export const api = {
   pickFolder: () => request<{ path: string | null }>("POST", "/pick-folder"),
   restartBridge: () => request<Bridge["mcp"]>("POST", "/bridge/restart"),
   review: (oid: number, b: { decision: "approve" | "reject"; reason?: string; watched?: boolean; caption?: string }) =>
-    request<{ review: string }>("POST", `/outputs/${oid}/review`, b),
+    request<{ review: string; message: string | null }>("POST", `/outputs/${oid}/review`, b),
+  addPage: (clipId: number, destination_id: number) => request<{ output_id: number; added: boolean }>("POST", `/clips/${clipId}/pages`, { destination_id }),
+  removePage: (clipId: number, destId: number) => request<{ removed: number }>("DELETE", `/clips/${clipId}/pages/${destId}`),
   saveSettings: (b: Partial<{ [K in keyof AppSettings]: Partial<AppSettings[K]> }>) => request<AppSettings>("PUT", "/settings", b),
   audit: () => request<AuditEntry[]>("GET", "/audit"),
   clips: (status: "ready" | "uploaded" | "expired" | "all") => request<ClipT[]>("GET", `/clips?status=${status}`),

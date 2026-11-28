@@ -165,6 +165,7 @@ p { margin: 0; }
 .plat.twitch { background: #6d3fc0; }
 .plat.meta { background: #2d63c8; }
 .avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--card-3); flex: none; }
+.page-pick .avatar, .page-pick .plat { width: 18px; height: 18px; }
 
 /* ---------- table ---------- */
 .table { width: 100%; border-collapse: collapse; }

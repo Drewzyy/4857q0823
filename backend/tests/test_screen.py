@@ -692,3 +692,112 @@ def test_vyral_opens_the_upload_page_of_each_site_you_post_to(ctx, tmp_path, mon
     with ctx.db.session() as s:
         assert companion.open_sites(s) == [companion.UPLOAD_PAGES["tiktok"]]
     assert opened == [companion.UPLOAD_PAGES["tiktok"]]
+
+
+def _pages_and_gaming_clip(ctx, tmp_path, posted=False):
+    from clippr.models import Creator
+    with ctx.db.session() as s:
+        cr = Creator(name="Kai", content_kind="gaming", clip_permission=True)
+        s.add(cr)
+        s.flush()
+        games = DestinationAccount(platform="tiktok", external_id="g", handle="@vyralgames7", display_name="Games", creator_ids=[cr.id], settings={"content_kinds": ["gaming"]})
+        clips = DestinationAccount(platform="tiktok", external_id="c", handle="@vyralclips19", display_name="Clips", creator_ids=[cr.id], settings={"content_kinds": ["regular"]})
+        pods = DestinationAccount(platform="instagram", external_id="p", handle="@vyralpods", display_name="Pods", creator_ids=[cr.id], settings={"content_kinds": ["podcast"]})
+        s.add_all([games, clips, pods])
+        s.flush()
+        (tmp_path / "src.mp4").write_bytes(b"x")
+        c = Clip(expires_at=datetime.now(timezone.utc) + timedelta(days=9), files_dir=str(tmp_path), title="Kai clutch", creator_id=cr.id,
+                 source_path=str(tmp_path / "src.mp4"), content={"kind": "gaming", "page_kind": "gaming", "confidence": 0.9})
+        s.add(c)
+        s.flush()
+        s.add(ClipOutput(clip_id=c.id, destination_id=games.id, platform="tiktok", status="uploaded" if posted else "ready"))
+        return c.id, games.id, clips.id, pods.id
+
+
+def test_gaming_clips_also_go_to_the_general_page_and_waiting_ones_are_backfilled_once(ctx, tmp_path):
+    cid, games, clips, pods = _pages_and_gaming_clip(ctx, tmp_path)
+    assert ctx.pipeline.backfill_general_pages() == {"backfilled": 1}
+    with ctx.db.session() as s:
+        assert sorted(o.destination_id for o in s.query(ClipOutput).filter_by(clip_id=cid)) == sorted([games, clips])  # not the podcast page
+        s.query(ClipOutput).filter_by(clip_id=cid, destination_id=clips).delete()
+    assert ctx.pipeline.backfill_general_pages() == {"backfilled": 0}  # once only: your later choices stay
+
+
+def test_backfill_leaves_posted_clips_alone(ctx, tmp_path):
+    cid, *_ = _pages_and_gaming_clip(ctx, tmp_path, posted=True)
+    assert ctx.pipeline.backfill_general_pages() == {"backfilled": 0}
+
+
+def test_ticking_and_unticking_a_page_in_ready(ctx, client, tmp_path):
+    cid, games, clips, pods = _pages_and_gaming_clip(ctx, tmp_path)
+    r = client.post(f"/api/clips/{cid}/pages", json={"destination_id": pods}).json()
+    assert r["added"] and client.post(f"/api/clips/{cid}/pages", json={"destination_id": pods}).json() == {"output_id": r["output_id"], "added": False}
+    with ctx.db.session() as s:
+        assert s.get(ClipOutput, r["output_id"]).render_state == "rendering"
+    assert client.delete(f"/api/clips/{cid}/pages/{pods}").json() == {"removed": 1}
+    with ctx.db.session() as s:
+        assert s.get(ClipOutput, r["output_id"]).status == "withdrawn"
+        s.query(ClipOutput).filter_by(clip_id=cid, destination_id=games).one().status = "uploaded"
+    assert client.delete(f"/api/clips/{cid}/pages/{games}").status_code == 409  # already posted there
+    assert client.post(f"/api/clips/{cid}/pages", json={"destination_id": 999}).status_code == 404
+
+
+def _due(ctx, tmp_path, monkeypatch, by):
+    ids = _clip(ctx, tmp_path, n=1)
+    with ctx.db.session() as s:
+        o = s.query(ClipOutput).one()
+        c = s.get(Clip, o.clip_id)
+        c.grade, c.safety = {"score": 80, "screen": {"pass": True}}, {"status": "pass"}
+        o.render_state, o.quality, o.reviewed_by = "ready", {"status": "pass"}, by
+        o.destination.settings = {"daily_cap": 1}
+        # The page already posted today and the posting hours are closed: only your own approval goes out anyway.
+        s.add(ClipOutput(clip_id=ids[0], destination_id=o.destination_id, platform="tiktok", status="uploaded", uploaded_at=datetime.now(timezone.utc)))
+    monkeypatch.setattr("clippr.media.ffmpeg.probe", lambda p: type("I", (), {"duration": 40.0})())
+    monkeypatch.setattr("clippr.posting.in_window", lambda when, cfg: when + timedelta(hours=5))
+
+
+def test_your_approval_posts_now_and_presses_post(ctx, tmp_path, monkeypatch):
+    from clippr import companion
+    _due(ctx, tmp_path, monkeypatch, "you")
+    with ctx.db.session() as s:
+        job = companion.next_job(s)
+    assert job and job["auto"] is True
+
+
+def test_muse_approvals_keep_the_hours_spacing_and_cap(ctx, tmp_path, monkeypatch):
+    from clippr import companion
+    _due(ctx, tmp_path, monkeypatch, "muse")
+    with ctx.db.session() as s:
+        why = []
+        assert companion.next_job(s, why) is None and "already has its 1 posts today" in why[0]
+        s.query(DestinationAccount).one().settings = {"daily_cap": 5}
+        why = []
+        assert companion.next_job(s, why) is None and "next post time" in why[0]
+
+
+def test_companion_wait_answers_at_once_when_a_video_is_due_else_times_out(ctx, tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from clippr import mcp
+    api = TestClient(mcp.create_app(ctx), base_url="http://127.0.0.1:47821")
+    tok = {"Authorization": f"Bearer {mcp.token(ctx)}"}
+    assert api.get("/companion/wait?timeout=0").status_code == 401
+    t = time.monotonic()
+    assert api.get("/companion/wait?timeout=1.5", headers=tok).json()["job"] is None and time.monotonic() - t >= 1.4
+    _due(ctx, tmp_path, monkeypatch, "you")
+    t = time.monotonic()
+    assert api.get("/companion/wait?timeout=20", headers=tok).json()["job"]["auto"] and time.monotonic() - t < 5
+
+
+def test_approve_says_posting_now_and_the_uploaded_list_feeds_the_ping(ctx, client, tmp_path, monkeypatch):
+    _clip(ctx, tmp_path, n=1)
+    with ctx.db.session() as s:
+        o = s.query(ClipOutput).one()
+        c = s.get(Clip, o.clip_id)
+        c.grade, c.safety = {"score": 80, "screen": {"pass": True}}, {"status": "pass"}
+        o.render_state, o.quality, o.review, oid = "ready", {"status": "pass"}, "pending", o.id
+    r = client.post(f"/api/outputs/{oid}/review", json={"decision": "approve", "watched": True}).json()
+    assert r["message"] == "Posting now to My page"
+    client.patch(f"/api/outputs/{oid}", json={"status": "uploaded"})
+    up = client.get("/api/clips?status=uploaded").json()[0]["outputs"][0]
+    assert up["status"] == "uploaded" and up["destination"]["display_name"] == "My page"

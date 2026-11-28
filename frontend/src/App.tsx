@@ -1,6 +1,6 @@
 import LongformPage from "./pages/Longform";
 import CampaignsPage from "./pages/Campaigns";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./lib/api";
@@ -16,11 +16,46 @@ import UpdateBanner from "./components/UpdateBanner";
 import UpdateNow from "./components/UpdateNow";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import EditorPage from "./pages/Editor";
+import { useToast } from "./components/ui";
 
 const PAGES: Record<string, JSX.Element> = {
   "/": <Dashboard />, "/ready": <Ready />, "/activity": <ActivityPage />, "/sources": <Sources />, "/destinations": <Destinations />,
   "/settings": <SettingsPage />, "/analytics": <AnalyticsPage />, "/editor": <EditorPage />, "/longform": <LongformPage />, "/campaigns": <CampaignsPage />,
 };
+
+/** A short "ding" (two sine tones), made in code: no sound file to ship. Browsers allow it after you've clicked the app. */
+function ding() {
+  try {
+    const ac = new AudioContext();
+    for (const [f, at] of [[880, 0], [1320, 0.12]] as const) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, ac.currentTime + at);
+      g.gain.exponentialRampToValueAtTime(0.3, ac.currentTime + at + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + at + 0.5);
+      o.connect(g).connect(ac.destination); o.start(ac.currentTime + at); o.stop(ac.currentTime + at + 0.55);
+    }
+    setTimeout(() => void ac.close(), 1000);
+  } catch { /* no audio here: the toast still shows */ }
+}
+
+/** Pings when a video goes out (the extension posted it, Muse reported it or you saved its link). */
+function PostedPing() {
+  const toast = useToast();
+  const seen = useRef<Set<number> | null>(null);
+  const { data } = useQuery({ queryKey: ["posted-ping"], queryFn: () => api.clips("uploaded"), refetchInterval: 10_000 });
+  useEffect(() => {
+    if (!data) return;
+    const up = data.flatMap((c) => c.outputs.filter((o) => o.status === "uploaded"));
+    if (seen.current) {
+      const fresh = up.filter((o) => !seen.current!.has(o.id));
+      if (fresh.length) ding();
+      for (const o of fresh) toast("ok", `Posted to ${o.destination?.display_name || o.destination?.handle || o.platform}`);
+    }
+    seen.current = new Set(up.map((o) => o.id));
+  }, [data, toast]);
+  return null;
+}
 
 export default function App() {
   const nav = useNavigate();
@@ -69,6 +104,7 @@ export default function App() {
       </aside>
       <main className="main">
         <UpdateBanner />
+        <PostedPing />
         <Routes>
           {MODULES.map((m) => (
             <Route key={m.path} path={m.path} element={PAGES[m.path] ?? <Planned module={m} />} />

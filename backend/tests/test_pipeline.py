@@ -867,12 +867,12 @@ def test_page_videos_lost_in_an_update_are_restored_from_the_kept_footage(env):
     with ctx.db.session() as s:  # what the bad update did
         s.query(ClipOutput).delete()
     assert c.get("/api/clips").json() == [] and c.get("/api/clips?status=all").json()[0]["outputs"] == []  # gone from Ready
-    assert ctx.pipeline.restore_lost_outputs() == {"restored": len(before["outputs"])}
+    assert ctx.pipeline.restore_lost_outputs()["restored"] == len(before["outputs"])
     drain(ctx)
     after = c.get("/api/clips").json()[0]["outputs"]
     assert sorted(o["platform"] for o in after) == sorted(o["platform"] for o in before["outputs"])
     assert all(o["render_state"] == "ready" and o["available"] for o in after)
-    assert ctx.pipeline.restore_lost_outputs() == {"restored": 0}  # nothing more to do
+    assert ctx.pipeline.restore_lost_outputs()["restored"] == 0  # nothing more to do
 
 
 def test_database_updates_never_cascade_deletes():

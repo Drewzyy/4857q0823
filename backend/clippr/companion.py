@@ -6,6 +6,8 @@ It asks Vyral, through the Muse bridge (same address and token), for the next vi
 - for a TikTok, Instagram or YouTube page;
 - its time has come: the page's spacing since its last post and inside your posting hours (posting.package);
 - the page hasn't reached its daily cap (Destinations > page > Auto-post daily cap).
+Your own Approve skips the posting hours, spacing and daily cap: it goes out right away, and the extension presses
+Post itself. Muse's and Vyral's approvals keep all the rules.
 Then it opens that site's upload page, puts the video in and fills in the caption (and the title on YouTube).
 
 Who presses Post: you, unless the page's Auto-post is on (unlocked after 5 reviewed posts on it), the kill switch
@@ -63,7 +65,8 @@ def next_job(s: Session, why: list[str] | None = None) -> dict | None:
             why.append(f"scheduled for {o.scheduled_at:%b %d %H:%M} UTC")
             continue
         st = dict(o.destination.settings or {}) if o.destination else {}
-        if o.destination_id and _posted_today(s, o.destination_id) >= int(st.get("daily_cap", 3)):
+        yours = o.reviewed_by == "you"  # your Approve means post now: no posting hours, spacing or daily cap
+        if not yours and o.destination_id and _posted_today(s, o.destination_id) >= int(st.get("daily_cap", 3)):
             why.append(f"{o.destination.handle} already has its {int(st.get('daily_cap', 3))} posts today")
             continue
         try:
@@ -71,10 +74,11 @@ def next_job(s: Session, why: list[str] | None = None) -> dict | None:
         except posting.PostingError as e:
             why.append(str(e))
             continue
-        if datetime.fromisoformat(pkg["post_after"]) > now:
+        if not yours and datetime.fromisoformat(pkg["post_after"]) > now:
             why.append(f"next post time {pkg['post_after']} (posting hours and spacing, Settings)")
             continue
-        auto = bool(st.get("auto_post")) and not cfg.auto_post_kill_switch and (clip.safety or {}).get("status") == "pass"
+        # Your Approve is your go-ahead to press Post; any login, captcha or check still stops it and asks you.
+        auto = yours or bool(st.get("auto_post")) and not cfg.auto_post_kill_switch and (clip.safety or {}).get("status") == "pass"
         return {**pkg, "upload_page": UPLOAD_PAGES[o.platform], "video": f"/companion/video/{o.id}", "auto": auto,
                 "handle": o.destination.handle if o.destination else ""}
     return None

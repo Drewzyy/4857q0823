@@ -192,7 +192,7 @@ function PostingFields({ s, setS }: { s: DestinationSettings; setS: (v: Destinat
         <div className="row wrap" style={{ gap: 12 }}>{KINDS.map(([k, l]) => (
           <label key={k} className="check"><input type="checkbox" checked={kinds.includes(k)}
             onChange={(e) => setS({ ...s, content_kinds: e.target.checked ? [...kinds, k] : kinds.filter((x) => x !== k) })} />{l}</label>))}</div>
-        <span className="hint">A streamer's clips are regular, gaming or podcast (set on the streamer under Source Accounts). This page only gets the kinds ticked here.</span></div>
+        <span className="hint">A streamer's clips are regular, gaming or podcast (set on the streamer under Source Accounts). This page only gets the kinds ticked here. A page taking regular clips gets gaming clips too: untick Regular to keep them off.</span></div>
       <div className="row wrap" style={{ gap: 12 }}>
         <Toggle label="Auto-post" checked={s.auto_post} onChange={(v) => setS({ ...s, auto_post: v })} />
         <span className="small">Auto-post: Muse may post approved clips that passed the safety check without asking you first</span>

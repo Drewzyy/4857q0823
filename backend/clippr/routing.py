@@ -1,7 +1,9 @@
 """Which pages a clip goes to: each page lists the streamers whose clips it takes (set from either side: a
 streamer's "Post to" list or a page's streamer list), and the kinds of clips it takes (regular, gaming, podcast).
 A clip's kind is detected from the clip itself (content.py), falling back to the streamer's kind (Source Accounts)
-when that isn't clear. A clip goes to every enabled page that lists its streamer and its kind.
+when that isn't clear. A clip goes to every enabled page that lists its streamer and its kind. Gaming clips are
+clips too: a general page (one taking regular clips) also gets them, so a gaming page never ends up their only home.
+To keep gaming clips off a page, untick Regular there (tick only Gaming or Podcast).
 A page with no streamers listed gets no streamer's clips.
 
 Default kinds for the pages Vyral was set up with (changeable per page in its settings): @vyralclips19 (TikTok)
@@ -43,10 +45,15 @@ def page_kinds(dest: DestinationAccount) -> list[str]:
     return list((dest.settings or {}).get("content_kinds") or KINDS)
 
 
+def fits(kinds, kind: str) -> bool:
+    """Whether a page taking these kinds takes a clip of this kind (general pages take gaming clips too)."""
+    return kind in kinds or (kind == "gaming" and "regular" in kinds)
+
+
 def pages_for(s: Session, creator_ids: set[int], kind: str | None = None) -> list[DestinationAccount]:
     """Enabled pages that take clips of any of these streamers; with kind, only pages taking that kind of clip."""
     return [d for d in s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True))).unique()
-            if takes(d, creator_ids) and (kind is None or kind in page_kinds(d)) and not (d.settings or {}).get("feeds_from")]  # fed pages get only the best
+            if takes(d, creator_ids) and (kind is None or fits(page_kinds(d), kind)) and not (d.settings or {}).get("feeds_from")]  # fed pages get only the best
 
 
 def for_kind(pages: list, kind: str, fallback: str) -> list:
@@ -55,4 +62,4 @@ def for_kind(pages: list, kind: str, fallback: str) -> list:
     def kinds(p) -> list[str]:
         st = p[4] if isinstance(p, tuple) else (p.settings or {})
         return list(st.get("content_kinds") or KINDS)
-    return [p for p in pages if kind in kinds(p)] or [p for p in pages if fallback in kinds(p)] or pages
+    return [p for p in pages if fits(kinds(p), kind)] or [p for p in pages if fits(kinds(p), fallback)] or pages

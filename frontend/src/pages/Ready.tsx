@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, CheckCircle2, Clapperboard, Clock, Copy, Download, ExternalLink, FolderDown, Play, Trash2, Type, Undo2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api, PLATFORM_LABEL, type ClipOutputT, type ClipT } from "../lib/api";
-import { bytes, ConfirmModal, Empty, ErrorNote, Loading, PlatformBadge, relTime, useToast } from "../components/ui";
+import { Avatar, bytes, ConfirmModal, Empty, ErrorNote, Loading, PlatformBadge, relTime, useToast } from "../components/ui";
 import { GradeBadge } from "../components/GradeBadge";
 
 type Tab = "ready" | "uploaded" | "expired";
@@ -173,6 +173,7 @@ const ClipCard = memo(function ClipCard({ clip, tab, onChange, onRemove, toast }
             </button>
           ))}
         </div>
+        {tab === "ready" && <PagePicker clip={clip} onChange={onChange} toast={toast} />}
         {clip.captions_note && <div className="banner warn small">{clip.captions_note}</div>}
         <SafetyNote safety={clip.safety} />
         {current && <OutputPanel key={current.id} o={current} clip={clip} onChange={onChange} toast={toast} />}
@@ -350,9 +351,9 @@ function DropboxStatus({ o, onChange, toast }: { o: ClipOutputT; onChange: () =>
 function ReviewBar({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
   const [watched, setWatched] = useState(false);
   const [busy, setBusy] = useState(false);
-  const go = async (fn: () => Promise<unknown>, done: string) => {
+  const go = async <R,>(fn: () => Promise<R>, done: string | ((r: R) => string)) => {
     setBusy(true);
-    try { await fn(); toast("ok", done); onChange(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+    try { const r = await fn(); toast("ok", typeof done === "string" ? done : done(r)); onChange(); } catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   if (clip.safety?.status === "fail" || o.status !== "ready") return null;
   if (o.quality?.status === "fail") return (
@@ -370,10 +371,39 @@ function ReviewBar({ o, clip, onChange, toast }: { o: ClipOutputT; clip: ClipT; 
       <span className="spacer" />
       {o.review !== "approved" && <>
         <label className="check"><input type="checkbox" checked={watched} onChange={(e) => setWatched(e.target.checked)} />I watched it</label>
-        <button className="btn sm primary" disabled={busy || !watched} onClick={() => go(() => api.review(o.id, { decision: "approve", watched: true }), "Approved")}>Approve</button>
+        <button className="btn sm primary" disabled={busy || !watched} onClick={() => go(() => api.review(o.id, { decision: "approve", watched: true }), (r) => r.message ?? "Approved")}>Approve</button>
       </>}
       {o.review !== "rejected" && <button className="btn sm ghost" disabled={busy}
         onClick={() => { const reason = window.prompt("Why? (kept with the clip)", "Not good enough"); if (reason !== null) void go(() => api.review(o.id, { decision: "reject", reason }), "Rejected"); }}>Reject</button>}
+    </div>
+  );
+}
+
+/** Which pages this clip posts to: ticking one adds it (rendered in that page's format), unticking takes it off. */
+function PagePicker({ clip, onChange, toast }: { clip: ClipT; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+  const { data } = useQuery({ queryKey: ["destinations"], queryFn: api.destinations, staleTime: 60_000 });
+  const [busy, setBusy] = useState<number | null>(null);
+  const live = clip.outputs.filter((o) => o.status === "ready" || o.status === "uploaded");
+  const pages = (data ?? []).filter((d) => d.enabled);
+  if (!pages.length) return null;
+  const flip = async (id: number, on: boolean) => {
+    setBusy(id);
+    try { if (on) await api.addPage(clip.id, id); else await api.removePage(clip.id, id); onChange(); }
+    catch (e) { toast("err", e instanceof Error ? e.message : String(e)); } finally { setBusy(null); }
+  };
+  return (
+    <div className="row wrap small page-pick" role="group" aria-label="Pages this clip posts to" style={{ gap: 10 }}>
+      <span className="faint">Posts to</span>
+      {pages.map((d) => {
+        const mine = live.filter((o) => o.destination?.id === d.id);
+        const posted = mine.some((o) => o.status === "uploaded");
+        return (
+          <label key={d.id} className="check" title={posted ? "Already posted here" : undefined}>
+            <input type="checkbox" checked={mine.length > 0} disabled={busy !== null || posted || (!mine.length && !clip.editable)}
+              onChange={(e) => void flip(d.id, e.target.checked)} />
+            <Avatar url={d.avatar_url} platform={d.platform} />{d.display_name || d.handle}
+          </label>);
+      })}
     </div>
   );
 }

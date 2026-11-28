@@ -20,7 +20,7 @@ from ..audit import audit
 from ..fetch import FetchError, count_links
 from ..media.ffmpeg import probe
 from ..media.overlay import Word, apply_text_edit
-from ..models import Clip, ClipOutput, Creator, Job, ReferenceVideo, SourceAccount
+from ..models import Clip, ClipOutput, Creator, DestinationAccount, Job, ReferenceVideo, SourceAccount
 from ..schemas import VIDEO_HEIGHT, ClipEdit, OverlaySettings, deep_merge, lenient
 from .deps import ApiError, ctx, db, get_or_404
 from .system import load_settings, save_folder
@@ -559,3 +559,37 @@ def set_streamer(cid: int, body: StreamerIn, c=Depends(ctx), s: Session = Depend
     get_or_404(s, Creator, body.creator_id, "Streamer")
     s.commit()
     return c.pipeline.reassign(cid, body.creator_id)
+
+
+class PageIn(BaseModel):
+    destination_id: int
+
+
+@router.post("/clips/{cid}/pages")
+def add_page(cid: int, body: PageIn, c=Depends(ctx), s: Session = Depends(db)):
+    """Ready to Upload's page checkbox ticked: this clip also goes to that page (rendered in its format)."""
+    clip = get_or_404(s, Clip, cid, "Clip")
+    d = get_or_404(s, DestinationAccount, body.destination_id, "Page")
+    if not d.enabled:
+        raise ApiError(409, "page_off", "That page is turned off")
+    have = next((o for o in _live_outputs(s, cid) if o.destination_id == d.id), None)
+    if have:
+        return {"output_id": have.id, "added": False}
+    _footage(clip)  # a new page's video is rendered from the kept footage
+    o = c.pipeline._add_output(s, clip, d)
+    c.jobs.enqueue("clip.rerender", {"output_ids": [o.id]}, max_attempts=1, session=s)
+    audit(s, "clip.page_added", "clip", cid, {"page": d.id})
+    return {"output_id": o.id, "added": True}
+
+
+@router.delete("/clips/{cid}/pages/{did}")
+def remove_page(cid: int, did: int, s: Session = Depends(db)):
+    """Unticked: that page's not-yet-posted video is withdrawn (a posted one stays)."""
+    get_or_404(s, Clip, cid, "Clip")
+    outs = [o for o in _live_outputs(s, cid) if o.destination_id == did]
+    if any(o.status == "uploaded" for o in outs):
+        raise ApiError(409, "posted", "Already posted to that page")
+    for o in outs:
+        o.status, o.review_note = "withdrawn", "Unticked in Ready to Upload"
+    audit(s, "clip.page_removed", "clip", cid, {"page": did, "withdrawn": len(outs)})
+    return {"removed": len(outs)}

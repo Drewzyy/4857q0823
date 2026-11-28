@@ -33,7 +33,9 @@ def review(oid: int, body: ReviewIn, c=Depends(ctx), s: Session = Depends(db)):
             o = posting.reject(s, oid, "you", body.reason or "Rejected")
     except posting.PostingError as e:
         raise ApiError(409, "not_allowed", str(e))
-    return {"id": o.id, "review": o.review, "review_note": o.review_note}
+    page = (o.destination.display_name or o.destination.handle) if o.destination else o.platform
+    msg = None if body.decision != "approve" else f"Scheduled for {body.scheduled_at:%b %d %H:%M}" if body.scheduled_at else f"Posting now to {page}"
+    return {"id": o.id, "review": o.review, "review_note": o.review_note, "message": msg}
 
 
 @router.get("/bridge")

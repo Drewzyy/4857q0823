@@ -35,7 +35,9 @@ def test_pages_by_kind_never_lose_a_clip():
     pages = [(1, "tiktok", "Clips", "@vyralclips19", {"content_kinds": ["regular"]}),
              (2, "tiktok", "Games", "@vyralgames7", {"content_kinds": ["gaming"]}),
              (3, "instagram", "Pods", "@vyralpods", {"content_kinds": ["podcast"]})]
-    assert [p[0] for p in for_kind(pages, "gaming", "regular")] == [2]
+    assert [p[0] for p in for_kind(pages, "gaming", "regular")] == [1, 2]  # the general clips page takes gaming clips too
+    assert [p[0] for p in for_kind(pages[1:], "regular", "regular")] == [1 + 1, 3]  # no general page: nothing fits, still posted
+    assert [p[0] for p in for_kind(pages[2:], "gaming", "gaming")] == [3]  # a podcast-only page keeps none unless it's the only one
     assert [p[0] for p in for_kind(pages[:1], "podcast", "regular")] == [1]  # no podcast page: the streamer's kind
     assert [p[0] for p in for_kind(pages[1:2], "podcast", "regular")] == [2]  # nothing fits: still posted somewhere
 

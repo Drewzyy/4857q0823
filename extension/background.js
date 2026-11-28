@@ -72,10 +72,45 @@ async function tick() {
   }
   let next, why;
   try { ({ job: next, why } = await call(cfg, "/companion/next")); } catch (e) { await note(`Can't reach Vyral: ${e.message}`); return; }
+  await start(next, why);
+  waitLoop(); // the alarm also restarts the fast loop if Chrome put the worker to sleep
+}
+
+let starting = false; // the alarm tick and the wait loop never open the same post twice
+async function start(next, why) {
   if (!next) { await note(`Nothing due right now${why ? ": " + why : ""}`); return; }
-  const tab = await chrome.tabs.create({ url: next.upload_page, active: true });
-  await chrome.storage.session.set({ job: { ...next, tab: tab.id, started: Date.now() } });
-  await note(`Posting to ${next.destination?.name || next.platform}${next.auto ? " (Auto-post)" : ": fill-in, you press Post"}`);
+  if (starting || (await chrome.storage.session.get("job")).job) return;
+  starting = true;
+  try {
+    const tab = await chrome.tabs.create({ url: next.upload_page, active: true });
+    await chrome.storage.session.set({ job: { ...next, tab: tab.id, started: Date.now() } });
+    await note(`Posting to ${next.destination?.name || next.platform}${next.auto ? " (Auto-post)" : ": fill-in, you press Post"}`);
+  } finally { starting = false; }
+}
+
+// Long poll: Vyral answers as soon as a video is due (your Approve), so it starts posting within seconds.
+// One request at a time; backs off when Vyral can't be reached; stops when posting is turned off.
+let waiting = false;
+async function waitLoop() {
+  if (waiting) return;
+  waiting = true;
+  let backoff = 2000;
+  try {
+    for (;;) {
+      const cfg = await settings();
+      if (!cfg.enabled || !cfg.token) return;
+      if ((await chrome.storage.session.get("job")).job) { await new Promise((r) => setTimeout(r, 5000)); continue; } // one post at a time
+      try {
+        const { job: next, why } = await call(cfg, "/companion/wait?timeout=25");
+        backoff = 2000;
+        if (next) await start(next, why);
+      } catch (e) {
+        await note(`Can't reach Vyral: ${e.message}`);
+        await new Promise((r) => setTimeout(r, backoff));
+        backoff = Math.min(backoff * 2, 60000);
+      }
+    }
+  } finally { waiting = false; }
 }
 
 async function finish(job, result) {
@@ -194,7 +229,7 @@ async function openAccounts() { // when it's turned on: the upload page of each 
 }
 
 chrome.storage.onChanged.addListener((c, area) => {
-  if (area === "local" && c.enabled && c.enabled.newValue && !c.enabled.oldValue) openAccounts();
+  if (area === "local" && c.enabled && c.enabled.newValue && !c.enabled.oldValue) { openAccounts(); waitLoop(); }
 });
 
 async function schedule() {
@@ -204,5 +239,6 @@ async function schedule() {
 chrome.runtime.onInstalled.addListener(schedule);
 chrome.runtime.onStartup.addListener(schedule);
 chrome.runtime.onStartup.addListener(heartbeat);
+waitLoop(); // each time the worker starts
 chrome.storage.onChanged.addListener((c) => { if (c.every) schedule(); });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === "tick") tick(); });
