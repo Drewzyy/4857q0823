@@ -16,4 +16,8 @@ document.getElementById("save").onclick = async () => {
   await chrome.storage.local.set({ address, token: document.getElementById("token").value.trim(),
     every: Math.min(60, Math.max(1, Number(document.getElementById("every").value) || 5)), enabled: document.getElementById("enabled").checked });
   document.getElementById("saved").textContent = "Saved";
+  renderAccounts(document.getElementById("accounts"), false);
 };
+
+watchAccounts(document.getElementById("accounts"), false);
+document.getElementById("recheck").onclick = () => watchAccounts(document.getElementById("accounts"), false);

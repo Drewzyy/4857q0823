@@ -524,6 +524,21 @@ def test_the_companion_extension_gets_due_videos_and_reports_back(ctx, tmp_path,
         assert o.status == "uploaded" and o.post_url.endswith("/video/9")
 
 
+def test_the_companion_extension_lists_the_pages_to_sign_into(ctx, tmp_path):
+    from fastapi.testclient import TestClient
+    from clippr import mcp
+    from clippr.models import DestinationAccount
+    _clip(ctx, tmp_path, n=1)
+    with ctx.db.session() as s:
+        s.add(DestinationAccount(platform="facebook", external_id="fb", handle="@fb", display_name="FB", settings={}))
+        s.add(DestinationAccount(platform="youtube", external_id="off", handle="@off", display_name="Off", settings={}, enabled=False))
+    api = TestClient(mcp.create_app(ctx), base_url="http://127.0.0.1:47821")
+    assert api.get("/companion/accounts").status_code == 401
+    got = api.get("/companion/accounts", headers={"Authorization": f"Bearer {mcp.token(ctx)}"}).json()["accounts"]
+    assert [(a["platform"], a["handle"], a["display_name"]) for a in got] == [("tiktok", "@mypage", "My page")]
+    assert got[0]["upload_page"].startswith("https://www.tiktok.com") and isinstance(got[0]["id"], int)
+
+
 def test_the_extension_is_handed_out_from_settings(client, tmp_path, monkeypatch):
     monkeypatch.setenv("CLIPPR_DOWNLOADS_DIR", str(tmp_path / "dl"))
     where = Path(client.post("/api/companion/extension").json()["path"])

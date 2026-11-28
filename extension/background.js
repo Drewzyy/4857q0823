@@ -70,6 +70,17 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       reply(true);
     } else if (msg.type === "pressed" && job && sender.tab && sender.tab.id === job.tab) { // Post tapped on your phone?
       try { reply((await call(await settings(), `/companion/pressed/${job.output_id}`)).pressed); } catch { reply(false); }
+    } else if (msg.type === "whoami" && sender.tab && SITES.includes(msg.platform)) { // a site page says who's signed in
+      const { status = {} } = await chrome.storage.local.get("status");
+      const seen = { signedIn: msg.seen?.signedIn ?? null, handle: String(msg.seen?.handle || "").slice(0, 60) || null,
+        name: String(msg.seen?.name || "").slice(0, 100) || null, at: new Date().toISOString() };
+      await chrome.storage.local.set({ status: { ...status, [msg.platform]: seen } });
+      reply(true);
+    } else if (msg.type === "accounts") {
+      reply(await accounts());
+    } else if (msg.type === "refresh") {
+      await refresh();
+      reply(true);
     } else if (msg.type === "now") {
       await tick();
       reply(true);
@@ -104,6 +115,40 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const { job } = await chrome.storage.session.get("job");
   if (job && job.tab === tabId) await finish(job, { posted: false, reason: "The upload tab was closed" });
+});
+
+// ---- Accounts: your Vyral pages, and who's signed in on each site in this Chrome (sites/whoami.js reads it off the page) ----
+const SITES = ["tiktok", "instagram", "youtube"];
+const SITE_TABS = ["https://www.tiktok.com/*", "https://www.instagram.com/*", "https://studio.youtube.com/*", "https://www.youtube.com/*"];
+
+async function accounts() {
+  const cfg = await settings();
+  const { status = {}, openOnStart = {}, accountsCache = [] } = await chrome.storage.local.get(["status", "openOnStart", "accountsCache"]);
+  if (!cfg.token) return { error: "Not set up: paste Vyral's bridge token above and Save." };
+  try {
+    const { accounts: list } = await call(cfg, "/companion/accounts");
+    await chrome.storage.local.set({ accountsCache: list });
+    return { accounts: list, status, openOnStart };
+  } catch (e) {
+    return accountsCache.length ? { accounts: accountsCache, status, openOnStart } : { error: `Can't reach Vyral: ${e.message}` };
+  }
+}
+
+async function refresh() { // the open site tabs look again and report (no new tabs opened)
+  for (const tab of await chrome.tabs.query({ url: SITE_TABS })) {
+    try { await chrome.tabs.sendMessage(tab.id, { type: "whoami?" }); } catch { /* the page hasn't loaded the script yet */ }
+  }
+}
+
+async function openAccounts() { // when it's turned on: the upload page of each site with a page ticked, one tab per site
+  const got = await accounts();
+  if (got.error) { await note(got.error); return; }
+  const pages = [...new Set(got.accounts.filter((a) => got.openOnStart[a.id] !== false).map((a) => a.upload_page))];
+  for (const url of pages) await chrome.tabs.create({ url, active: false });
+}
+
+chrome.storage.onChanged.addListener((c, area) => {
+  if (area === "local" && c.enabled && c.enabled.newValue && !c.enabled.oldValue) openAccounts();
 });
 
 async function schedule() {

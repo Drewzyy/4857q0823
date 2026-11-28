@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vyral Companion",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Posts the videos you approved in Vyral on TikTok, Instagram and YouTube, in your own browser.",
   "permissions": [
     "storage",
@@ -11,7 +11,11 @@
   ],
   "host_permissions": [
     "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "https://www.tiktok.com/*",
+    "https://www.instagram.com/*",
+    "https://studio.youtube.com/*",
+    "https://www.youtube.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -22,6 +26,18 @@
   },
   "options_page": "options.html",
   "content_scripts": [
+    {
+      "matches": [
+        "https://www.tiktok.com/*",
+        "https://www.instagram.com/*",
+        "https://studio.youtube.com/*",
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "sites/whoami.js"
+      ],
+      "run_at": "document_idle"
+    },
     {
       "matches": [
         "https://www.tiktok.com/tiktokstudio/upload*",

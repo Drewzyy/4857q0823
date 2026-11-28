@@ -471,6 +471,15 @@ def create_app(ctx) -> FastAPI:
         job = await run_in_threadpool(find)
         return JSONResponse({"job": job, "why": None if job else (why[0] if why else "no approved videos waiting to post")})
 
+    @app.get("/companion/accounts")
+    async def companion_accounts(request: Request):
+        if (bad := allowed(request)):
+            return bad
+        def find():
+            with ctx.db.session() as s:
+                return companion.accounts(s)
+        return JSONResponse({"accounts": await run_in_threadpool(find)})
+
     @app.get("/companion/video/{oid}")
     async def companion_video(oid: int, request: Request):
         if (bad := allowed(request)):

@@ -8,3 +8,4 @@ async function show() {
 document.getElementById("now").onclick = async () => { await chrome.runtime.sendMessage({ type: "now" }); show(); };
 document.getElementById("options").onclick = () => chrome.runtime.openOptionsPage();
 show();
+watchAccounts(document.getElementById("accounts"), true);

@@ -194,6 +194,15 @@ def go_page(ctx, oid: int) -> dict | None:
                 "title": clip.title if clip else "", "caption": o.description, "thumb": bool(o.file_path) and o.file_path}
 
 
+def accounts(s: Session) -> list[dict]:
+    """Your enabled pages on the sites the extension posts to, for its Accounts list (who should be signed in where)."""
+    from .models import DestinationAccount
+    rows = s.scalars(select(DestinationAccount).where(DestinationAccount.enabled.is_(True), DestinationAccount.platform.in_(PLATFORMS))
+                     .order_by(DestinationAccount.platform, DestinationAccount.id)).unique()
+    return [{"id": d.id, "platform": d.platform, "handle": d.handle or "", "display_name": d.display_name,
+             "upload_page": UPLOAD_PAGES[d.platform]} for d in rows]
+
+
 def open_sites(s: Session) -> list[str]:
     """The upload page of each site your pages post to, opened in Chrome (where the extension lives) when Vyral
     starts, so they're signed in and ready. Settings > Muse & posting turns it off."""

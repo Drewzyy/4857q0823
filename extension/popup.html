@@ -4,12 +4,22 @@
   body { font: 13px system-ui; width: 280px; padding: 12px; margin: 0; }
   .muted { color: #666; font-size: 12px; }
   button { margin-top: 10px; width: 100%; padding: 7px; }
+  .acct { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #eee; flex-wrap: wrap; }
+  .acct .logo { display: inline-flex; }
+  .acct .who { flex: 1; min-width: 120px; display: flex; flex-direction: column; }
+  .acct .sub { color: #666; font-size: 12px; }
+  .acct button { margin: 0; padding: 4px 10px; width: auto; }
+  .acct .open { flex-basis: 100%; font-weight: normal; margin: 2px 0 0 18px; font-size: 12px; }
+  .light { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .light.green { background: #1db954; box-shadow: 0 0 6px #1db954; } .light.amber { background: #f5a623; } .light.grey { background: #bbb; }
 </style></head>
 <body>
   <strong>Vyral Companion</strong>
   <p id="state" class="muted">…</p>
   <p id="last"></p>
+  <div id="accounts"></div>
   <button id="now">Post the next due video now</button>
   <button id="options">Settings</button>
+  <script src="accounts.js"></script>
   <script src="popup.js"></script>
 </body></html>
