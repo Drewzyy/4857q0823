@@ -24,7 +24,7 @@ from .api.system import load_settings
 from .audit import audit
 from .fetch import MONITORABLE, FetchError, RemotePost, RemoteVod
 from .media import deadair, facecam, match, nsfw, onscreen, overlay, quality, sfx
-from .media.ffmpeg import FFmpegError, probe, run
+from .media.ffmpeg import FFmpegError, probe, run, scene_cuts
 from .media.overlay import Word
 from .media.render import Layer, OutputFormat, render, thumbnail
 from .media.transcribe import TranscribeError
@@ -37,6 +37,7 @@ POSTS_PER_CHECK = 12
 LIVE_RETRY_SECONDS = 1800
 STREAM_CLIP_PLATFORMS = ("twitch", "kick")  # sources whose posts are viewers' clips of a stream
 MAX_STREAMS_SEARCHED = 20  # past this many streams, give up instead of searching on for hours
+CHAT_BUDGET = 60.0  # seconds spent reading a stream's chat replay, at most
 LIVE_WAITS = 24  # a still-live stream is looked at again every 30 minutes, for up to 12 hours
 
 
@@ -640,7 +641,14 @@ class Pipeline:
             self._lf(lid, "processing", "Listening for the best moments", duration=length)
             db = grade.loudness(audio, 0, length)
             heat = moments.heat_curve(heatmap, len(db))
-            cands = moments.candidates(db, heat, limit=min(40, max(wanted * 3, wanted + 6)))  # extra to judge on speech, and spares for repeats
+            limit = min(40, max(wanted * 3, wanted + 6))  # extra to judge on speech, and spares for repeats
+            cands = moments.candidates(db, heat, limit=limit)
+            chat = None
+            if url and cands:
+                self._lf(lid, "processing", "Reading the stream's chat")
+                chat = self._chat(url, cands, len(db))
+            if chat is not None:
+                cands = moments.candidates(db, heat, limit=limit, chat=chat) or cands
             if not cands:
                 self._lf(lid, "failed", "No moment stood out enough to clip. Very quiet or very short videos don't have peaks to find.")
                 return {"status": "no_moments"}
@@ -710,6 +718,22 @@ class Pipeline:
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
+    def _chat(self, url: str, cands: list, length: int):
+        """The stream's chat replay around each candidate (and before it, for chat's usual pace) as moments.chat_curve,
+        or None: no chat, a site without one, or it couldn't be read in time. Moments are then found on sound alone."""
+        windows: list[tuple[float, float]] = []
+        for a, b in sorted((max(0.0, m.start - 60), min(length * moments.STEP, m.end + 15)) for m in cands):
+            if windows and a <= windows[-1][1]:
+                windows[-1] = (windows[-1][0], max(windows[-1][1], b))
+            else:
+                windows.append((a, b))
+        try:
+            msgs, covered = self.ctx.fetcher.chat_replay(url, windows, CHAT_BUDGET)
+            return moments.chat_curve(msgs, covered, length)
+        except Exception:
+            log.warning("couldn't read the stream's chat; moments are found on sound alone", exc_info=True)
+            return None
+
     def _produce_clip(self, section: Path, start: float, dur: float, work: Path, *, title: str, post_title: str,
                       creator_id: int | None, creator_name: str, dest_info: list, hints: list[str], retention_days: int,
                       progress: Callable[[str], None], reference_id: int | None = None, longform_id: int | None = None,
@@ -755,7 +779,8 @@ class Pipeline:
                 min_s, max_s, mine = lengths(s, rules)
                 force = {**tuner.pick(s), **obsidian.force(s)}  # your Obsidian rules win; the best choices so far, or one being tried (self-improving: tuner.py)
             framing = preedit.apply(framing, words, db, title, quote, proc.sound_effects == "auto", proc.auto_sound, proc.hook_first,
-                                    min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force)
+                                    min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force,
+                                    talk=deadair.speech(source, start, dur), scenes=self._scenes(source, start))
             captions_note = " ".join(filter(None, [captions_note, campaigns.too_short(rules, framing["end"] - framing["start"])]))
         title = titles.unprefix(title, creator_name)  # never "lacy: ..."
         framing["caption_y"] = self._caption_spot(source, framing, sampled)  # captions never over a face
@@ -1102,6 +1127,11 @@ class Pipeline:
         """Everything a re-render depends on, to tell whether a finished render is still the latest wanted."""
         return json.dumps([o.format, o.overlay, o.video_title, clip.words, clip.edit], sort_keys=True, default=str)
 
+    @staticmethod
+    def _scenes(source: Path, base: float) -> Callable[[float, float], list[float]]:
+        """Hard cuts in the picture between x and y seconds from `base` (for preedit.snap_to_cuts)."""
+        return lambda x, y: [round(x + t, 3) for t in scene_cuts(source, base + x, y - x)]
+
     def _loudness(self, source: Path, start: float, dur: float):
         try:
             return grade.loudness(source, start, dur)
@@ -1217,7 +1247,8 @@ class Pipeline:
             creator = clip.creator.name if clip.creator else ""
         db = self._loudness(source, e["start"], e["end"] - e["start"])
         title, quote = titles.make_title(words, creator, preedit.peak_moment(db, 0, e["end"] - e["start"]), rules["overlay_mentions"])
-        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force)).model_dump()
+        new = ClipEdit(**preedit.apply(e, words, db, title, quote, sound, choice, hook, min_s, max_s, named=bool(rules["overlay_mentions"]), style=mine, force=force,
+                                       talk=deadair.speech(source, e["start"], e["end"] - e["start"]), scenes=self._scenes(source, e["start"]))).model_dump()
         if redo:
             new["caption_y"] = self._caption_spot(source, new, None)  # captions never over a face
         with self.ctx.db.session() as s:

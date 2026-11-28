@@ -18,6 +18,7 @@ follow the page's setting. Everything here shows in the editor, where it can be 
 from __future__ import annotations
 
 import re
+from typing import Callable
 
 import numpy as np
 
@@ -45,17 +46,24 @@ HEADLINE_SIZE = 76  # pixels on a 1080-wide video: about 3% of the height per li
 SHOCK = re.compile(r"\b(wtf|what the|no way|bro|oh my god|omg|are you serious|insane|crazy)\b", re.I)
 
 
-def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0, max_s: float = 0,
-                style: dict | None = None, shift: float = 0) -> tuple[float, float]:
-    """(start, end) in seconds from the clip's start: the whole clip, or for a long one the TARGET-second stretch
-    ending just after its loudest moment, opening on a new sentence. Always starts on sound. min_s and max_s are a
-    campaign's length rules (0 = none): the window is kept inside them, and is only shorter than min_s when the
-    clip itself is. style: your learned style (style.py): its usual length range and length replace the defaults."""
+def _lengths(min_s: float, max_s: float, style: dict | None, shift: float) -> tuple[float, float, float]:
+    """(shortest, longest, target) seconds: your style's range or the defaults, moved by `shift`, inside min_s..max_s."""
     hi = max_s or float("inf")
     defaults = (style["length_low"], style["length_high"], style["length"]) if style else (SHORTEST, LONGEST, TARGET)
     # shift: a length being tried (tuner.py): the whole range moves with it, never under 20 s
     defaults = tuple(max(20.0, x + shift) for x in defaults)
-    shortest, longest, target = (min(max(x, min_s), hi) for x in defaults)
+    return tuple(min(max(x, min_s), hi) for x in defaults)
+
+
+def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0, max_s: float = 0,
+                style: dict | None = None, shift: float = 0, talk: list | None = None) -> tuple[float, float]:
+    """(start, end) in seconds from the clip's start: the whole clip, or for a long one the TARGET-second stretch
+    ending just after its loudest moment, opening on a new sentence. Always starts on sound. min_s and max_s are a
+    campaign's length rules (0 = none): the window is kept inside them, and is only shorter than min_s when the
+    clip itself is. style: your learned style (style.py): its usual length range and length replace the defaults.
+    talk: where someone is talking ((from, to) s, deadair.speech), so it opens on speech even without a transcript."""
+    hi = max_s or float("inf")
+    shortest, longest, target = _lengths(min_s, max_s, style, shift)
     start, end = 0.0, dur
     if db is not None and len(db) > int(shortest / STEP) and dur > longest:
         level = np.convolve(db - np.median(db), np.ones(10) / 10, mode="same")
@@ -104,7 +112,8 @@ def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0
         a = int(start / STEP)
         loud = np.nonzero(db[a:] > np.median(db) - 12)[0]
         first_sound = start + loud[0] * STEP if len(loud) else None
-    found = [x for x in (first_word, first_sound) if x is not None]
+    first_talk = next((max(s0, start) for s0, s1 in talk or [] if s1 > start), None)
+    found = [x for x in (first_word, first_sound, first_talk) if x is not None]
     lead = min(min(found), start + 5.0) if found else start  # a long silent opening is more likely a problem than intent
     if lead - start > 0.3:
         start = lead - 0.15
@@ -113,6 +122,26 @@ def best_window(db: np.ndarray | None, words: list, dur: float, min_s: float = 0
     if end - start > hi:  # the climax trim or the sound opening can leave more than the campaign allows
         start = end - hi
     return round(start, 2), round(end, 2)
+
+
+SNAP = 1.0  # a hard cut in the picture this close to an edge becomes the edge
+
+
+def snap_to_cuts(a: float, b: float, scenes: Callable[[float, float], list[float]], talk: list, lo: float, hi: float,
+                 dur: float) -> tuple[float, float]:
+    """Start and end on a nearby hard cut in the picture (within SNAP s), so the clip doesn't open or close on a few
+    frames of another shot. An edge only moves when no speech (talk: (from, to) s) lies between where it was and
+    the cut, so no word is cut into, added or lost; the length stays in [lo, hi]; and the start moves at most 0.3 s
+    earlier, so it still opens on sound. scenes(x, y): the cut times in [x, y], in seconds like a and b."""
+    def free(x: float, y: float) -> bool:
+        x, y = min(x, y), max(x, y)
+        return not any(s < y + 0.02 and e > x - 0.02 for s, e in talk)
+
+    starts = sorted((c for c in scenes(max(0.0, a - SNAP), a + SNAP) if a - 0.3 <= c <= a + SNAP), key=lambda c: abs(c - a))
+    a = next((c for c in starts if lo <= b - c <= hi and free(a, c)), a)
+    ends = sorted((c for c in scenes(b - SNAP, min(dur, b + SNAP)) if a < c <= dur), key=lambda c: abs(c - b))
+    b = next((c for c in ends if lo <= c - a <= hi and free(b, c)), b)
+    return round(a, 2), round(b, 2)
 
 
 def peak_moment(db: np.ndarray | None, a: float, b: float) -> float | None:
@@ -187,7 +216,8 @@ def pick_hook(db: np.ndarray | None, words: list, a: float, b: float, lengths: t
 
 def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, quote: bool = False, sound: bool = False,
           choice: str = "", hook: bool = False, min_s: float = 0, max_s: float = 0, named: bool = False,
-          style: dict | None = None, force: dict | None = None) -> dict:
+          style: dict | None = None, force: dict | None = None, talk: list | None = None,
+          scenes: Callable[[float, float], list[float]] | None = None) -> dict:
     """The pre-edit on a clip's edit (start/end in source seconds; words and db from edit['start']).
     choice: the sound to use on big moments (Settings), "" to pick one by the moment. min_s, max_s: a campaign's
     length rules (best_window); the teaser counts toward the length, so it's left out when it wouldn't fit.
@@ -197,7 +227,9 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     force: choices Vyral is testing or has found work better (tuner.py): hook, headline, sfx, zoom (on/off) and
     length (seconds more or less). They win over the style. What the clip actually got is kept as its trial.
     force["situations"]: your Obsidian rules (obsidian.py), {situation: choices}; the ones for this clip's situation
-    (its mood, from what's said) and for "any" win over the rest, and may also set sound, captions and max_length."""
+    (its mood, from what's said) and for "any" win over the rest, and may also set sound, captions and max_length.
+    talk: where someone is talking ((from, to) s from edit['start'], deadair.speech; None: the words are used).
+    scenes(x, y): hard cuts in the picture in [x, y] (same clock), to start and end on one (snap_to_cuts)."""
     force = dict(force or {})
     e = dict(edit)
     if e.get("preedit_version", 1 if e.get("preedited") else 0) >= VERSION:
@@ -209,7 +241,11 @@ def apply(edit: dict, words: list, db: np.ndarray | None, headline_text: str, qu
     if force.get("max_length"):
         max_s = min(max_s or float("inf"), max(force["max_length"], min_s))
     dur = e["end"] - e["start"]
-    a, b = best_window(db, words, dur, min_s, max_s, style, force.get("length", 0))
+    a, b = best_window(db, words, dur, min_s, max_s, style, force.get("length", 0), talk)
+    if scenes:
+        shortest = _lengths(min_s, max_s, style, force.get("length", 0))[0]
+        a, b = snap_to_cuts(a, b, scenes, talk if talk is not None else [(w.start, w.end) for w in words],
+                            min(b - a, shortest), max_s or float("inf"), dur)
     title_for = TITLE_SECONDS
     if style:
         hook = hook and style["hook_rate"] >= 0.5  # most of your clips open on the climax: so does this one

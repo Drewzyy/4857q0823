@@ -33,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .media.ffmpeg import SPAWN, FFmpegError, ffmpeg_exe
+from .media.ffmpeg import SPAWN, ffmpeg_exe, read_audio
 
 TIERS = (("S", 85), ("A", 70), ("B", 55), ("C", 40), ("D", 0))
 STEP = 0.1  # loudness is measured every 100 ms
@@ -52,8 +52,6 @@ class Grade:
 
 def loudness(path: Path, start: float, dur: float, gaps: list[tuple[float, float]] = ()) -> np.ndarray:
     """Loudness (dB) every 100 ms of the finished clip: the cut's audio with removed stretches left out."""
-    import subprocess
-
     sr = 8000
     hop = int(sr * STEP)
     if start == 0 and not gaps and dur > 600:
@@ -65,12 +63,7 @@ def loudness(path: Path, start: float, dur: float, gaps: list[tuple[float, float
             if n:
                 out.append(20 * np.log10(np.sqrt((chunk[: n * hop].reshape(n, hop) ** 2).mean(axis=1)) + 1e-6))
         return np.concatenate(out) if out else np.zeros(0)
-    try:
-        raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path),
-                              "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"], capture_output=True, timeout=120, check=True, **SPAWN).stdout
-    except (subprocess.SubprocessError, OSError) as e:
-        raise FFmpegError(f"couldn't read the clip's audio ({type(e).__name__})")
-    x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768
+    x = read_audio(path, start, dur, sr)
     if gaps:
         keep = np.ones(len(x), bool)
         for a, b in gaps:

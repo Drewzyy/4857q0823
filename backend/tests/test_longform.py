@@ -131,3 +131,65 @@ def test_pick_spreads_out_and_skips_repeats():
           moments.Moment(140, 170, 155, 80), moments.Moment(2000, 2030, 2015, 70), moments.Moment(120, 150, 135, 85)]
     got = moments.pick(ms, 2)
     assert [m.start for m in got] == [100, 2000], [m.start for m in got]  # 140 is close to 100; 120 overlaps; 1000 repeats
+
+
+def _chat(spike_at=None, seconds=600):
+    """A steady chat (a message a second) with, optionally, a KEKW flood a few seconds after `spike_at`."""
+    msgs = [(float(t), "ok") for t in range(seconds)]
+    if spike_at is not None:
+        msgs += [(spike_at + moments.CHAT_LAG + i / 10, "KEKW KEKW") for i in range(80)]
+    return msgs, [(0.0, float(seconds))]
+
+
+def test_chat_spikes_are_scored_and_can_change_the_pick():
+    msgs, covered = _chat(300)
+    curve = moments.chat_curve(msgs, covered, 6000)
+    assert curve is not None and abs(np.nanargmax(curve) / 10 - 300) < 5 and float(np.nanmedian(curve)) == 0
+    assert np.nanmax(moments.chat_curve(*_chat(), 6000)) == 0  # steady chat: no spike anywhere
+    assert moments.chat_curve(msgs[:10], covered, 6000) is None  # too little chat to tell
+    part = moments.chat_curve(msgs, [(250.0, 350.0)], 6000)
+    assert np.isnan(part[:2000]).all() and not np.isnan(part[2600:3400]).any()  # only what was read counts
+    db = _quiet_with_bursts(600, [100, 300])
+    db[3000:3030] = -17  # 5:00 is quieter than 1:40
+    assert abs(moments.pick(moments.candidates(db, limit=5), 1)[0].peak - 100) < 5
+    best = moments.pick(moments.candidates(db, limit=5, chat=curve), 1)[0]
+    assert abs(best.peak - 300) < 8 and "chat blew up" in best.why[0]  # chat flooded over 5:00
+
+
+def test_youtube_and_twitch_chat_replays_are_read(monkeypatch):
+    import httpx
+    import respx
+    from clippr import fetch
+    line = {"replayChatItemAction": {"videoOffsetTimeMsec": "12500", "actions": [{"addChatItemAction": {"item": {
+        "liveChatTextMessageRenderer": {"message": {"runs": [{"text": "clip it"}, {"emoji": {"shortcuts": [":kekw:"]}}]}}}}}]}}
+    assert fetch._youtube_message(line) == [(12.5, "clip it kekw")]
+    assert fetch._youtube_message({"addChatItemAction": {}}) == []
+    monkeypatch.setattr(fetch, "TWITCH_PAUSE", 0)
+
+    def page(ts, more):
+        return {"data": {"video": {"comments": {"edges": [{"cursor": f"c{t}", "node": {"contentOffsetSeconds": t,
+                "message": {"fragments": [{"text": "LUL"}]}}} for t in ts], "pageInfo": {"hasNextPage": more}}}}}
+    with respx.mock:
+        route = respx.post("https://gql.twitch.tv/gql").mock(side_effect=[
+            httpx.Response(200, json=page([100, 101], True)), httpx.Response(200, json=page([102, 131], True)),
+            httpx.Response(429)])
+        msgs, covered = fetch.YtDlpFetcher().chat_replay("https://www.twitch.tv/videos/42", [(100, 130), (500, 560)], 30)
+        assert [t for t, _ in msgs] == [100, 101, 102, 131] and covered == [(100, 130)]  # rate limited at the second window: stop
+        assert route.calls[1].request.read().find(b'"c":"c101"') > 0 and route.calls[0].request.headers["Client-ID"] != "u"
+    assert fetch.YtDlpFetcher().chat_replay("https://kick.com/video/abc", [(0, 10)], 5) == ([], [])
+
+
+def test_without_chat_moments_are_found_as_before(env):
+    ctx, c, fake = env
+    cid = c.post("/api/creators", json={"name": "Streamer A", "clip_permission": True, "vod_channels": ["https://www.twitch.tv/streamera"]}).json()["id"]
+    c.post("/api/destinations", json={"platform": "tiktok", "display_name": "A page", "creator_ids": [cid]})
+    fake.chat = TimeoutError("chat took too long")
+    assert ctx.pipeline._chat("https://www.twitch.tv/videos/2", [moments.Moment(100, 130, 115, 50)], 2400) is None
+    fake.chat = None
+    assert ctx.pipeline._chat("https://www.twitch.tv/videos/2", [moments.Moment(100, 130, 115, 50)], 2400) is None  # no chat
+    fake.chat = TimeoutError("chat took too long")
+    c.post("/api/longform", json={"url": "https://www.youtube.com/watch?v=long1", "creator_id": cid, "clips_wanted": 1})
+    drain(ctx)
+    lf = c.get("/api/longform").json()[0]
+    assert lf["status"] == "ready", lf["status_detail"]
+    assert ("chat", "https://www.youtube.com/watch?v=long1") in fake.calls

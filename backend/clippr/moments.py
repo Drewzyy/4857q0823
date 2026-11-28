@@ -5,7 +5,8 @@ Two passes, so a 4-hour video takes minutes, not hours:
    reactions: yelling, laughing, a crowd, a big play. On YouTube, the "most replayed" graph (real viewers
    rewinding) is used too and outweighs everything else. Each peak becomes a candidate clip that opens a little
    before it (the setup, starting where there's already sound, so the first seconds hook) and ends just after
-   it settles (the payoff), 15 to 60 seconds long.
+   it settles (the payoff), 15 to 60 seconds long. On a stream with a chat replay (Twitch, YouTube), chat
+   suddenly typing much faster than usual, or flooding reaction emotes ("KEKW", "LUL", "clip it"), counts too.
 2. Speech (best candidates only). What's said is transcribed: reaction phrases ("no way", "let's go", "bro"),
    a fast talking pace, and words in the first two seconds all count.
    For talk-heavy videos (podcasts, interviews) the words matter most: a clip that opens on a hook ("the
@@ -72,12 +73,44 @@ def heat_curve(heatmap: list[dict] | None, length: int) -> np.ndarray | None:
     return out / top if top > 0 else None
 
 
-def candidates(db: np.ndarray, heat: np.ndarray | None = None, limit: int = 20) -> list[Moment]:
-    """Pass 1: the strongest-sounding (and most replayed) stretches, best first, never overlapping."""
+# Reactions chat floods in (Twitch and YouTube emotes, and what people type): each counts as two messages.
+BURST = re.compile(r"\b(kekw|lul|lulw|omegalul|lol|lmao+|lmfao|pog|pogs|poggers|pogchamp|pogu|w+|l+|clip (it|that)|"
+                   r"clipped|holy|no way|wtf|omg|monkas|pepelaugh|icant|xd+)\b|[!?]{3,}|\U0001F602|\U0001F923|\U0001F480|\U0001F62D", re.I)
+CHAT_LAG = 5.0  # chat types a few seconds after the moment it reacts to
+CHAT_MIN = 30   # fewer messages than this tell nothing
+
+
+def chat_curve(messages: list[tuple[float, str]], covered: list[tuple[float, float]], length: int) -> np.ndarray | None:
+    """Chat spikes as 0..1 every 100 ms (moved back CHAT_LAG to the moment chat reacts to), NaN where the chat wasn't
+    read, or None with too little chat. messages: (seconds into the video, text); covered: the (from, to) stretches
+    read. 1 is chat typing four times its usual pace or more (reaction emotes count double)."""
+    known = np.zeros(length, bool)
+    for a, b in covered:
+        b = min(b, length * STEP + CHAT_LAG)  # "to the end" is inf
+        known[max(0, int((a - CHAT_LAG) / STEP)):max(0, int((b - CHAT_LAG) / STEP))] = True
+    if len(messages) < CHAT_MIN or not known.any():
+        return None
+    weight = np.zeros(length)
+    for t, text in messages:
+        i = int((t - CHAT_LAG) / STEP)
+        if 0 <= i < length:
+            weight[i] += 2 if BURST.search(text) else 1
+    rate = np.convolve(weight, np.ones(int(5 / STEP)) / 5, mode="same")  # messages a second, over 5 s
+    usual = max(0.2, float(np.median(rate[known])))  # shortcut: one usual pace for all chat read; per hour if streams vary a lot
+    spike = np.clip((rate / usual - 1) / 3, 0, 1)
+    spike[~known] = np.nan
+    return spike
+
+
+def candidates(db: np.ndarray, heat: np.ndarray | None = None, limit: int = 20, chat: np.ndarray | None = None) -> list[Moment]:
+    """Pass 1: the strongest-sounding (and most replayed, and most typed-about) stretches, best first, never
+    overlapping. chat: chat_curve, or None without a chat replay."""
     if len(db) < int(MIN_LEN / STEP):
         return []
     excite = _smooth(db - _local_level(db), int(1 / STEP))  # loudness above the surrounding level, 1 s smoothed
     signal = excite + (heat * 12 if heat is not None else 0)  # replayed parts stand out even when they're quiet
+    if chat is not None:
+        signal = signal + np.nan_to_num(chat[:len(db)]) * 8  # so does what chat explodes over
     # A steady talker never gets 4 dB above themselves: judge each video against its own loudest moments so a
     # podcast still gives candidates, while a loud stream keeps the usual bar.
     floor = min(4.0, max(1.5, float(np.percentile(signal, 97))))
@@ -145,6 +178,12 @@ def candidates(db: np.ndarray, heat: np.ndarray | None = None, limit: int = 20) 
             score_max += 30
             if h > 0.6:
                 why.insert(0, "one of the most replayed parts of the video")
+        if chat is not None and not np.isnan(chat[a:b]).all():  # chat read here: a quiet chat counts against it
+            c = float(np.nanmax(chat[a:b]))
+            score += 20 * c
+            score_max += 20
+            if c > 0.6:
+                why.insert(0, "chat blew up over it")
         out.append(Moment(start, end, peak, 100 * score / score_max, why))
     return sorted(out, key=lambda m: -m.score)[:limit]
 

@@ -97,6 +97,31 @@ def probe(path: Path) -> MediaInfo:
     return MediaInfo(dur, w, h, fps, bool(re.search(r"Stream #.*?Audio:", text)))
 
 
+def read_audio(path: Path, start: float, dur: float, sample_rate: int) -> np.ndarray:
+    """Mono float32 audio of [start, start + dur), for a clip-sized stretch (a long video: decode_audio_chunks)."""
+    try:
+        raw = subprocess.run([ffmpeg_exe(), "-v", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(path),
+                              "-vn", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"], capture_output=True, timeout=120, check=True,
+                             creationflags=_FLAGS, preexec_fn=_PRE).stdout
+    except (subprocess.SubprocessError, OSError) as e:
+        raise FFmpegError(f"couldn't read the clip's audio ({type(e).__name__})")
+    return np.frombuffer(raw[: len(raw) // 2 * 2], dtype=np.int16).astype(np.float32) / 32768
+
+
+_PTS = re.compile(r"pts_time:\s*([\d.]+)")
+
+
+def scene_cuts(path: Path, start: float, dur: float, threshold: float = 0.3) -> list[float]:
+    """Hard cuts in the picture (FFmpeg's scene score over `threshold`) in [start, start + dur), as seconds from
+    `start`. Decoded small, and only for the stretch asked about, so it stays cheap. [] when it can't be read."""
+    try:
+        err = run(["-ss", f"{max(0.0, start):.3f}", "-t", f"{dur:.3f}", "-i", str(path), "-an", "-sn",
+                   "-vf", f"scale=160:-2,select='gt(scene,{threshold})',showinfo", "-f", "null", "-"], timeout=60)
+    except FFmpegError:
+        return []
+    return [round(float(t), 3) for t in _PTS.findall(err)]
+
+
 def decode_audio_chunks(path: Path, sample_rate: int, chunk_seconds: float = 120) -> Iterator[np.ndarray]:
     """Stream mono float32 audio without loading hours of audio into memory."""
     cmd = [ffmpeg_exe(), "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(path),

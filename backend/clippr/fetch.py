@@ -8,7 +8,11 @@ can replace it.
 """
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +63,7 @@ class Fetcher(Protocol):
     def twitch_clip_origin(self, url: str) -> tuple[str, float] | None: ...
     def download_post(self, url: str, dest_dir: Path) -> Path: ...
     def longform_details(self, url: str) -> tuple[str, float | None, list[dict] | None]: ...
+    def chat_replay(self, url: str, windows: list[tuple[float, float]], budget: float) -> tuple[list[tuple[float, str]], list[tuple[float, float]]]: ...
 
 
 MONITORABLE = ("tiktok", "youtube", "twitch", "kick")
@@ -286,12 +291,7 @@ class YtDlpFetcher:
         if not m:
             return None
         import httpx
-        client_id = "ue6666qo983tsx6so1t0vnawi233wa"  # Twitch's public web client, as yt-dlp uses
-        try:  # follow yt-dlp if it ever changes it
-            from yt_dlp.extractor.twitch import TwitchBaseIE
-            client_id = TwitchBaseIE._CLIENT_ID.fget(type("C", (), {"_configuration_arg": lambda self, *a, **k: a[1]})())[0] or client_id
-        except Exception:
-            pass
+        client_id = _twitch_client_id()
         body = {"query": "query($slug: ID!) { clip(slug: $slug) { videoOffsetSeconds video { id } } }", "variables": {"slug": m[1]}}
         try:
             r = httpx.post("https://gql.twitch.tv/gql", json=body, headers={"Client-ID": client_id}, timeout=20)
@@ -309,6 +309,48 @@ class YtDlpFetcher:
         game = (e.get("categories") or [""])[0] or e.get("category") or ""
         return RemoteVod(str(e.get("id")), url, e.get("title") or "", e.get("duration"), _date(e), live, str(game)[:80])
 
+    def chat_replay(self, url: str, windows: list[tuple[float, float]], budget: float) -> tuple[list[tuple[float, str]], list[tuple[float, float]]]:
+        """A past stream's chat, as read anonymously by anyone watching the replay: ([(seconds into the video, text)],
+        [(from, to) stretches read]). Twitch: the windows asked for; YouTube: the live chat replay from the start (yt-dlp).
+        Stops after `budget` seconds with what it has. Kick and others: nothing (([], []))."""
+        deadline = time.monotonic() + budget
+        m = re.search(r"twitch\.tv/videos/(\d+)", url)
+        if m:
+            return _twitch_chat(m[1], windows, deadline)
+        if re.search(r"youtube\.com/(watch\?|live/)|youtu\.be/", url):
+            return self._youtube_chat(url, deadline)
+        return [], []
+
+    def _youtube_chat(self, url: str, deadline: float) -> tuple[list[tuple[float, str]], list[tuple[float, float]]]:
+        class OutOfTime(Exception):
+            pass
+
+        def hook(_):
+            if time.monotonic() > deadline:
+                raise OutOfTime  # keeps what was read so far (the .part file)
+
+        work = Path(tempfile.mkdtemp(prefix="vyral-chat-"))
+        done = False
+        try:
+            try:
+                self._extract(url, download=True, noplaylist=True, skip_download=True, writesubtitles=True,
+                              subtitleslangs=["live_chat"], ignore_no_formats_error=True, socket_timeout=15,
+                              outtmpl=str(work / "chat"), progress_hooks=[hook])
+                done = True
+            except (OutOfTime, FetchError):
+                pass
+            msgs: list[tuple[float, str]] = []
+            for f in work.glob("chat.live_chat.json*"):
+                for line in f.read_text("utf-8", "replace").splitlines():
+                    try:
+                        msgs += _youtube_message(json.loads(line))
+                    except (ValueError, TypeError, KeyError, AttributeError):
+                        continue  # a half-written last line
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        last = max((t for t, _ in msgs), default=0.0)
+        return msgs, ([(0.0, float("inf") if done else last)] if msgs else [])
+
     def download_section(self, url: str, start: float, end: float, dest_dir: Path) -> Path:
         import yt_dlp
 
@@ -319,3 +361,70 @@ class YtDlpFetcher:
                              download_ranges=yt_dlp.utils.download_range_func(None, [(start, end)]),
                              outtmpl=str(dest_dir / "section-%(id)s.%(ext)s"))
         return Path(info["requested_downloads"][0]["filepath"])
+
+
+def _youtube_message(action: dict) -> list[tuple[float, str]]:
+    """One line of yt-dlp's live_chat file: a replayed chat action with its time in the video."""
+    replay = action.get("replayChatItemAction") or {}
+    out = []
+    for a in replay.get("actions") or []:
+        r = (((a.get("addChatItemAction") or {}).get("item") or {}).get("liveChatTextMessageRenderer") or {})
+        runs = (r.get("message") or {}).get("runs") or []
+        text = " ".join(x.get("text") or ((x.get("emoji") or {}).get("shortcuts") or [""])[0].strip(":") for x in runs)
+        if text.strip():
+            out.append((int(replay["videoOffsetTimeMsec"]) / 1000, text))
+    return out
+
+
+TWITCH_PAUSE = 0.25  # at most four chat requests a second
+
+
+def _twitch_chat(video_id: str, windows: list[tuple[float, float]], deadline: float) -> tuple[list[tuple[float, str]], list[tuple[float, float]]]:
+    """Twitch's chat replay for each window, through the same anonymous public web request the Twitch player makes
+    (no login). Stops at the deadline, or when Twitch says no or asks to slow down."""
+    import httpx
+
+    query = ("query($id: ID!, $t: Int, $c: Cursor) { video(id: $id) { comments(contentOffsetSeconds: $t, after: $c) {"
+             " edges { cursor node { contentOffsetSeconds message { fragments { text } } } } pageInfo { hasNextPage } } } }")
+    msgs: list[tuple[float, str]] = []
+    covered: list[tuple[float, float]] = []
+    with httpx.Client(timeout=10, headers={"Client-ID": _twitch_client_id()}) as client:
+        for a, b in windows:
+            variables, reached = {"id": video_id, "t": int(a)}, a
+            while time.monotonic() < deadline:
+                try:
+                    r = client.post("https://gql.twitch.tv/gql", json={"query": query, "variables": variables})
+                    r.raise_for_status()
+                    page = (((r.json() or {}).get("data") or {}).get("video") or {}).get("comments") or {}
+                except (httpx.HTTPError, ValueError, AttributeError):
+                    if reached > a:
+                        covered.append((a, reached))
+                    return msgs, covered  # refused, rate limited or changed: keep what was read
+                edges = page.get("edges") or []
+                for e in edges:
+                    n = e.get("node") or {}
+                    t = float(n.get("contentOffsetSeconds") or 0)
+                    msgs.append((t, "".join(f.get("text") or "" for f in (n.get("message") or {}).get("fragments") or [])))
+                    reached = max(reached, t)
+                if not edges or not (page.get("pageInfo") or {}).get("hasNextPage") or reached >= b:
+                    reached = max(reached, b)
+                    break
+                variables = {"id": video_id, "c": edges[-1].get("cursor")}
+                time.sleep(TWITCH_PAUSE)
+            if reached > a:
+                covered.append((a, min(reached, b)))
+            time.sleep(TWITCH_PAUSE)
+    return msgs, covered
+
+
+def _twitch_client_id() -> str:
+    """Twitch's public web client, as yt-dlp uses (and follows if it ever changes)."""
+    try:
+        from yt_dlp.extractor.twitch import TwitchBaseIE
+        cid = TwitchBaseIE._CLIENT_ID.fget(type("C", (), {"_configuration_arg": lambda self, *a, **k: a[1]})())
+        return cid if isinstance(cid, str) and cid else _TWITCH_WEB
+    except Exception:
+        return _TWITCH_WEB
+
+
+_TWITCH_WEB = "ue6666qo983tsx6so1t0vnawi233wa"

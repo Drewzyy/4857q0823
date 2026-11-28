@@ -22,6 +22,7 @@ class FakeFetcher:
         self.origins: dict[str, tuple[str, float]] = {}
         self.heatmap: list[dict] | None = None  # Twitch clip url -> (its stream, offset)
         self.uploads: list[RemotePost] = []  # a YouTube channel's full videos and past streams
+        self.chat: tuple | Exception | None = None  # (messages, covered) a stream's chat replay gives, or what it raises
 
     def recent_posts(self, platform, username, profile_url, limit):
         self.calls.append(("posts", username))
@@ -64,6 +65,12 @@ class FakeFetcher:
     def longform_details(self, url):
         self.calls.append(("longform", url))
         return "A long stream", 240.0, self.heatmap
+
+    def chat_replay(self, url, windows, budget):
+        self.calls.append(("chat", url))
+        if isinstance(self.chat, Exception):
+            raise self.chat
+        return self.chat or ([], [])
 
     def download_post(self, url, dest_dir):
         self.calls.append(("post", url))

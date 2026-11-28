@@ -221,3 +221,23 @@ def test_captions_already_in_the_footage_are_found(tmp_path):
     assert has_captions(tmp_path / "live.mp4", 0, 12)
     assert not has_captions(tmp_path / "title.mp4", 0, 12)  # a fixed title isn't captions
     assert not has_captions(tmp_path / "plain.mp4", 0, 12)
+
+
+def test_edges_snap_to_a_nearby_scene_cut_but_never_into_speech_or_past_the_length_rules(tmp_path):
+    from clippr.media.ffmpeg import run
+    from clippr.pipeline import Pipeline
+    src = tmp_path / "cuts.mp4"  # red until 1.5 s, blue until 11.2 s, then green: two hard cuts
+    run(["-f", "lavfi", "-i", "color=c=red:s=320x180:r=30:d=1.5", "-f", "lavfi", "-i", "color=c=blue:s=320x180:r=30:d=9.7",
+         "-f", "lavfi", "-i", "color=c=green:s=320x180:r=30:d=0.8", "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1[v]",
+         "-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", "-g", "600", str(src)])
+    scenes = Pipeline._scenes(src, 0.0)
+    assert [round(c, 1) for c in scenes(0, 12)] == [1.5, 11.2] and scenes(3, 5) == []
+    assert preedit.snap_to_cuts(1.0, 11.6, scenes, [], 5, 60, 12) == (1.5, 11.2)  # both edges on the cuts
+    assert preedit.snap_to_cuts(1.0, 11.6, scenes, [(1.2, 1.4)], 5, 60, 12) == (1.0, 11.2)  # a word before the cut: start stays
+    assert preedit.snap_to_cuts(1.0, 11.6, scenes, [(11.0, 11.5)], 5, 60, 12) == (1.5, 11.6)  # the end would cut a word
+    assert preedit.snap_to_cuts(1.0, 11.6, scenes, [], 10, 60, 12) == (1.5, 11.6)  # 9.7 s would be under the 10 s minimum
+    assert preedit.snap_to_cuts(1.4, 10.6, scenes, [], 5, 9.6, 12) == (1.5, 10.6)  # 9.7 s would be over the 9.6 s maximum
+    assert preedit.snap_to_cuts(1.9, 11.6, scenes, [], 5, 60, 12) == (1.9, 11.2)  # the start never moves more than 0.3 s earlier
+    e = preedit.apply(ClipEdit(start=100, end=160).model_dump(), [], None, "x", talk=[],
+                      scenes=lambda x, y: [c for c in (0.6, 59.4) if x <= c <= y])
+    assert (e["start"], e["end"]) == (100.6, 159.4)
